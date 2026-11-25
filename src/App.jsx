@@ -1,0 +1,930 @@
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import ChatWindow from './components/ChatWindow';
+import InputBar from './components/InputBar';
+import Sidebar from './components/Sidebar';
+import TitleBar from './components/TitleBar';
+import WelcomeScreen from './components/WelcomeScreen';
+import PermissionModal from './components/PermissionModal';
+import AudioPlayerBar from './components/AudioPlayerBar';
+import CommandPalette from './components/CommandPalette';
+import CortanaView from './components/CortanaView';
+import SpeakerPill from './components/SpeakerPill';
+
+const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
+const MobileConnectModal = lazy(() => import('./components/MobileConnectModal'));
+const OnboardingWizard = lazy(() => import('./components/OnboardingWizard'));
+const LandingPage = lazy(() => import('./components/LandingPage'));
+const PcControlCenterModal = lazy(() => import('./components/PcControlCenterModal'));
+import {
+  initGemini,
+  setModel as setGeminiModel,
+  setCustomInstructions as setGeminiInstructions,
+  setAiNamePrompt,
+  sendMessage,
+  resetConversation,
+  generateTitle,
+} from './services/gemini';
+import { speakText, getVoiceMode, setVoiceMode as setSpeechVoiceMode } from './services/speech';
+import { refreshRenderRelayDevices, setPairToken, getAuthHeaders } from './services/bridge';
+import { getAiName, getStrictVoiceMode, tryFastVoiceAction } from './services/voiceRouter';
+import { useVoiceEngine } from './services/useVoiceEngine';
+import ToastContainer from './components/ToastContainer';
+import { toast } from './services/toast';
+
+function getInitialRouteView() {
+  if (typeof window === 'undefined' || window.electronAPI) return 'app';
+  const path = window.location.pathname;
+  const params = new URLSearchParams(window.location.search);
+  const isStandalone = window.matchMedia?.('(display-mode: standalone)')?.matches;
+  if (path.startsWith('/app') || path.startsWith('/chat') || params.has('pair') || isStandalone) {
+    return 'app';
+  }
+  return 'landing';
+}
+
+export default function App() {
+  const [messages, setMessages] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(() => window.innerWidth >= 900);
+  const [showPalette, setShowPalette] = useState(false);
+  const [showMobileModal, setShowMobileModal] = useState(false);
+  const [showPcControl, setShowPcControl] = useState(false);
+  const [pcControlTab, setPcControlTab] = useState('clipboard');
+  const [windowMode, setWindowMode] = useState('full'); // Always start in Full Chat Workstation
+  const [autoListenSignal, setAutoListenSignal] = useState(0);
+  const [apiKey, setApiKey] = useState(
+    () => localStorage.getItem('jeeva_api_key') || import.meta.env.VITE_GEMINI_API_KEY || ''
+  );
+  const [model, setModel] = useState(
+    () => localStorage.getItem('jeeva_model') || 'gemini-3.5-flash-lite'
+  );
+  const [customInstructions, setCustomInstructions] = useState(
+    () => localStorage.getItem('jeeva_custom_instructions') || ''
+  );
+  const [isReady, setIsReady] = useState(false);
+  const [conversations, setConversations] = useState(() => {
+    try {
+      const saved = localStorage.getItem('jeeva_conversations');
+      const parsed = saved ? JSON.parse(saved) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem('jeeva_tts') === 'true');
+  const [voiceMode, setVoiceMode] = useState(() => getVoiceMode());
+  const [aiName, setAiNameState] = useState(() => getAiName());
+  const [permissionRequest, setPermissionRequest] = useState(null);
+  const [liveStats, setLiveStats] = useState(null);
+  const [serverConfig, setServerConfig] = useState({
+    checked: Boolean(window.electronAPI),
+    serverManagedKey: false,
+    requiresPin: false,
+    authorized: false,
+  });
+  const [appToken, setAppToken] = useState(() => localStorage.getItem('jeeva_app_token') || '');
+  const [cloudApiUrl, setCloudApiUrl] = useState(
+    () => (localStorage.getItem('jeeva_cloud_api_url') || import.meta.env.VITE_RENDER_URL || '').trim().replace(/\/+$/, '')
+  );
+  const [pinEntry, setPinEntry] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [routeView, setRouteView] = useState(() => getInitialRouteView());
+  const [showWizard, setShowWizard] = useState(
+    () => Boolean(window.electronAPI) && localStorage.getItem('jeeva_onboarding_done') !== 'true'
+  );
+  const permissionResolverRef = useRef(null);
+
+  const updateCloudApiUrl = useCallback((url) => {
+    const clean = String(url || '').trim().replace(/\/+$/, '');
+    if (clean) localStorage.setItem('jeeva_cloud_api_url', clean);
+    else localStorage.removeItem('jeeva_cloud_api_url');
+    setCloudApiUrl(clean);
+  }, []);
+
+  const navigateToApp = useCallback(() => {
+    setRouteView('app');
+    if (!window.electronAPI && window.location.pathname === '/') {
+      window.history.pushState({}, '', '/app');
+    }
+  }, []);
+
+  // Handle browser back/forward navigation & ?pair= auto-pairing URL + Electron jeeva:// deep links
+  useEffect(() => {
+    const onPopState = () => setRouteView(getInitialRouteView());
+    window.addEventListener('popstate', onPopState);
+
+    const onCloudUrlEvent = (ev) => {
+      if (ev?.detail !== undefined) setCloudApiUrl(String(ev.detail || '').trim().replace(/\/+$/, ''));
+    };
+    const onAiNameEvent = (ev) => {
+      if (ev?.detail) {
+        setAiNameState(ev.detail);
+        setAiNamePrompt(ev.detail);
+      }
+    };
+    setAiNamePrompt(aiName);
+    window.addEventListener('jeeva-cloud-url-updated', onCloudUrlEvent);
+    window.addEventListener('jeeva-ai-name-updated', onAiNameEvent);
+
+    if (!window.electronAPI) {
+      const params = new URLSearchParams(window.location.search);
+      const urlPair = (params.get('pair') || '').trim();
+      if (urlPair.length >= 12) {
+        setPairToken(urlPair);
+        setRouteView('app');
+        params.delete('pair');
+        const nextSearch = params.toString();
+        window.history.replaceState({}, '', `/app${nextSearch ? '?' + nextSearch : ''}`);
+        toast.success('PC Pair Key linked to this browser!');
+        refreshRenderRelayDevices();
+      }
+    } else {
+      window.electronAPI?.relayStatus?.().then((s) => {
+        if (s?.renderUrl && !localStorage.getItem('jeeva_cloud_api_url')) {
+          updateCloudApiUrl(s.renderUrl);
+        }
+      }).catch(() => {});
+    }
+
+    const unsubDeep = window.electronAPI?.onDeepLinked?.((data) => {
+      if (data?.renderUrl) updateCloudApiUrl(data.renderUrl);
+      toast.success(`1-Click linked to ${data?.renderUrl || 'Render'}!`);
+      setShowMobileModal(true);
+    });
+
+    const unsubSched = window.electronAPI?.onSchedulerFired?.((item) => {
+      const label = item?.message || item?.description || 'Scheduled PC task completed';
+      toast.success(`⏰ ${label}`);
+      if (item?.kind === 'reminder') {
+        speakText?.(`Reminder: ${label}`, { autoStop: true }).catch?.(() => {});
+      }
+    });
+
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('jeeva-cloud-url-updated', onCloudUrlEvent);
+      window.removeEventListener('jeeva-ai-name-updated', onAiNameEvent);
+      unsubDeep?.();
+      unsubSched?.();
+    };
+  }, [updateCloudApiUrl]);
+
+  // Capture browser PWA install prompt (Chrome / Edge / Android)
+  useEffect(() => {
+    const onBeforeInstall = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    const onInstalled = () => {
+      setInstallPrompt(null);
+      toast.success('JEEVA AI App installed!');
+    };
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, []);
+
+  // Check Render Cloud AI / proxy config (works both on Browser/PWA and on Desktop .exe via cloudApiUrl)
+  useEffect(() => {
+    const isDesktop = Boolean(window.electronAPI);
+    if (isDesktop && !cloudApiUrl) {
+      setServerConfig((prev) => ({ ...prev, checked: true, serverManagedKey: false }));
+      return;
+    }
+    const base = isDesktop ? cloudApiUrl : '';
+    const savedToken = localStorage.getItem('jeeva_app_token') || '';
+    fetch(`${base}/api/config`, {
+      headers: getAuthHeaders(),
+    })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) return null;
+        return res.json();
+      })
+      .then((cfg) => {
+        if (cfg && typeof cfg.serverManagedKey === 'boolean') {
+          setServerConfig({ checked: true, ...cfg });
+          if (cfg.requiresPin && !cfg.authorized && savedToken) {
+            localStorage.removeItem('jeeva_app_token');
+            setAppToken('');
+          }
+          if (!isDesktop) refreshRenderRelayDevices();
+        } else {
+          setServerConfig((prev) => ({ ...prev, checked: true }));
+        }
+      })
+      .catch(() => {
+        setServerConfig((prev) => ({ ...prev, checked: true }));
+      });
+  }, [cloudApiUrl]);
+
+  // Load API key from OS-encrypted safeStorage vault on Electron startup
+  useEffect(() => {
+    if (!window.electronAPI?.vaultGetKey) return;
+    window.electronAPI.vaultGetKey().then((vaultKey) => {
+      if (vaultKey) {
+        setApiKey(vaultKey);
+      } else if (apiKey) {
+        window.electronAPI.vaultSaveKey?.(apiKey);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (apiKey) {
+      try {
+        initGemini(apiKey);
+        localStorage.setItem('jeeva_api_key', apiKey);
+        window.electronAPI?.vaultSaveKey?.(apiKey);
+        setIsReady(true);
+      } catch (err) {
+        console.error('Failed to init Gemini:', err);
+        setIsReady(false);
+      }
+      return;
+    }
+
+    localStorage.removeItem('jeeva_api_key');
+
+    if (
+      serverConfig.serverManagedKey &&
+      (!serverConfig.requiresPin || serverConfig.authorized)
+    ) {
+      try {
+        initGemini('server-proxy', {
+          useServerProxy: true,
+          proxyBaseUrl: window.electronAPI ? cloudApiUrl : undefined,
+          appToken,
+        });
+        setIsReady(true);
+      } catch (err) {
+        console.error('Failed to init Gemini proxy:', err);
+        setIsReady(false);
+      }
+    } else {
+      setIsReady(false);
+    }
+  }, [apiKey, serverConfig, appToken, cloudApiUrl]);
+
+  const unlockOwnerKey = useCallback(async (pinValue) => {
+    const base = window.electronAPI ? cloudApiUrl : '';
+    const res = await fetch(`${base}/api/unlock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: String(pinValue || '').trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || 'Invalid PIN');
+    }
+    localStorage.setItem('jeeva_app_token', data.token);
+    setAppToken(data.token);
+    setServerConfig((prev) => ({ ...prev, authorized: true }));
+    if (!window.electronAPI) refreshRenderRelayDevices();
+  }, [cloudApiUrl]);
+
+  const handleUnlockApp = async (e) => {
+    e.preventDefault();
+    if (!pinEntry.trim()) return;
+    setPinError('');
+    setUnlocking(true);
+    try {
+      await unlockOwnerKey(pinEntry.trim());
+      setPinEntry('');
+    } catch (err) {
+      setPinError(err.message || 'Unlock failed');
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const handleInstallPWA = useCallback(async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice?.outcome === 'accepted') {
+      setInstallPrompt(null);
+    }
+  }, [installPrompt]);
+
+  useEffect(() => {
+    setGeminiModel(model);
+    localStorage.setItem('jeeva_model', model);
+  }, [model]);
+
+  useEffect(() => {
+    setGeminiInstructions(customInstructions);
+    localStorage.setItem('jeeva_custom_instructions', customInstructions);
+  }, [customInstructions]);
+
+  useEffect(() => {
+    localStorage.setItem('jeeva_conversations', JSON.stringify(conversations));
+  }, [conversations]);
+
+  useEffect(() => {
+    localStorage.setItem('jeeva_tts', ttsEnabled.toString());
+  }, [ttsEnabled]);
+
+  useEffect(() => {
+    setSpeechVoiceMode(voiceMode);
+  }, [voiceMode]);
+
+  // Poll lightweight workstation stats in Electron
+  useEffect(() => {
+    if (!window.electronAPI?.liveStats) return;
+    const fetchStats = () => window.electronAPI.liveStats().then(setLiveStats).catch(() => {});
+    fetchStats();
+    const id = setInterval(fetchStats, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Listen for Electron window mode changes, Alt+Space hotkey wake & tray PC Control triggers
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api) return;
+    const unsubMode = api.onWindowModeChange?.((mode) => setWindowMode(mode));
+    const unsubWake = api.onHotkeyWake?.(() => {
+      setWindowMode('cortana');
+      setAutoListenSignal((n) => n + 1);
+    });
+    const unsubPcControl = api.onOpenPcControl?.((tab) => {
+      if (tab) setPcControlTab(tab);
+      setShowPcControl(true);
+    });
+    return () => {
+      unsubMode?.();
+      unsubWake?.();
+      unsubPcControl?.();
+    };
+  }, []);
+
+  const switchWindowMode = useCallback((mode) => {
+    setWindowMode(mode);
+    window.electronAPI?.setWindowMode?.(mode);
+    if (mode === 'cortana') {
+      setAutoListenSignal((n) => n + 1);
+    }
+  }, []);
+
+  const openPcControlCenter = useCallback((tab = 'clipboard') => {
+    setPcControlTab(tab);
+    setShowPcControl(true);
+  }, []);
+
+  const handleNewChat = useCallback(() => {
+    if (messages.length > 0) {
+      const firstUserMsg = messages.find((m) => m.role === 'user');
+      const conv = {
+        id: Date.now(),
+        title: firstUserMsg?.aiTitle || messages[0]?.text?.substring(0, 44) || 'New Thread',
+        messages,
+        date: new Date().toLocaleDateString('en-IN'),
+      };
+      setConversations(prev => [conv, ...prev].slice(0, 50));
+    }
+    setMessages([]);
+    resetConversation();
+  }, [messages]);
+
+  // Global keyboard shortcuts (Ctrl+K, Ctrl+N, Ctrl+,, Ctrl+Shift+M)
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowPalette(p => !p);
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'm') {
+        e.preventDefault();
+        setShowPcControl(p => !p);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        handleNewChat();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === ',') {
+        e.preventDefault();
+        setShowSettings(s => !s);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleNewChat]);
+
+  const requestPermission = useCallback((req) => {
+    // Expand tiny corner pill before displaying PermissionModal so buttons are never clipped
+    setWindowMode((prevMode) => {
+      if (prevMode === 'speaker') {
+        window.electronAPI?.setWindowMode?.('cortana');
+        return 'cortana';
+      }
+      return prevMode;
+    });
+    return new Promise((resolve) => {
+      permissionResolverRef.current = resolve;
+      setPermissionRequest(req);
+    });
+  }, []);
+
+  const handlePermissionDecision = useCallback((decision) => {
+    setPermissionRequest(null);
+    if (permissionResolverRef.current) {
+      permissionResolverRef.current(decision);
+      permissionResolverRef.current = null;
+    }
+  }, []);
+
+  const handleSend = useCallback(async (text, attachment = null, meta = null) => {
+    if (!text.trim() && !attachment) return;
+
+    const fromVoice = Boolean(meta?.fromVoice);
+    if (!isReady && !fromVoice) {
+      setShowSettings(true);
+      return;
+    }
+
+    const userMsg = {
+      id: Date.now(),
+      role: 'user',
+      text: text.trim() || (attachment ? `Attachment: ${attachment.name}` : ''),
+      image: attachment?.isImage ? attachment.dataUrl : null,
+      timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+    };
+
+    setMessages(prev => [...prev, userMsg]);
+    setIsLoading(true);
+
+    // Auto-generate AI title for first message in conversation
+    if (messages.length === 0 && text.trim() && isReady) {
+      generateTitle(text.trim()).then((aiTitle) => {
+        if (aiTitle) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === userMsg.id ? { ...m, aiTitle } : m))
+          );
+        }
+      });
+    }
+
+    const typingId = Date.now() + 1;
+    setMessages(prev => [...prev, { id: typingId, role: 'assistant', text: '', tools: [], isTyping: true }]);
+
+    try {
+      // Master Voice Fast-Path: zero-latency deterministic execution for unambiguous OS controls
+      if (fromVoice && !attachment) {
+        const fast = await tryFastVoiceAction(text, requestPermission);
+        if (fast?.handled) {
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === typingId
+                ? {
+                    ...m,
+                    text: fast.replyText || 'Done.',
+                    isTyping: false,
+                    image: fast.image || null,
+                    tools: fast.tools || [],
+                    timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                  }
+                : m
+            )
+          );
+          if (fast.replyText) {
+            speakText(fast.replyText, { label: 'Confirmed' });
+          }
+          return;
+        }
+      }
+
+      if (!isReady) {
+        switchWindowMode('full');
+        setShowSettings(true);
+        throw new Error('Connect Cloud AI URL or add your Gemini API key in Settings.');
+      }
+
+      const response = await sendMessage(
+        text,
+        attachment,
+        (streamedText) => {
+          setMessages(prev =>
+            prev.map(m => (m.id === typingId ? { ...m, text: streamedText, isTyping: false } : m))
+          );
+        },
+        requestPermission,
+        (toolsSnapshot) => {
+          setMessages(prev =>
+            prev.map(m => (m.id === typingId ? { ...m, tools: toolsSnapshot } : m))
+          );
+        },
+        { fromVoice, strictVoice: getStrictVoiceMode() }
+      );
+
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === typingId
+            ? {
+                ...m,
+                text: response.text || 'Completed.',
+                isTyping: false,
+                image: response.image || null,
+                tools: response.tools || m.tools,
+                timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+              }
+            : m
+        )
+      );
+
+      if ((response.autoSpeak || ttsEnabled || meta?.fromVoice) && response.text) {
+        speakText(response.text, {
+          label: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Reading response...',
+        });
+      }
+    } catch (err) {
+      if (
+        !apiKey &&
+        serverConfig.serverManagedKey &&
+        serverConfig.requiresPin &&
+        /401|Workspace locked|Access PIN/i.test(err?.message || '')
+      ) {
+        localStorage.removeItem('jeeva_app_token');
+        setAppToken('');
+        setServerConfig(prev => ({ ...prev, authorized: false }));
+      }
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === typingId
+            ? {
+                ...m,
+                text: err.message,
+                isTyping: false,
+                isError: true,
+              }
+            : m
+        )
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isReady, ttsEnabled, requestPermission, apiKey, serverConfig.serverManagedKey, serverConfig.requiresPin, switchWindowMode, messages.length]);
+
+  // Persistent Always-On Wake Word & Mic Engine:
+  // - On Electron Desktop: active 24/7 across Full, Minimized, Tray, Speaker & Cortana modes once API/Cloud is ready
+  // - On Web/Mobile: only listens inside /app Voice modes (never triggers unprompted mic popup on Landing Page)
+  const isLockedScreen =
+    serverConfig.checked &&
+    serverConfig.requiresFullLock &&
+    serverConfig.requiresPin &&
+    !serverConfig.authorized &&
+    !apiKey;
+  const voiceEngine = useVoiceEngine({
+    aiName,
+    onSend: handleSend,
+    isLoading,
+    autoListenSignal,
+    enabled: Boolean(isReady && !isLockedScreen && (window.electronAPI || (routeView === 'app' && windowMode !== 'full'))),
+    onWakeOpen: (mode) => setWindowMode(mode),
+  });
+
+  const handleLoadConv = useCallback((conv) => {
+    setMessages(conv.messages);
+    resetConversation();
+    if (window.innerWidth < 900) setShowSidebar(false);
+  }, []);
+
+  const handleDeleteConv = useCallback((convId) => {
+    setConversations(prev => prev.filter(c => c.id !== convId));
+  }, []);
+
+  const handleExportChat = useCallback(async () => {
+    if (!messages.length) return;
+    const md = messages
+      .map(m => `### ${m.role === 'user' ? 'User' : 'JEEVA'} (${m.timestamp || ''})\n\n${m.text || ''}`)
+      .join('\n\n---\n\n');
+    if (window.electronAPI?.saveDesktopFile) {
+      await window.electronAPI.saveDesktopFile(`jeeva-thread-${Date.now()}.md`, md);
+      toast.success('Thread exported to Desktop!');
+    } else {
+      const blob = new Blob([md], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `jeeva-thread-${Date.now()}.md`;
+      a.click();
+    }
+  }, [messages]);
+
+  const handleClearHistory = useCallback(() => {
+    setConversations([]);
+    localStorage.removeItem('jeeva_conversations');
+    toast.info('Conversation history cleared');
+  }, []);
+
+  // Edit user message → replay from that point
+  const handleEditMessage = useCallback((msgId, newText) => {
+    const idx = messages.findIndex((m) => m.id === msgId);
+    if (idx < 0) return;
+    // Remove everything from this message onward
+    setMessages((prev) => prev.slice(0, idx));
+    resetConversation();
+    // Re-send with edited text
+    setTimeout(() => handleSend(newText), 50);
+  }, [messages, handleSend]);
+
+  // Regenerate last assistant response
+  const handleRegenerate = useCallback((msgId) => {
+    const idx = messages.findIndex((m) => m.id === msgId);
+    if (idx < 0) return;
+    // Find the user message just before this assistant message
+    let userMsg = null;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userMsg = messages[i];
+        break;
+      }
+    }
+    if (!userMsg) return;
+    // Remove the assistant message and replay
+    setMessages((prev) => prev.slice(0, idx));
+    resetConversation();
+    setTimeout(() => handleSend(userMsg.text), 50);
+  }, [messages, handleSend]);
+
+  const lastAssistantMessage = [...messages].reverse().find((m) => m.role === 'assistant' && !m.isTyping);
+
+  if (!window.electronAPI && routeView === 'landing') {
+    return (
+      <>
+        <Suspense fallback={<div className="min-h-screen bg-obsidian-bg" />}>
+          <LandingPage
+            installerUrl={serverConfig.installerUrl}
+            canInstallPWA={Boolean(installPrompt)}
+            onInstallPWA={handleInstallPWA}
+            onEnterWorkspace={navigateToApp}
+          />
+        </Suspense>
+        <ToastContainer />
+      </>
+    );
+  }
+
+  const isServerLocked =
+    serverConfig.checked &&
+    serverConfig.requiresFullLock &&
+    serverConfig.requiresPin &&
+    !serverConfig.authorized &&
+    !apiKey;
+
+  if (isServerLocked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-obsidian-bg text-obsidian-text p-4">
+        <div className="w-full max-w-sm bg-obsidian-surface border border-obsidian-border rounded-2xl p-6 shadow-2xl">
+          <div className="w-11 h-11 rounded-xl bg-obsidian-bg border border-obsidian-border flex items-center justify-center mb-4">
+            <svg className="w-5 h-5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </div>
+          <h1 className="text-base font-semibold text-obsidian-text">JEEVA AI Workspace</h1>
+          <p className="text-xs text-obsidian-muted mt-1 mb-5">
+            Enter your Access PIN to unlock your Render-hosted AI workspace.
+          </p>
+          <form onSubmit={handleUnlockApp} className="space-y-3">
+            <input
+              type="password"
+              inputMode="numeric"
+              autoFocus
+              value={pinEntry}
+              onChange={(e) => setPinEntry(e.target.value)}
+              placeholder="Enter Access PIN..."
+              className="w-full bg-obsidian-bg border border-obsidian-border rounded-xl px-3.5 py-2.5 text-sm font-mono tracking-widest text-obsidian-text placeholder:text-obsidian-muted placeholder:tracking-normal focus:outline-none focus:border-zinc-500"
+            />
+            {pinError && <p className="text-xs text-red-400">{pinError}</p>}
+            <button
+              type="submit"
+              disabled={unlocking || !pinEntry.trim()}
+              className="w-full py-2.5 rounded-xl bg-zinc-100 text-zinc-950 text-xs font-semibold hover:bg-white transition-colors disabled:opacity-40"
+            >
+              {unlocking ? 'Verifying...' : 'Unlock Workspace'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (windowMode === 'speaker') {
+    return (
+      <>
+        <SpeakerPill
+          aiName={aiName}
+          onSend={handleSend}
+          isLoading={isLoading}
+          lastAssistantMessage={lastAssistantMessage}
+          liveStats={liveStats}
+          voiceEngine={voiceEngine}
+          onExpandToChat={() => switchWindowMode('full')}
+          onOpenCortana={() => switchWindowMode('cortana')}
+          autoListenSignal={autoListenSignal}
+        />
+        <PermissionModal request={permissionRequest} onDecision={handlePermissionDecision} />
+        <ToastContainer />
+      </>
+    );
+  }
+
+  if (windowMode === 'cortana') {
+    return (
+      <>
+        <CortanaView
+          aiName={aiName}
+          onSend={handleSend}
+          isLoading={isLoading}
+          lastAssistantMessage={lastAssistantMessage}
+          voiceEngine={voiceEngine}
+          onExpandToChat={() => switchWindowMode('full')}
+          onSwitchSpeaker={() => switchWindowMode('speaker')}
+          onOpenSettings={() => setShowSettings(true)}
+          onOpenMobileModal={() => setShowMobileModal(true)}
+          voiceMode={voiceMode}
+          onVoiceModeChange={setVoiceMode}
+          autoListenSignal={autoListenSignal}
+        />
+
+        <Suspense fallback={null}>
+          {showSettings && (
+            <SettingsPanel
+              apiKey={apiKey}
+              onApiKeyChange={setApiKey}
+              ttsEnabled={ttsEnabled}
+              onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
+              voiceMode={voiceMode}
+              onVoiceModeChange={setVoiceMode}
+              model={model}
+              onModelChange={setModel}
+              customInstructions={customInstructions}
+              onCustomInstructionsChange={setCustomInstructions}
+              onExportChat={handleExportChat}
+              onClearHistory={handleClearHistory}
+              canInstallPWA={Boolean(installPrompt)}
+              onInstallPWA={handleInstallPWA}
+              onOpenWizard={() => setShowWizard(true)}
+              serverConfig={serverConfig}
+              onUnlockOwner={unlockOwnerKey}
+              onClose={() => setShowSettings(false)}
+            />
+          )}
+
+          {showMobileModal && (
+            <MobileConnectModal isOpen={showMobileModal} onClose={() => setShowMobileModal(false)} />
+          )}
+          {showWizard && window.electronAPI && (
+            <OnboardingWizard
+              initialApiKey={apiKey}
+              initialCloudUrl={cloudApiUrl}
+              onSaveApiKey={setApiKey}
+              onSaveCloudUrl={updateCloudApiUrl}
+              onUnlockOwner={unlockOwnerKey}
+              onComplete={() => setShowWizard(false)}
+            />
+          )}
+        </Suspense>
+
+        <PermissionModal request={permissionRequest} onDecision={handlePermissionDecision} />
+        <ToastContainer />
+      </>
+    );
+  }
+
+  return (
+    <div className="h-screen flex flex-col bg-obsidian-bg text-obsidian-text overflow-hidden">
+      <TitleBar
+        aiName={aiName}
+        onMenuClick={() => setShowSidebar(!showSidebar)}
+        onSettingsClick={() => setShowSettings(true)}
+        onNewChat={handleNewChat}
+        onOpenPalette={() => setShowPalette(true)}
+        onOpenMobileModal={() => setShowMobileModal(true)}
+        onOpenPcControl={openPcControlCenter}
+        onSwitchCortana={() => switchWindowMode('cortana')}
+        onSwitchSpeaker={() => switchWindowMode('speaker')}
+        wakeEnabled={voiceEngine.wakeEnabled}
+        orbState={voiceEngine.orbState}
+        onToggleWake={voiceEngine.toggleWake}
+        canInstallPWA={Boolean(installPrompt)}
+        onInstallPWA={handleInstallPWA}
+        model={model}
+        onModelChange={setModel}
+        liveStats={liveStats}
+      />
+
+      <div className="flex flex-1 overflow-hidden">
+        {showSidebar && (
+          <Sidebar
+            conversations={conversations}
+            onSelect={handleLoadConv}
+            onDelete={handleDeleteConv}
+            onNewChat={handleNewChat}
+            onOpenSettings={() => setShowSettings(true)}
+            onOpenPcControl={openPcControlCenter}
+            onQuickPrompt={(p) => handleSend(p)}
+            isReady={isReady}
+            liveStats={liveStats}
+          />
+        )}
+
+        <main className="flex-1 flex flex-col min-w-0 bg-obsidian-bg">
+          {messages.length === 0 && !isLoading ? (
+            <WelcomeScreen
+              onSuggestionClick={(p) => handleSend(p)}
+              isReady={isReady}
+              onSetupClick={() => setShowSettings(true)}
+            />
+          ) : (
+            <ChatWindow messages={messages} onEdit={handleEditMessage} onRegenerate={handleRegenerate} />
+          )}
+
+          <AudioPlayerBar />
+
+          <InputBar
+            onSend={handleSend}
+            isLoading={isLoading}
+            isReady={isReady}
+            ttsEnabled={ttsEnabled}
+            onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
+            voiceMode={voiceMode}
+            onVoiceModeChange={setVoiceMode}
+            onClear={handleClearHistory}
+            onExport={handleExportChat}
+          />
+        </main>
+      </div>
+
+      <Suspense fallback={null}>
+        {showSettings && (
+          <SettingsPanel
+            apiKey={apiKey}
+            onApiKeyChange={setApiKey}
+            ttsEnabled={ttsEnabled}
+            onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
+            voiceMode={voiceMode}
+            onVoiceModeChange={setVoiceMode}
+            model={model}
+            onModelChange={setModel}
+            customInstructions={customInstructions}
+            onCustomInstructionsChange={setCustomInstructions}
+            onExportChat={handleExportChat}
+            onClearHistory={handleClearHistory}
+            canInstallPWA={Boolean(installPrompt)}
+            onInstallPWA={handleInstallPWA}
+            onOpenWizard={() => setShowWizard(true)}
+            serverConfig={serverConfig}
+            onUnlockOwner={unlockOwnerKey}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
+
+        {showMobileModal && (
+          <MobileConnectModal isOpen={showMobileModal} onClose={() => setShowMobileModal(false)} />
+        )}
+
+        {showPcControl && (
+          <PcControlCenterModal
+            isOpen={showPcControl}
+            initialTab={pcControlTab}
+            onClose={() => setShowPcControl(false)}
+            liveStats={liveStats}
+          />
+        )}
+
+        {showWizard && window.electronAPI && (
+          <OnboardingWizard
+            initialApiKey={apiKey}
+            initialCloudUrl={cloudApiUrl}
+            onSaveApiKey={setApiKey}
+            onSaveCloudUrl={updateCloudApiUrl}
+            onUnlockOwner={unlockOwnerKey}
+            onComplete={() => setShowWizard(false)}
+          />
+        )}
+      </Suspense>
+
+      <CommandPalette
+        isOpen={showPalette}
+        onClose={() => setShowPalette(false)}
+        onRunPrompt={(p) => handleSend(p)}
+        onNewChat={handleNewChat}
+        onOpenSettings={() => setShowSettings(true)}
+        onOpenPcControl={openPcControlCenter}
+        onToggleTTS={() => setTtsEnabled(t => !t)}
+        onExportChat={handleExportChat}
+        onClearHistory={handleClearHistory}
+        conversations={conversations}
+        onSelectConv={handleLoadConv}
+      />
+
+      <PermissionModal request={permissionRequest} onDecision={handlePermissionDecision} />
+      <ToastContainer />
+    </div>
+  );
+}
