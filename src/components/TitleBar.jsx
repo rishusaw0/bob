@@ -12,6 +12,7 @@ import {
   LuDownload,
   LuVolume2,
   LuRadio,
+  LuEyeOff,
 } from 'react-icons/lu';
 
 export default function TitleBar({
@@ -123,6 +124,17 @@ export default function TitleBar({
             {orbState === 'listening' ? 'Listening...' : wakeEnabled ? `Hey ${aiName}` : 'Wake Off'}
           </span>
         </button>
+
+        {isElectron && (
+          <button
+            onClick={() => window.electronAPI.hideToTray?.()}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-obsidian-bg hover:bg-obsidian-elevated border border-obsidian-border text-[11px] font-mono text-obsidian-secondary hover:text-amber-300 transition-colors mr-1"
+            title={`Hide to Camera Notch (Always Listening in Background — Say "Hey ${aiName}")`}
+          >
+            <LuEyeOff className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden lg:inline">Hide</span>
+          </button>
+        )}
 
         <button
           onClick={onSwitchSpeaker}

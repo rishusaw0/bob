@@ -33,7 +33,7 @@ import {
   parseVoiceConfirmation,
 } from './services/voicePermissionPrompt';
 import { refreshRenderRelayDevices, setPairToken, getAuthHeaders } from './services/bridge';
-import { getAiName, getStrictVoiceMode } from './services/voiceRouter';
+import { getAiName, getStrictVoiceMode, getWakeOpenMode } from './services/voiceRouter';
 import { runLocalQuickBrain, buildLocalTitle } from './services/localQuickBrain';
 import { runLocalSlmTurn } from './services/localLlm';
 import {
@@ -381,7 +381,10 @@ export default function App() {
     if (!api) return;
     const unsubMode = api.onWindowModeChange?.((mode) => setWindowMode(mode));
     const unsubWake = api.onHotkeyWake?.(() => {
-      setWindowMode('cortana');
+      const wakeTarget = getWakeOpenMode();
+      if (wakeTarget !== 'notch') {
+        setWindowMode(wakeTarget);
+      }
       setAutoListenSignal((n) => n + 1);
     });
     const unsubPcControl = api.onOpenPcControl?.((tab) => {
@@ -912,7 +915,9 @@ export default function App() {
       ((window.electronAPI && (isReady || brainMode !== 'cloud')) ||
         (isReady && routeView === 'app' && windowMode !== 'full'))
     ),
-    onWakeOpen: (mode) => setWindowMode(mode),
+    onWakeOpen: (mode) => {
+      if (mode && mode !== 'notch') setWindowMode(mode);
+    },
   });
 
   const handleLoadConv = useCallback((conv) => {

@@ -581,6 +581,7 @@ export default function SettingsPanel({
                     }}
                     className="bg-obsidian-surface border border-obsidian-border rounded-md px-2 py-1 text-[11px] text-obsidian-text focus:outline-none"
                   >
+                    <option value="notch">Camera Notch Island (Top-Center · Auto-Hide)</option>
                     <option value="cortana">Voice Panel (Overlay)</option>
                     <option value="full">Full Workstation Window</option>
                     <option value="speaker">Mini Speaker Pill</option>

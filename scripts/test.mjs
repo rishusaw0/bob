@@ -325,6 +325,8 @@ const exactWake = matchWakePhrase('Hey Jeeva', 'Jeeva');
 assert.equal(exactWake.matched, true);
 assert.equal(exactWake.command, '');
 
+assert.equal(setWakeOpenMode('notch'), 'notch');
+assert.equal(getWakeOpenMode(), 'notch');
 assert.equal(setWakeOpenMode('full'), 'full');
 assert.equal(getWakeOpenMode(), 'full');
 assert.equal(setWakeOpenMode('cortana'), 'cortana');

@@ -16,10 +16,78 @@ function createWindowManager({
   getWatchdogAlert,
 }) {
   let mainWindow = null;
+  let notchWindow = null;
+  let notchHideTimer = null;
   let reticleWindow = null;
   let tray = null;
   let trayRefreshTimer = null;
   let currentWindowMode = 'full';
+
+  function createNotchWindow() {
+    if (notchWindow && !notchWindow.isDestroyed()) return notchWindow;
+    const primary = screen.getPrimaryDisplay();
+    const b = primary.bounds;
+    const width = 416;
+    const height = 104;
+    const x = b.x + Math.round((b.width - width) / 2);
+    const y = b.y;
+
+    notchWindow = new BrowserWindow({
+      width,
+      height,
+      x,
+      y,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      focusable: false,
+      resizable: false,
+      hasShadow: false,
+      show: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        backgroundThrottling: false,
+      },
+    });
+    notchWindow.setAlwaysOnTop(true, 'screen-saver');
+    notchWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    notchWindow.loadFile(path.join(__dirname, 'notch-overlay.html')).catch(() => {});
+    return notchWindow;
+  }
+
+  function updateNotchState(state = {}) {
+    try {
+      const nw = createNotchWindow();
+      if (!nw || nw.isDestroyed()) return false;
+      clearTimeout(notchHideTimer);
+
+      const primary = screen.getPrimaryDisplay();
+      const b = primary.bounds;
+      const width = 416;
+      const x = b.x + Math.round((b.width - width) / 2);
+      nw.setPosition(x, b.y, false);
+      nw.setAlwaysOnTop(true, 'screen-saver');
+      nw.webContents.send('notch:state', state);
+
+      if (state.visible) {
+        if (!nw.isVisible()) nw.showInactive();
+      } else {
+        notchHideTimer = setTimeout(() => {
+          try {
+            if (notchWindow && !notchWindow.isDestroyed() && notchWindow.isVisible()) {
+              notchWindow.hide();
+            }
+          } catch {}
+        }, 230);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   async function showClickReticle(physX, physY, scaleFactor = 1) {
     try {
@@ -76,10 +144,8 @@ function createWindowManager({
     });
 
     mainWindow.on('close', (event) => {
-      const keepInTray = Boolean(
-        getCloudRelay?.()?.getStatus?.().enabled || getAutoLaunchManager?.()?.isEnabled?.()
-      );
-      if (!app.isQuitting && keepInTray) {
+      // Keep JEEVA alive in System Tray by default so Always-On Voice & Camera Notch stay ready 24/7
+      if (!app.isQuitting) {
         event.preventDefault();
         mainWindow.hide();
       }
@@ -166,12 +232,16 @@ function createWindowManager({
 
   function wakeCortanaOverlay() {
     if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-    applyWindowMode('cortana');
+    updateNotchState({ visible: true, orbState: 'listening', transcript: 'Listening...' });
     emitRendererEvent('hotkey:wake');
   }
 
-  function wakeRestore(preferredMode = 'cortana') {
+  function wakeRestore(preferredMode = 'notch') {
     if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    if (preferredMode === 'notch') {
+      updateNotchState({ visible: true, orbState: 'listening', transcript: 'Listening...' });
+      return 'notch';
+    }
     if (mainWindow.isMinimized()) mainWindow.restore();
     const target = ['cortana', 'full', 'speaker'].includes(preferredMode) ? preferredMode : 'cortana';
     applyWindowMode(target);
@@ -201,8 +271,10 @@ function createWindowManager({
       ...(wdAlert ? [{ label: `Alert: ${wdAlert.title}`, enabled: false }] : []),
       { type: 'separator' },
       { label: 'Open Full Chat', click: () => applyWindowMode('full') },
+      { label: 'Hide to Camera Notch (Background)', click: () => mainWindow?.hide?.() },
+      { label: 'Show Camera Notch Pill (Alt+Space)', click: () => wakeCortanaOverlay() },
       { label: 'Mini Speaker Mode (Floating Pill)', click: () => applyWindowMode('speaker') },
-      { label: 'Cortana Voice Panel (Alt+Space)', click: () => wakeCortanaOverlay() },
+      { label: 'Cortana Voice Panel', click: () => applyWindowMode('cortana') },
       {
         label: 'Open PC Control Center',
         click: () => {
@@ -282,6 +354,11 @@ function createWindowManager({
   }
 
   function disposeTray() {
+    clearTimeout(notchHideTimer);
+    if (notchWindow && !notchWindow.isDestroyed()) {
+      try { notchWindow.destroy(); } catch {}
+      notchWindow = null;
+    }
     if (trayRefreshTimer) {
       clearInterval(trayRefreshTimer);
       trayRefreshTimer = null;
@@ -290,6 +367,9 @@ function createWindowManager({
 
   return {
     getMainWindow: () => mainWindow,
+    getNotchWindow: () => notchWindow,
+    createNotchWindow,
+    updateNotchState,
     getCurrentMode: () => currentWindowMode,
     showClickReticle,
     createWindow,

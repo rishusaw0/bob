@@ -21,12 +21,12 @@ const WAKE_ENABLED_KEY = 'jeeva_wake_word';
 const WAKE_OPEN_MODE_KEY = 'jeeva_wake_open_mode';
 
 export function getWakeOpenMode() {
-  const mode = localStorage.getItem(WAKE_OPEN_MODE_KEY) || 'cortana';
-  return ['cortana', 'full', 'speaker'].includes(mode) ? mode : 'cortana';
+  const mode = localStorage.getItem(WAKE_OPEN_MODE_KEY) || 'notch';
+  return ['notch', 'cortana', 'full', 'speaker'].includes(mode) ? mode : 'notch';
 }
 
 export function setWakeOpenMode(mode) {
-  const clean = ['cortana', 'full', 'speaker'].includes(mode) ? mode : 'cortana';
+  const clean = ['notch', 'cortana', 'full', 'speaker'].includes(mode) ? mode : 'notch';
   localStorage.setItem(WAKE_OPEN_MODE_KEY, clean);
   return clean;
 }

@@ -64,6 +64,9 @@ export interface ElectronBridgeAPI {
   extractDocText: (payload: { filePath?: string; base64?: string; name?: string }) => Promise<any>;
   screenRead: (mode?: 'read' | 'ocr' | 'click_text', targetText?: string) => Promise<any>;
   offlineVoiceDictate: (timeoutSec?: number) => Promise<{ text: string; confidence?: number }>;
+  updateNotchState: (state: { visible?: boolean; orbState?: string; aiName?: string; transcript?: string; replyText?: string; freqBands?: number[] }) => Promise<boolean>;
+  notchAction: (action: 'hide' | 'open_chat' | 'toggle_mic') => Promise<any>;
+  onNotchEvent: (cb: (ev: { action: string }) => void) => () => void;
 }
 
 declare global {

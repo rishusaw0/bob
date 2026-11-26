@@ -157,4 +157,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('hotkey:wake', handler);
     return () => ipcRenderer.removeListener('hotkey:wake', handler);
   },
+  updateNotchState: (state) => ipcRenderer.invoke('notch:update', state),
+  notchAction: (action) => ipcRenderer.invoke('notch:action', action),
+  onNotchState: (cb) => {
+    const handler = (_, state) => cb(state);
+    ipcRenderer.on('notch:state', handler);
+    return () => ipcRenderer.removeListener('notch:state', handler);
+  },
+  onNotchEvent: (cb) => {
+    const handler = (_, ev) => cb(ev);
+    ipcRenderer.on('notch:event', handler);
+    return () => ipcRenderer.removeListener('notch:event', handler);
+  },
 });

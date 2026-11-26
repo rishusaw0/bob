@@ -293,8 +293,18 @@ app.whenReady().then(() => {
   });
 
   const mainWin = windowManager.createWindow();
+  windowManager.createNotchWindow();
   windowManager.setupTray();
   cloudRelay.initAutoConnect();
+
+  // Auto-enable background startup on first launch so JEEVA is always listening after PC boot
+  try {
+    const autoFlagPath = path.join(app.getPath('userData'), 'auto-launch-init.done');
+    if (app.isPackaged && !fs.existsSync(autoFlagPath)) {
+      getAutoLaunchManager().setEnabled(true);
+      fs.writeFileSync(autoFlagPath, String(Date.now()), 'utf8');
+    }
+  } catch {}
 
   if (pendingDeepLinkUrl && mainWin) {
     mainWin.webContents.once('did-finish-load', () => {
@@ -494,5 +504,24 @@ ipcMain.handle('window:setMode', (_, mode) => {
   windowManager.applyWindowMode(mode);
   return windowManager.getCurrentMode();
 });
-ipcMain.handle('window:wakeRestore', (_, preferredMode = 'cortana') => windowManager.wakeRestore(preferredMode));
+ipcMain.handle('window:wakeRestore', (_, preferredMode = 'notch') => windowManager.wakeRestore(preferredMode));
 ipcMain.handle('window:hideToTray', () => windowManager.getMainWindow()?.hide());
+ipcMain.handle('notch:update', (_, state) => windowManager.updateNotchState(state || {}));
+ipcMain.handle('notch:action', (_, action) => {
+  const act = String(action || '').toLowerCase();
+  if (act === 'hide') {
+    windowManager.updateNotchState({ visible: false });
+    emitRendererEvent('notch:event', { action: 'hide' });
+    return { ok: true };
+  }
+  if (act === 'open_chat') {
+    windowManager.updateNotchState({ visible: false });
+    windowManager.applyWindowMode('full');
+    return { ok: true };
+  }
+  if (act === 'toggle_mic') {
+    emitRendererEvent('notch:event', { action: 'toggle_mic' });
+    return { ok: true };
+  }
+  return { ok: false };
+});

@@ -56,6 +56,8 @@ export function useVoiceEngine({
   const voiceFollowUpPendingRef = useRef(false);
   const prevSpeakingRef = useRef(false);
   const followUpTimerRef = useRef(null);
+  const notchHiddenRef = useRef(false);
+  const notchHideTimerRef = useRef(null);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -157,6 +159,8 @@ export function useVoiceEngine({
   const startCommandListening = useCallback(
     ({ isFollowUp = false, noSpeechTimeoutMs = 5800 } = {}) => {
       clearTimeout(followUpTimerRef.current);
+      clearTimeout(notchHideTimerRef.current);
+      notchHiddenRef.current = false;
       if (!isFollowUp) stopSpeech();
       stopWakeListener();
       stopBargeIn();
@@ -206,8 +210,12 @@ export function useVoiceEngine({
 
   const handleWakeActivation = useCallback(
     (inlineCmd, info = {}) => {
+      notchHiddenRef.current = false;
+      clearTimeout(notchHideTimerRef.current);
       const targetMode = getWakeOpenMode();
-      onWakeOpen?.(targetMode);
+      if (targetMode !== 'notch') {
+        onWakeOpen?.(targetMode);
+      }
       window.electronAPI?.wakeRestore?.(targetMode)?.catch?.(() => {});
 
       if (inlineCmd && inlineCmd.trim()) {
@@ -222,9 +230,34 @@ export function useVoiceEngine({
 
   useEffect(() => {
     if (enabled && autoListenSignal > 0) {
+      notchHiddenRef.current = false;
       startCommandListening();
     }
   }, [enabled, autoListenSignal, startCommandListening]);
+
+  // Sync live voice activity (listening / thinking / speaking / waveform) -> Top-Center Camera Notch Island
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.updateNotchState) return;
+
+    if (orbState !== 'idle') {
+      clearTimeout(notchHideTimerRef.current);
+      if (!notchHiddenRef.current) {
+        api.updateNotchState({
+          visible: true,
+          orbState,
+          aiName,
+          transcript: liveTranscript,
+          freqBands: activeFreqBands,
+        }).catch(() => {});
+      }
+    } else if (!voiceFollowUpPendingRef.current) {
+      clearTimeout(notchHideTimerRef.current);
+      notchHideTimerRef.current = setTimeout(() => {
+        api.updateNotchState({ visible: false, orbState: 'idle', aiName }).catch(() => {});
+      }, 900);
+    }
+  }, [orbState, aiName, liveTranscript, activeFreqBands]);
 
   // Real-time Barge-In monitor while JEEVA TTS is speaking (say "Ruk" / "Stop" or interrupt naturally)
   useEffect(() => {
@@ -425,8 +458,25 @@ export function useVoiceEngine({
   ]);
 
   useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onNotchEvent) return;
+    return api.onNotchEvent((ev) => {
+      if (ev?.action === 'hide') {
+        notchHiddenRef.current = true;
+        voiceFollowUpPendingRef.current = false;
+        fadeOutAndStopSpeech(90);
+        stopCommandCapture(false);
+        setPhase('idle');
+      } else if (ev?.action === 'toggle_mic') {
+        toggleOrb();
+      }
+    });
+  }, [toggleOrb, stopCommandCapture]);
+
+  useEffect(() => {
     return () => {
       clearTimeout(followUpTimerRef.current);
+      clearTimeout(notchHideTimerRef.current);
       stopCommandCapture(false);
       stopWakeListener();
       stopBargeIn();
