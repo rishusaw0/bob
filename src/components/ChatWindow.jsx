@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import MessageBubble from './MessageBubble';
 
-export default function ChatWindow({ messages, onEdit, onRegenerate, onPermissionDecision }) {
+export default function ChatWindow({ messages, onEdit, onRegenerate, onEscalateToGemini, onPermissionDecision }) {
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -17,6 +17,7 @@ export default function ChatWindow({ messages, onEdit, onRegenerate, onPermissio
             message={msg}
             onEdit={msg.role === 'user' ? onEdit : undefined}
             onRegenerate={msg.role === 'assistant' && !msg.isTyping && !msg.permissionPrompt ? onRegenerate : undefined}
+            onEscalateToGemini={msg.role === 'assistant' && !msg.isTyping && !msg.permissionPrompt ? onEscalateToGemini : undefined}
             onPermissionDecision={msg.permissionPrompt ? onPermissionDecision : undefined}
           />
         ))}

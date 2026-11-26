@@ -29,6 +29,7 @@ const { createAutoLaunchManager, APP_MODEL_ID } = require('./auto-launch.cjs');
 const { createMemoryStore } = require('./memory-store.cjs');
 const { createSystemWatchdog } = require('./system-watchdog.cjs');
 const { createWindowManager } = require('./window-manager.cjs');
+const { createLocalBrainManager } = require('./local-brain.cjs');
 
 let bridgeServer = null;
 let permissionGuard = null;
@@ -41,6 +42,7 @@ let memoryStore = null;
 let systemWatchdog = null;
 let lastWatchdogAlert = null;
 let windowManager = null;
+let localBrain = null;
 
 function resolveUnpackedPath(...parts) {
   const p = path.join(__dirname, ...parts);
@@ -77,6 +79,16 @@ function getMemoryStore() {
     memoryStore = createMemoryStore({ userDataDir: app.getPath('userData') });
   }
   return memoryStore;
+}
+
+function getLocalBrain() {
+  if (!localBrain) {
+    localBrain = createLocalBrainManager({
+      userDataDir: app.getPath('userData'),
+      onProgress: (ev) => emitRendererEvent('brain:progress', ev),
+    });
+  }
+  return localBrain;
 }
 
 function getOrCreateBridgePin() {
@@ -338,6 +350,11 @@ app.whenReady().then(() => {
   ipcMain.handle('updater:download', (_, url) => appUpdater.downloadAndInstall(url));
   ipcMain.handle('updater:getState', () => appUpdater.getState());
 
+  ipcMain.handle('brain:status', () => getLocalBrain().getStatus());
+  ipcMain.handle('brain:setup', (_, action, payload) => getLocalBrain().setup(action, payload));
+  ipcMain.handle('brain:stop', () => getLocalBrain().stopSidecar());
+  ipcMain.handle('brain:chat', (_, opts) => getLocalBrain().chat(opts || {}));
+
   pcActionKit.startClipboardWatcher();
   getScheduler();
   getMemoryStore();
@@ -355,6 +372,7 @@ app.whenReady().then(() => {
 app.on('will-quit', () => {
   windowManager?.disposeTray?.();
   systemWatchdog?.stop?.();
+  localBrain?.stopSidecar?.();
   pcActionKit.stopClipboardWatcher();
   pcScheduler?.dispose?.();
   offlineVoice?.stop?.();

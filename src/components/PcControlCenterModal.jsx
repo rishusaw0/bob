@@ -22,6 +22,7 @@ import {
 import { getSystemAPI } from '../services/bridge';
 import { getAuditLog } from '../services/permissions';
 import { rememberUserMemory, listAllMemories, forgetMemoryItem } from '../services/memoryRag';
+import { getBrainStats } from '../services/brainRouter';
 import { toast } from '../services/toast';
 
 function parseJsonSafe(val, fallback) {
@@ -855,6 +856,24 @@ export default function PcControlCenterModal({
 
           {api && tab === 'audit' && (
             <div className="space-y-4">
+              {/* Hybrid Local Brain API Savings Banner */}
+              {(() => {
+                const bs = getBrainStats();
+                return (
+                  <div className="p-3 rounded-xl bg-obsidian-bg border border-emerald-500/30 flex items-center justify-between gap-2 flex-wrap text-xs">
+                    <div>
+                      <span className="font-mono text-emerald-300 font-semibold">{bs.localPct}% Offline/Local</span>
+                      <span className="text-obsidian-muted ml-2">
+                        ({bs.localFast} instant · {bs.localIntent} semantic · {bs.localSlm} SLM vs {bs.cloudCalls} Gemini)
+                      </span>
+                    </div>
+                    <span className="font-mono text-[11px] text-obsidian-secondary">
+                      ~{bs.estimatedTokensSaved.toLocaleString()} tokens saved
+                    </span>
+                  </div>
+                );
+              })()}
+
               {/* Persistent Local Memory RAG Panel */}
               <div className="p-3.5 rounded-xl bg-obsidian-bg border border-obsidian-border space-y-2.5">
                 <p className="text-[11px] font-mono uppercase tracking-wider text-emerald-400">

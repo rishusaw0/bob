@@ -31,6 +31,7 @@ import {
   LuShieldAlert,
   LuX,
   LuMic,
+  LuSparkles,
 } from 'react-icons/lu';
 import { speakText } from '../services/speech';
 import { toast } from '../services/toast';
@@ -236,7 +237,7 @@ function StreamingText({ text, isStreaming }) {
   );
 }
 
-export default function MessageBubble({ message, onEdit, onRegenerate, onPermissionDecision }) {
+export default function MessageBubble({ message, onEdit, onRegenerate, onEscalateToGemini, onPermissionDecision }) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
@@ -539,9 +540,37 @@ export default function MessageBubble({ message, onEdit, onRegenerate, onPermiss
 
           {/* Action Bar */}
           {message.text && (
-            <div className="flex items-center gap-2 mt-2 opacity-70 group-hover:opacity-100 transition-opacity flex-wrap">
+            <div className="flex items-center gap-2 mt-2 opacity-75 group-hover:opacity-100 transition-opacity flex-wrap">
+              {message.brainMeta?.tier && (
+                <span
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                    message.brainMeta.tier === 'cloud'
+                      ? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
+                      : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+                  }`}
+                  title={message.brainMeta.modelLabel || 'Routing Tier'}
+                >
+                  {message.brainMeta.tier === 'cloud'
+                    ? 'Gemini Cloud'
+                    : message.brainMeta.tier === 'local-slm'
+                      ? `Local SLM`
+                      : message.brainMeta.tier === 'intent'
+                        ? 'Local Intent'
+                        : 'Instant Local'}
+                </span>
+              )}
               {message.timestamp && (
                 <span className="text-[11px] font-mono text-obsidian-muted">{message.timestamp}</span>
+              )}
+              {onEscalateToGemini && message.brainMeta?.tier && message.brainMeta.tier !== 'cloud' && (
+                <button
+                  onClick={() => onEscalateToGemini(message.id)}
+                  className="inline-flex items-center gap-1 text-[11px] text-sky-300 hover:text-sky-200 transition-colors"
+                  title="Send this exact question to Gemini Cloud API instead"
+                >
+                  <LuSparkles className="w-3 h-3" />
+                  Ask Gemini
+                </button>
               )}
               <button
                 onClick={handleCopy}

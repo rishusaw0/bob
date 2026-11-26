@@ -33,7 +33,16 @@ import {
   parseVoiceConfirmation,
 } from './services/voicePermissionPrompt';
 import { refreshRenderRelayDevices, setPairToken, getAuthHeaders } from './services/bridge';
-import { getAiName, getStrictVoiceMode, tryFastVoiceAction } from './services/voiceRouter';
+import { getAiName, getStrictVoiceMode } from './services/voiceRouter';
+import { runLocalQuickBrain, buildLocalTitle } from './services/localQuickBrain';
+import { runLocalSlmTurn } from './services/localLlm';
+import {
+  getBrainMode,
+  setBrainMode as persistBrainMode,
+  assessQueryRouting,
+  recordBrainUsage,
+  compactHistoryForCloud,
+} from './services/brainRouter';
 import { useVoiceEngine } from './services/useVoiceEngine';
 import { useWatchdogAndStats } from './hooks/useWatchdogAndMemory';
 import ToastContainer from './components/ToastContainer';
@@ -83,6 +92,7 @@ export default function App() {
   const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem('jeeva_tts') === 'true');
   const [voiceMode, setVoiceMode] = useState(() => getVoiceMode());
   const [aiName, setAiNameState] = useState(() => getAiName());
+  const [brainMode, setBrainModeState] = useState(() => getBrainMode());
   const [permissionRequest, setPermissionRequest] = useState(null);
   const [serverConfig, setServerConfig] = useState({
     checked: Boolean(window.electronAPI),
@@ -600,19 +610,25 @@ export default function App() {
     });
   }, [handlePermissionDecision]);
 
+  useEffect(() => {
+    const onBrainModeEvent = (ev) => {
+      if (ev?.detail) setBrainModeState(ev.detail);
+    };
+    window.addEventListener('jeeva-brain-mode-changed', onBrainModeEvent);
+    return () => window.removeEventListener('jeeva-brain-mode-changed', onBrainModeEvent);
+  }, []);
+
   const handleSend = useCallback(async (text, attachment = null, meta = null) => {
     if (!text.trim() && !attachment) return;
 
     const fromVoice = Boolean(meta?.fromVoice);
+    const forceCloud = Boolean(meta?.forceCloud);
+    const routing = assessQueryRouting(text, attachment, forceCloud ? 'cloud' : brainMode);
+    const promptText = routing.cleanText;
+
     lastUserPromptRef.current = String(meta?.rawVoiceText || text).trim();
     activeVoiceTurnRef.current = fromVoice;
     voiceprintMismatchRef.current = meta?.speakerVerified === false;
-    if (!isReady && !fromVoice) {
-      activeVoiceTurnRef.current = false;
-      voiceprintMismatchRef.current = false;
-      setShowSettings(true);
-      return;
-    }
 
     const userMsg = {
       id: Date.now(),
@@ -625,54 +641,123 @@ export default function App() {
     setMessages(prev => [...prev, userMsg]);
     setIsLoading(true);
 
-    // Auto-generate AI title for first message in conversation
-    if (messages.length === 0 && text.trim() && isReady) {
-      generateTitle(text.trim()).then((aiTitle) => {
-        if (aiTitle) {
-          setMessages((prev) =>
-            prev.map((m) => (m.id === userMsg.id ? { ...m, aiTitle } : m))
-          );
-        }
-      });
-    }
-
     const typingId = Date.now() + 1;
     setMessages(prev => [...prev, { id: typingId, role: 'assistant', text: '', tools: [], isTyping: true }]);
 
     try {
-      // Master Voice Fast-Path: zero-latency deterministic execution for unambiguous OS controls
-      if (fromVoice && !attachment) {
-        const fast = await tryFastVoiceAction(text, requestPermission);
-        if (fast?.handled) {
+      // Tier-0 & Tier-1: Zero-API Deterministic + Semantic Intent Local Brain (Chat + Voice unified)
+      if (!forceCloud && !routing.forceCloud && !attachment) {
+        const quick = await runLocalQuickBrain(promptText, { requestPermission });
+        if (quick?.handled) {
+          recordBrainUsage(quick.tier || 'fast', promptText.length);
+          const localTitle = messages.length === 0 ? buildLocalTitle(promptText) : null;
+          if (localTitle) {
+            setMessages(prev => prev.map(m => (m.id === userMsg.id ? { ...m, aiTitle: localTitle } : m)));
+          }
           setMessages(prev =>
             prev.map(m =>
               m.id === typingId
                 ? {
                     ...m,
-                    text: fast.replyText || 'Done.',
+                    text: quick.replyText || 'Done.',
                     isTyping: false,
-                    image: fast.image || null,
-                    tools: fast.tools || [],
+                    image: quick.image || null,
+                    tools: quick.tools || [],
+                    brainMeta: { tier: quick.tier || 'fast', modelLabel: quick.modelLabel || 'Instant Local' },
                     timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
                   }
                 : m
             )
           );
-          if (fast.replyText) {
-            speakText(fast.replyText, { label: 'Confirmed' });
+          if ((ttsEnabled || fromVoice) && quick.replyText) {
+            speakText(quick.replyText, { label: 'Local Brain' });
           }
           return;
         }
       }
 
-      if (!isReady) {
-        switchWindowMode('full');
-        setShowSettings(true);
-        throw new Error('Connect Cloud AI URL or add your Gemini API key in Settings.');
+      // Tier-2: Low-End Friendly Local SLM Brain (Qwen2.5-0.5B/1.5B / Gemma3-1B with Top-4 Tool Pruning)
+      if (routing.shouldTryLocalFirst && !attachment) {
+        const slm = await runLocalSlmTurn({
+          text: promptText,
+          historyMessages: messages,
+          requestPermission,
+          fromVoice,
+          onToolUpdate: (toolsSnapshot) => {
+            setMessages(prev => prev.map(m => (m.id === typingId ? { ...m, tools: toolsSnapshot } : m)));
+          },
+        });
+        if (slm?.handled) {
+          recordBrainUsage('local-slm', promptText.length);
+          const localTitle = messages.length === 0 ? buildLocalTitle(promptText) : null;
+          if (localTitle) {
+            setMessages(prev => prev.map(m => (m.id === userMsg.id ? { ...m, aiTitle: localTitle } : m)));
+          }
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === typingId
+                ? {
+                    ...m,
+                    text: slm.replyText,
+                    isTyping: false,
+                    image: slm.image || null,
+                    tools: slm.tools || [],
+                    brainMeta: { tier: 'local-slm', modelLabel: slm.modelLabel || 'Local SLM' },
+                    timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                  }
+                : m
+            )
+          );
+          if ((ttsEnabled || fromVoice) && slm.replyText) {
+            speakText(slm.replyText, { label: 'Local SLM' });
+          }
+          return;
+        }
       }
 
+      // Offline-Only Guard: never leak traffic or bill Gemini API if user locked Offline Brain Mode
+      if (routing.mode === 'offline') {
+        const offlineNote = window.electronAPI
+          ? 'Offline Brain Mode ON hai. Is task ke liye Settings -> Local AI Brain me halka model (Qwen 2.5 1.5B / Gemma 3 1B) setup karein, ya Brain Mode ko "Auto Hybrid" par karein.'
+          : 'Offline Brain Mode ON hai. Browser mode me complex query ke liye "Auto Hybrid" mode select karein.';
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === typingId
+              ? {
+                  ...m,
+                  text: offlineNote,
+                  isTyping: false,
+                  brainMeta: { tier: 'fast', modelLabel: 'Offline Guard' },
+                  timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                }
+              : m
+          )
+        );
+        return;
+      }
+
+      // Tier-3: Escalate to Gemini Cloud ONLY for heavy/vision/search/low-confidence tasks
+      if (!isReady) {
+        if (!fromVoice) {
+          switchWindowMode('full');
+          setShowSettings(true);
+        }
+        throw new Error('Is heavy task ke liye Gemini API key ya Cloud AI URL Settings me connect karein (chhote PC tasks bina key ke bhi chalte hain).');
+      }
+
+      if (messages.length === 0 && promptText.trim()) {
+        generateTitle(promptText.trim()).then((aiTitle) => {
+          if (aiTitle) {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === userMsg.id ? { ...m, aiTitle } : m))
+            );
+          }
+        });
+      }
+
+      const historyDigest = compactHistoryForCloud(messages);
       const response = await sendMessage(
-        text,
+        promptText,
         attachment,
         (streamedText) => {
           setMessages(prev =>
@@ -685,9 +770,10 @@ export default function App() {
             prev.map(m => (m.id === typingId ? { ...m, tools: toolsSnapshot } : m))
           );
         },
-        { fromVoice, strictVoice: getStrictVoiceMode() }
+        { fromVoice, strictVoice: getStrictVoiceMode(), historyDigest }
       );
 
+      recordBrainUsage('cloud', promptText.length);
       const fallbackToolSummary =
         response.tools?.length > 0
           ? `Done: ${response.tools.map((t) => t.name.replace(/_/g, ' ')).join(', ')}.`
@@ -703,6 +789,10 @@ export default function App() {
                 isTyping: false,
                 image: response.image || null,
                 tools: response.tools || m.tools,
+                brainMeta: {
+                  tier: 'cloud',
+                  modelLabel: routing.heavyReason ? `Gemini Cloud (${routing.heavyReason.replace(/_/g, ' ')})` : 'Gemini Cloud',
+                },
                 timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
               }
             : m
@@ -742,7 +832,7 @@ export default function App() {
       voiceprintMismatchRef.current = false;
       setIsLoading(false);
     }
-  }, [isReady, ttsEnabled, requestPermission, apiKey, serverConfig.serverManagedKey, serverConfig.requiresPin, switchWindowMode, messages.length]);
+  }, [isReady, brainMode, ttsEnabled, requestPermission, apiKey, serverConfig.serverManagedKey, serverConfig.requiresPin, switchWindowMode, messages]);
 
   // Persistent Always-On Wake Word & Mic Engine:
   // - On Electron Desktop: active 24/7 across Full, Minimized, Tray, Speaker & Cortana modes once API/Cloud is ready
@@ -759,7 +849,11 @@ export default function App() {
     isLoading,
     autoListenSignal,
     requestPermission,
-    enabled: Boolean(isReady && !isLockedScreen && (window.electronAPI || (routeView === 'app' && windowMode !== 'full'))),
+    enabled: Boolean(
+      !isLockedScreen &&
+      ((window.electronAPI && (isReady || brainMode !== 'cloud')) ||
+        (isReady && routeView === 'app' && windowMode !== 'full'))
+    ),
     onWakeOpen: (mode) => setWindowMode(mode),
   });
 
@@ -825,6 +919,22 @@ export default function App() {
     setMessages((prev) => prev.slice(0, idx));
     resetConversation();
     setTimeout(() => handleSend(userMsg.text), 50);
+  }, [messages, handleSend]);
+
+  // Escalate a specific local reply straight to Gemini Cloud API
+  const handleEscalateToGemini = useCallback((msgId) => {
+    const idx = messages.findIndex((m) => m.id === msgId);
+    if (idx < 0) return;
+    let userMsg = null;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        userMsg = messages[i];
+        break;
+      }
+    }
+    if (!userMsg) return;
+    setMessages((prev) => prev.slice(0, idx));
+    setTimeout(() => handleSend(userMsg.text, null, { forceCloud: true }), 50);
   }, [messages, handleSend]);
 
   const lastAssistantMessage = [...messages].reverse().find((m) => m.role === 'assistant' && !m.isTyping);
@@ -1048,6 +1158,7 @@ export default function App() {
               messages={messages}
               onEdit={handleEditMessage}
               onRegenerate={handleRegenerate}
+              onEscalateToGemini={handleEscalateToGemini}
               onPermissionDecision={handlePermissionDecision}
             />
           )}
@@ -1058,6 +1169,8 @@ export default function App() {
             onSend={handleSend}
             isLoading={isLoading}
             isReady={isReady}
+            brainMode={brainMode}
+            onBrainModeChange={(m) => setBrainModeState(persistBrainMode(m))}
             ttsEnabled={ttsEnabled}
             onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
             voiceMode={voiceMode}

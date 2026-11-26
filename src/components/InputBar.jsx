@@ -39,6 +39,8 @@ export default function InputBar({
   onSend,
   isLoading,
   isReady,
+  brainMode = 'auto',
+  onBrainModeChange = null,
   ttsEnabled,
   onToggleTTS,
   voiceMode,
@@ -449,6 +451,25 @@ export default function InputBar({
                 {ttsEnabled ? <LuVolume2 className="w-3.5 h-3.5" /> : <LuVolumeX className="w-3.5 h-3.5" />}
                 <span className="hidden sm:inline">{ttsEnabled ? 'Voice On' : 'Voice Off'}</span>
               </button>
+
+              {onBrainModeChange && (
+                <select
+                  value={brainMode}
+                  onChange={(e) => onBrainModeChange(e.target.value)}
+                  className={`bg-obsidian-bg hover:bg-obsidian-elevated border rounded-lg px-2 py-1 text-[11px] font-mono focus:outline-none cursor-pointer transition-colors ${
+                    brainMode === 'offline'
+                      ? 'border-emerald-500/40 text-emerald-300'
+                      : brainMode === 'cloud'
+                        ? 'border-sky-500/40 text-sky-300'
+                        : 'border-obsidian-border text-obsidian-secondary hover:text-obsidian-text'
+                  }`}
+                  title="Brain Mode: Auto Hybrid (chhota/moderate=Local, bada=Gemini), Offline Only (0 API), or Gemini Cloud"
+                >
+                  <option value="auto" className="bg-obsidian-surface">Brain: Hybrid</option>
+                  <option value="offline" className="bg-obsidian-surface">Brain: Offline</option>
+                  <option value="cloud" className="bg-obsidian-surface">Brain: Gemini</option>
+                </select>
+              )}
 
               <select
                 value={voiceMode}

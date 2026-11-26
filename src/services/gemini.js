@@ -200,7 +200,8 @@ export async function sendMessage(
     }
   }
 
-  const fullSystemPrompt = buildSystemPrompt(Boolean(options?.fromVoice), options?.strictVoice !== false) + memoryContext;
+  const digestBlock = options?.historyDigest ? `\n\n${options.historyDigest}` : '';
+  const fullSystemPrompt = buildSystemPrompt(Boolean(options?.fromVoice), options?.strictVoice !== false) + memoryContext + digestBlock;
 
   const requestConfig = {
     model: preferredModel,

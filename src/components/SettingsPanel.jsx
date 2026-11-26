@@ -11,8 +11,10 @@ import {
   LuVolume2,
   LuRefreshCw,
   LuMic,
+  LuCpu,
 } from 'react-icons/lu';
 import { clearSessionPermissions, isUsingServerProxy, testGeminiConnection } from '../services/gemini';
+import { getBrainMode, setBrainMode, getBrainStats, resetBrainStats } from '../services/brainRouter';
 import { speakText } from '../services/speech';
 import { startVoiceCapture } from '../services/voiceCapture';
 import {
@@ -88,6 +90,11 @@ export default function SettingsPanel({
   const [updaterState, setUpdaterState] = useState(null);
   const [voiceprintStatus, setVoiceprintStatus] = useState(() => getVoiceprintStatus());
   const [enrollingVoice, setEnrollingVoice] = useState(false);
+  const [brainMode, setBrainModeState] = useState(() => getBrainMode());
+  const [brainStats, setBrainStats] = useState(() => getBrainStats());
+  const [localBrain, setLocalBrain] = useState(null);
+  const [brainProgress, setBrainProgress] = useState(null);
+  const [brainBusy, setBrainBusy] = useState(false);
 
   const handleEnrollVoiceprint = async () => {
     if (enrollingVoice) return;
@@ -136,11 +143,53 @@ export default function SettingsPanel({
         if (hostRules) setPermRules(savePermissionRules(hostRules));
       }).catch(() => {});
       window.electronAPI?.getAutoLaunch?.().then((v) => setAutoLaunch(Boolean(v))).catch(() => {});
+      window.electronAPI?.localBrainStatus?.().then(setLocalBrain).catch(() => {});
       window.electronAPI?.getUpdaterState?.().then(setUpdaterState).catch(() => {});
       const unsubUp = window.electronAPI?.onUpdaterStatus?.(setUpdaterState);
-      return () => unsubUp?.();
+      const unsubBrain = window.electronAPI?.onLocalBrainProgress?.((ev) => {
+        setBrainProgress(ev);
+        if (ev?.stage === 'done' || ev?.stage === 'installed') {
+          window.electronAPI?.localBrainStatus?.().then(setLocalBrain).catch(() => {});
+        }
+      });
+      return () => {
+        unsubUp?.();
+        unsubBrain?.();
+      };
     }
   }, [isElectron]);
+
+  const refreshLocalBrain = async () => {
+    setBrainStats(getBrainStats());
+    if (window.electronAPI?.localBrainStatus) {
+      const st = await window.electronAPI.localBrainStatus().catch(() => null);
+      if (st) setLocalBrain(st);
+    }
+  };
+
+  const handleLocalBrainAction = async (action, payload = {}) => {
+    if (!window.electronAPI?.localBrainSetup || brainBusy) return;
+    setBrainBusy(true);
+    try {
+      const res = await window.electronAPI.localBrainSetup(action, payload);
+      if (res?.ok) {
+        toast.success(
+          action === 'stop_model'
+            ? 'Local model unloaded from RAM (0 MB idle)'
+            : action === 'pull_model'
+              ? `${payload?.model || 'Model'} ready!`
+              : 'Local Brain updated!'
+        );
+      } else {
+        toast.error(res?.error || 'Local Brain action failed');
+      }
+      await refreshLocalBrain();
+    } catch (err) {
+      toast.error(err?.message || 'Local Brain setup error');
+    } finally {
+      setBrainBusy(false);
+    }
+  };
 
   const handleTestConnection = async () => {
     setTestingConn(true);
@@ -652,6 +701,103 @@ export default function SettingsPanel({
                         }`}
                       />
                     </button>
+                  </div>
+
+                  {/* Low-End Friendly Local AI Brain */}
+                  <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-medium text-obsidian-text flex items-center gap-1.5">
+                          <LuCpu className="w-3.5 h-3.5 text-emerald-400" />
+                          Hybrid Local AI Brain (Low-End Friendly)
+                        </p>
+                        <p className="text-[10px] text-obsidian-muted mt-0.5">
+                          Chhote/moderate kaam local brain se · Sirf heavy/vision/web kaam par Gemini API
+                        </p>
+                      </div>
+                      <select
+                        value={brainMode}
+                        onChange={(e) => setBrainModeState(setBrainMode(e.target.value))}
+                        className="bg-obsidian-surface border border-obsidian-border rounded px-2 py-1 text-[11px] font-mono text-obsidian-text"
+                      >
+                        <option value="auto">Auto Hybrid</option>
+                        <option value="offline">Offline Only (0 API)</option>
+                        <option value="cloud">Gemini Cloud</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded bg-obsidian-surface border border-obsidian-border">
+                      <span className="text-emerald-300 font-mono">
+                        {brainStats.localPct}% Local ({brainStats.totalLocal} saved · {brainStats.cloudCalls} cloud)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          resetBrainStats();
+                          setBrainStats(getBrainStats());
+                        }}
+                        className="text-obsidian-muted hover:text-obsidian-text text-[10px]"
+                      >
+                        Reset
+                      </button>
+                    </div>
+
+                    {localBrain?.hardware && (
+                      <div className="text-[10px] text-obsidian-muted space-y-1">
+                        <p>
+                          PC: <span className="text-obsidian-secondary font-mono">{localBrain.hardware.totalGb} GB RAM</span> ({localBrain.hardware.freeGb} GB free) · Cap: <span className="text-obsidian-secondary font-mono">{localBrain.hardware.safeThreads} CPU threads</span> · Active: <span className="text-emerald-300 font-mono">{localBrain.activeModel}</span>
+                        </p>
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {!localBrain.ollama?.running && (
+                            <button
+                              type="button"
+                              disabled={brainBusy}
+                              onClick={() => handleLocalBrainAction('install_ollama')}
+                              className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 disabled:opacity-40"
+                            >
+                              {brainBusy ? 'Installing...' : '1-Click Install Ollama'}
+                            </button>
+                          )}
+                          {(localBrain.catalog || []).map((m) => {
+                            const isInstalled = localBrain.ollama?.installed?.includes(m.id);
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                disabled={brainBusy}
+                                onClick={() =>
+                                  isInstalled
+                                    ? handleLocalBrainAction('save_config', { preferredModel: m.id })
+                                    : handleLocalBrainAction('pull_model', { model: m.id })
+                                }
+                                className={`px-2 py-1 rounded border text-[10px] font-mono ${
+                                  localBrain.config?.preferredModel === m.id
+                                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200'
+                                    : 'bg-obsidian-surface border-obsidian-border text-obsidian-secondary hover:text-obsidian-text'
+                                }`}
+                                title={m.description}
+                              >
+                                {isInstalled ? `Use ${m.id}` : `Pull ${m.id} (${m.sizeMb}MB)`}
+                              </button>
+                            );
+                          })}
+                          <button
+                            type="button"
+                            disabled={brainBusy}
+                            onClick={() => handleLocalBrainAction('stop_model')}
+                            className="px-2 py-1 rounded bg-obsidian-surface border border-obsidian-border text-obsidian-muted hover:text-obsidian-text text-[10px]"
+                            title="Unload local model from RAM immediately"
+                          >
+                            Unload RAM
+                          </button>
+                        </div>
+                        {brainProgress?.status && (
+                          <p className="text-[10px] text-amber-300 font-mono">
+                            {brainProgress.status}{brainProgress.pct != null ? ` (${brainProgress.pct}%)` : ''}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* App Auto-Updater */}

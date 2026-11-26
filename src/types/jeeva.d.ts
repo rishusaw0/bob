@@ -51,6 +51,11 @@ export interface ElectronBridgeAPI {
   onWatchdogAlert: (cb: (alert: WatchdogAlert) => void) => () => void;
   getAutoLaunch: () => Promise<boolean>;
   setAutoLaunch: (enabled: boolean) => Promise<boolean>;
+  localBrainStatus: () => Promise<any>;
+  localBrainSetup: (action: string, payload?: any) => Promise<any>;
+  localBrainStop: () => Promise<any>;
+  localBrainChat: (opts: { messages: any[]; tools?: any[]; temperature?: number; maxTokens?: number }) => Promise<any>;
+  onLocalBrainProgress: (cb: (ev: any) => void) => () => void;
 }
 
 declare global {

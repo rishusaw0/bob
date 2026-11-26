@@ -419,6 +419,32 @@ assert.equal(st2.getShareToken('hash123')?.scope, 'read_only');
 st2.close();
 fs.rmSync(tmpStoreDir, { recursive: true, force: true });
 
+// Hybrid Local AI Brain tests (Semantic Intent, Top-4 Tool Pruning, Escalation Gatekeeper & Hardware Profile)
+const { classifyIntent, pickTopToolsForQuery } = await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
+const { assessQueryRouting, compactHistoryForCloud } = await import(pathToFileURL(path.join(ROOT, 'src/services/brainRouter.js')).href);
+const { detectHardwareProfile, LOW_END_MODELS } = require(path.join(ROOT, 'electron/local-brain.cjs'));
+
+const lagIntent = classifyIntent('yaar laptop bohot lag kr raha hai check kro');
+assert.equal(lagIntent?.tool, 'system_diagnostics');
+assert.ok(lagIntent?.confidence >= 0.4);
+assert.equal(classifyIntent('chrome delete kr do'), null); // Destructive phrases never auto-route blindly
+
+const top4 = pickTopToolsForQuery('wifi network status check karo', 4);
+assert.equal(top4.length, 4);
+assert.ok(top4.includes('get_wifi_status'));
+
+const routeCloud = assessQueryRouting('@cloud write a react compiler architecture', null, 'auto');
+assert.equal(routeCloud.forceCloud, true);
+assert.equal(routeCloud.shouldTryLocalFirst, false);
+
+const routeLocal = assessQueryRouting('18% of 2500 kitna hoga', null, 'auto');
+assert.equal(routeLocal.shouldTryLocalFirst, true);
+
+const hw = detectHardwareProfile();
+assert.ok(hw.totalGb > 0 && hw.safeThreads >= 2);
+assert.ok(LOW_END_MODELS.some((m) => m.id === 'qwen2.5:1.5b'));
+assert.ok(compactHistoryForCloud([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }, { role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }], 2).includes('CONVERSATION CONTEXT DIGEST'));
+
 // 6. PowerShell AST validation on ALL .ps1 scripts
 console.log('[6/6] Checking PowerShell AST across all electron/*.ps1...');
 const psFiles = fs.readdirSync(path.join(ROOT, 'electron')).filter((f) => f.endsWith('.ps1'));
