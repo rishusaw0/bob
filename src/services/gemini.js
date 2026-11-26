@@ -359,29 +359,53 @@ export async function sendMessage(
   };
 }
 
-export async function transcribeAudio(base64Data, mimeType = 'audio/webm', opts = {}) {
+export async function transcribeAudio(base64Data, mimeType = 'audio/wav', opts = {}) {
   if (!client) throw new Error('Gemini not initialized');
   const wakeName = (opts?.aiName || assistantName || 'Jeeva').trim();
   const isWake = opts?.mode === 'wake';
   const prompt = isWake
-    ? `Transcribe ONLY the spoken words clearly in Hindi, English, or Hinglish. Pay careful attention to the assistant wake name "${wakeName}" (e.g. "Hey ${wakeName}"). Output ONLY the exact spoken words, or empty string if only background noise.`
-    : `Transcribe the spoken voice command accurately into clean text (Hindi, English, or Hinglish). Wake name is "${wakeName}". Keep app/system words like volume, brightness, chrome, install, winget, pause, screenshot, band karo, kholo clear. Output ONLY the spoken command text with zero commentary.`;
+    ? `Listen carefully for the wake word "${wakeName}" (e.g. "Hey ${wakeName}") in Hindi, English, or Hinglish. Output ONLY the exact spoken words, or an empty string if only background noise or breathing.`
+    : `Transcribe this Hindi, English, or Hinglish PC voice command accurately into clean text (Romanized Hinglish or English). Keep system words like volume, brightness, chrome, install, winget, screenshot, tab, pause, kholo, badhao, kam karo, band karo clear. Output ONLY the spoken command text with zero commentary, or empty string if silent.`;
 
-  const models = ['gemini-3.5-flash-lite', 'gemini-3.5-transcribe'];
+  const basePreferred = /tts|image|nano-banana/i.test(preferredModel) ? '' : preferredModel;
+  const models = Array.from(
+    new Set([
+      basePreferred,
+      'gemini-3.5-flash-lite',
+      'gemini-3.8-flash',
+      'gemini-4-hydrogen',
+      'gemini-2.5-flash',
+      'gemini-3.5-transcribe',
+    ].filter(Boolean))
+  );
+
   let lastErr;
   for (const model of models) {
     try {
-      const interaction = await client.interactions.create({
-        model,
-        input: [
-          { type: 'text', text: prompt },
-          { type: 'audio', data: base64Data, mime_type: mimeType },
-        ],
-        store: false,
-      });
+      const payload =
+        model === 'gemini-3.5-transcribe'
+          ? {
+              model,
+              input: [{ type: 'audio', data: base64Data, mime_type: mimeType }],
+              generation_config: { transcription_config: { mode: 'smart' } },
+              store: false,
+            }
+          : {
+              model,
+              input: [
+                { type: 'text', text: prompt },
+                { type: 'audio', data: base64Data, mime_type: mimeType },
+              ],
+              store: false,
+            };
+      const interaction = await client.interactions.create(payload);
       return (interaction.output_text || '').trim();
     } catch (err) {
       lastErr = err;
+      const msg = String(err?.message || err);
+      if (/401|403|API_KEY_INVALID|API key not valid|Owner Server Key locked/i.test(msg)) {
+        throw err;
+      }
     }
   }
   throw lastErr || new Error('Audio transcription failed');

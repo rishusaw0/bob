@@ -205,11 +205,27 @@ globalThis.window = {
     diagnostics: async () => JSON.stringify([{ name: 'Code', ramMb: 520 }]),
     browserControl: async (act) => `Ran ${act}`,
     clipboardHistory: async () => ({ items: [{ preview: 'hello' }] }),
+    volume: async (a) => `Vol ${a}`,
+    screenshot: async () => ({ base64: 'data:image/png;base64,test' }),
+    theme: async (m) => `Theme ${m}`,
+    closeApp: async (a) => `Closed ${a}`,
   },
 };
 
 const vrUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceRouter.js')).href;
+const vcUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceCapture.js')).href;
 const { tryFastVoiceAction, matchWakePhrase, getWakeOpenMode, setWakeOpenMode } = await import(vrUrl);
+const { downsampleFloat32, encodeWavBase64, cleanSttTranscript } = await import(vcUrl);
+
+const pcm48 = new Float32Array(480).fill(0.25);
+const pcm16 = downsampleFloat32(pcm48, 48000, 16000);
+assert.equal(pcm16.length, 160);
+const wavB64 = encodeWavBase64(pcm16, 16000);
+const wavBuf = Buffer.from(wavB64, 'base64');
+assert.equal(wavBuf.subarray(0, 4).toString('ascii'), 'RIFF');
+assert.equal(wavBuf.subarray(8, 12).toString('ascii'), 'WAVE');
+assert.equal(cleanSttTranscript('[inaudible]'), '');
+assert.equal(cleanSttTranscript('"Hey Jeeva chrome kholo"'), 'Hey Jeeva chrome kholo');
 
 const aliasWake = matchWakePhrase('Hey Jeean chrome kholo', 'Jeeva');
 assert.equal(aliasWake.matched, true);
@@ -230,6 +246,22 @@ assert.ok(topBatao.replyText.includes('Code'));
 const batBatao = await tryFastVoiceAction('battery batao');
 assert.equal(batBatao.handled, true);
 assert.ok(batBatao.replyText.includes('85%'));
+
+const volAur = await tryFastVoiceAction('volume thoda aur badhao');
+assert.equal(volAur.handled, true);
+assert.equal(volAur.tools[0].args.action, 'up');
+
+const shotAct = await tryFastVoiceAction('ek screenshot le lo');
+assert.equal(shotAct.handled, true);
+assert.equal(shotAct.tools[0].name, 'take_screenshot');
+
+const darkAct = await tryFastVoiceAction('dark mode on karo');
+assert.equal(darkAct.handled, true);
+assert.equal(darkAct.tools[0].args.mode, 'dark');
+
+const skipAct = await tryFastVoiceAction('youtube ad skip karo');
+assert.equal(skipAct.handled, true);
+assert.equal(skipAct.tools[0].args.action, 'youtube_skip_ad');
 
 const tabAct = await tryFastVoiceAction('new tab');
 assert.equal(tabAct.handled, true);

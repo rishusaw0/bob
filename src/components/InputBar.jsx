@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import {
   LuPaperclip,
   LuCamera,
@@ -48,6 +48,7 @@ export default function InputBar({
 }) {
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState('');
   const [isDragging, setIsDragging] = useState(false);
   const [voiceLang, setVoiceLang] = useState('hi-IN');
   const [autoSendVoice, setAutoSendVoice] = useState(() => localStorage.getItem('jeeva_autosend_voice') !== 'false');
@@ -229,22 +230,46 @@ export default function InputBar({
     }
   };
 
+  useEffect(() => {
+    return () => {
+      recognitionRef.current?.cancel?.();
+      window.dispatchEvent(new CustomEvent('jeeva-mic-active', { detail: false }));
+    };
+  }, []);
+
   const startRecording = () => {
+    if (!isReady) {
+      toast.error('Pehle Settings mein Gemini API key ya Cloud URL connect karein.');
+      return;
+    }
     const baseText = text ? text + ' ' : '';
     setIsRecording(true);
+    setVoiceStatus('Sun raha hoon... Boliye');
+    window.dispatchEvent(new CustomEvent('jeeva-mic-active', { detail: true }));
 
     recognitionRef.current = startVoiceCapture({
       lang: voiceLang,
       autoStopOnSilence: autoSendVoice,
       silenceMs: 1150,
+      onStatus: (st) => {
+        if (st === 'transcribing') setVoiceStatus('Understanding voice command...');
+        else setVoiceStatus('Sun raha hoon... Boliye');
+      },
       onInterim: (interimTxt) => {
-        setText(baseText + interimTxt);
+        if (interimTxt && !/^(Listening|Understanding)\.\.\.$/i.test(interimTxt) && interimTxt !== 'Understanding command...') {
+          setText(baseText + interimTxt);
+        }
       },
       onResult: (finalCmd) => {
         recognitionRef.current = null;
         setIsRecording(false);
+        setVoiceStatus('');
+        window.dispatchEvent(new CustomEvent('jeeva-mic-active', { detail: false }));
         const combined = (baseText + (finalCmd || '')).trim();
-        if (!combined) return;
+        if (!combined) {
+          setText(baseText.trim());
+          return;
+        }
         if (autoSendVoice && !isLoading) {
           setText('');
           onSend(combined, null, { fromVoice: true });
@@ -255,6 +280,9 @@ export default function InputBar({
       onError: (errMsg) => {
         recognitionRef.current = null;
         setIsRecording(false);
+        setVoiceStatus('');
+        window.dispatchEvent(new CustomEvent('jeeva-mic-active', { detail: false }));
+        setText(baseText.trim());
         toast.error(errMsg || 'Microphone error');
       },
     });
@@ -369,7 +397,9 @@ export default function InputBar({
             onChange={handleTextChange}
             onKeyDown={handleKeyDown}
             placeholder={
-              isReady
+              voiceStatus
+                ? voiceStatus
+                : isReady
                 ? 'Ask anything, drop a PDF, or give a PC command...'
                 : 'Configure Gemini API key in Settings to begin'
             }

@@ -222,10 +222,12 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   if (!lower) return { handled: false };
 
   // Never intercept multi-clause, conversational questions, or complex winget/UIA tasks
-  // (Except crisp read-only status checks like "top processes batao" or "battery batao")
+  // Allow Hindi "aur" when it means "more" (e.g. "volume thoda aur badhao", "brightness aur kam karo")
   const isReadStatusCheck = /\b(top process|top processes|cpu status|ram status|pc health|system health|disk space|battery|clipboard history|active tab)\b/i.test(lower);
+  const isHindiMoreModifier = /\baur\s+(badhao|badha|kam|ghatao|tez|dheema|dhima|up|down|high|low)\b/i.test(lower);
   if (
-    (/\b(aur|and|then|phir|kyun|why|what|how|kya|kaise|install|uninstall|explain|likho|write|pdf|search|google)\b/i.test(lower)) ||
+    (/\b(and|then|phir|kyun|why|what|how|kya|kaise|install|uninstall|explain|likho|write|pdf|search|google)\b/i.test(lower)) ||
+    (/\baur\b/i.test(lower) && !isHindiMoreModifier) ||
     (!isReadStatusCheck && /\bbatao\b/i.test(lower))
   ) {
     return { handled: false };
@@ -326,7 +328,7 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   }
 
   // 4. Theme Dark/Light
-  if (/^(dark mode|light mode|dark theme|light theme|theme toggle)$/i.test(lower)) {
+  if (/\b(dark mode|light mode|dark theme|light theme|theme toggle)\b/i.test(lower)) {
     const mode = lower.includes('light') ? 'light' : 'dark';
     const out = await runAuthorizedFastTool(
       'toggle_windows_theme',
@@ -342,7 +344,7 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   }
 
   // 5. Minimize all / Show desktop
-  if (/^(minimize all|sab minimize|show desktop|desktop dikhao|window minimize)$/i.test(lower)) {
+  if (/\b(minimize all|sab minimize|show desktop|desktop dikhao|window minimize)\b/i.test(lower)) {
     const out = await runAuthorizedFastTool(
       'press_shortcut',
       { shortcut: 'minimize_all' },
@@ -357,7 +359,7 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   }
 
   // 6. Screenshot
-  if (/^(screenshot|take screenshot|screen shot|capture screen)$/i.test(lower)) {
+  if (/\b(screenshot|screen shot|capture screen)\b/i.test(lower) && !/\b(analyze|read|kya hai|check|describe|dikha)\b/i.test(lower)) {
     const out = await runAuthorizedFastTool(
       'take_screenshot',
       {},
@@ -372,12 +374,12 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
     };
   }
 
-  // 7. Quick simple app launch ("chrome kholo", "open notepad", "calculator chalao")
-  const openMatch = lower.match(/^(?:open|launch|start|chalu|kholo|chalao)\s+([a-z0-9\s._-]{2,24})$/i) ||
-    lower.match(/^([a-z0-9\s._-]{2,24})\s+(?:open|kholo|chalao|chala)$/i);
+  // 7. Quick simple app launch / close ("chrome kholo", "open notepad", "notepad band karo")
+  const openMatch = lower.match(/^(?:open|launch|start|chalu|kholo|chalao)\s+(?:ek\s+|mera\s+)?([a-z0-9\s._-]{2,24})$/i) ||
+    lower.match(/^([a-z0-9\s._-]{2,24})\s+(?:open|kholo|chalao|chala|khol do|chala do)$/i);
   if (openMatch) {
     const appTarget = openMatch[1].trim();
-    if (!/\b(setting|settings|file|folder|tab|url|gaana|gana|music|song|track|volume|brightness|awaz)\b/i.test(appTarget)) {
+    if (!/\b(setting|settings|file|folder|tab|url|gaana|gana|music|song|track|volume|brightness|awaz|mode|theme)\b/i.test(appTarget)) {
       const out = await runAuthorizedFastTool(
         'open_application',
         { app_name: appTarget },
@@ -388,6 +390,25 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
         handled: true,
         replyText: out.ok ? `${appTarget} khol diya.` : out.error,
         tools: [{ name: 'open_application', status: out.ok ? 'done' : 'error', args: { app_name: appTarget } }],
+      };
+    }
+  }
+
+  const closeMatch = lower.match(/^(?:close|band|band do|quit|exit)\s+([a-z0-9\s._-]{2,24})$/i) ||
+    lower.match(/^([a-z0-9\s._-]{2,24})\s+(?:close|band|band do|exit|quit)$/i);
+  if (closeMatch) {
+    const appTarget = closeMatch[1].trim();
+    if (!/\b(tab|window|pc|computer|laptop|system|awaz|sound|volume|screen)\b/i.test(appTarget)) {
+      const out = await runAuthorizedFastTool(
+        'close_application',
+        { app_name: appTarget },
+        () => api.closeApp(appTarget),
+        requestPermission
+      );
+      return {
+        handled: true,
+        replyText: out.ok ? `${appTarget} band kar diya.` : out.error,
+        tools: [{ name: 'close_application', status: out.ok ? 'done' : 'error', args: { app_name: appTarget } }],
       };
     }
   }
@@ -523,17 +544,17 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   if (
     hasAny(
       lower,
-      /^(new tab|close tab|next tab|previous tab|prev tab|skip ad|youtube skip ad|active tab)$/i,
-      ['नया टैब', 'टैब बंद']
+      /\b(new tab|naya tab|close tab|tab band|next tab|agla tab|previous tab|prev tab|pichla tab|skip ad|ad skip|youtube skip|active tab)\b/i,
+      ['नया टैब', 'टैब बंद', 'स्किप']
     )
   ) {
-    const action = lower.includes('close')
+    const action = lower.includes('close') || lower.includes('band') || lower.includes('बंद')
       ? 'close_tab'
-      : lower.includes('next')
+      : lower.includes('next') || lower.includes('agla')
         ? 'next_tab'
-        : lower.includes('prev')
+        : lower.includes('prev') || lower.includes('pichla')
           ? 'prev_tab'
-          : lower.includes('skip')
+          : lower.includes('skip') || lower.includes('स्किप')
             ? 'youtube_skip_ad'
             : lower.includes('active')
               ? 'active_tab_info'

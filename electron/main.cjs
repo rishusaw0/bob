@@ -10,6 +10,7 @@ const {
   globalShortcut,
   screen,
   safeStorage,
+  session,
   Notification,
 } = require('electron');
 const path = require('path');
@@ -388,6 +389,25 @@ if (process.platform === 'win32') {
 }
 
 app.whenReady().then(() => {
+  // Always permit microphone capture for JEEVA's trusted local renderer (required in Tray / packaged builds)
+  const isTrustedRendererOrigin = (originUrl) => {
+    const o = String(originUrl || '');
+    return o.startsWith('file://') || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(o);
+  };
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+    if (permission === 'media' || permission === 'audioCapture') {
+      return isTrustedRendererOrigin(requestingOrigin || webContents?.getURL?.());
+    }
+    return true;
+  });
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === 'media' || permission === 'audioCapture') {
+      callback(isTrustedRendererOrigin(webContents?.getURL?.()));
+      return;
+    }
+    callback(true);
+  });
+
   if (process.defaultApp && process.argv.length >= 2) {
     app.setAsDefaultProtocolClient('jeeva', process.execPath, [path.resolve(process.argv[1])]);
   } else {

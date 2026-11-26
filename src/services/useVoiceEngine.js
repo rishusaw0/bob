@@ -15,15 +15,21 @@ export function useVoiceEngine({ aiName, onSend, isLoading, autoListenSignal, on
   const [micLevel, setMicLevel] = useState(0);
   const [wakeEnabled, setWakeEnabled] = useState(() => getWakeWordEnabled());
   const [offlineWakeStatus, setOfflineWakeStatus] = useState({ available: null, running: false, culture: '' });
+  const [externalMicBusy, setExternalMicBusy] = useState(false);
   const [speechState, setSpeechState] = useState({ isPlaying: false, detectedProfile: 'hinglish' });
 
   const captureRef = useRef(null);
   const wakeListenerRef = useRef(null);
   const phaseRef = useRef('idle');
+  const offlineUnsupportedRef = useRef(false);
 
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+
+  useEffect(() => {
+    offlineUnsupportedRef.current = false;
+  }, [aiName]);
 
   useEffect(() => subscribeSpeech(setSpeechState), []);
 
@@ -31,8 +37,15 @@ export function useVoiceEngine({ aiName, onSend, isLoading, autoListenSignal, on
     const onWakeChanged = (ev) => {
       if (typeof ev?.detail === 'boolean') setWakeEnabled(ev.detail);
     };
+    const onExternalMic = (ev) => {
+      setExternalMicBusy(Boolean(ev?.detail));
+    };
     window.addEventListener('jeeva-wake-settings-changed', onWakeChanged);
-    return () => window.removeEventListener('jeeva-wake-settings-changed', onWakeChanged);
+    window.addEventListener('jeeva-mic-active', onExternalMic);
+    return () => {
+      window.removeEventListener('jeeva-wake-settings-changed', onWakeChanged);
+      window.removeEventListener('jeeva-mic-active', onExternalMic);
+    };
   }, []);
 
   const orbState = isLoading
@@ -108,17 +121,18 @@ export function useVoiceEngine({ aiName, onSend, isLoading, autoListenSignal, on
         setMicLevel(0);
         setLiveTranscript(errMsg || 'Could not hear audio');
         setPhase('idle');
+        setTimeout(() => {
+          setLiveTranscript((cur) => (cur === (errMsg || 'Could not hear audio') ? '' : cur));
+        }, 2800);
       },
     });
   }, [stopWakeListener, stopCommandCapture, submitVoiceCommand]);
 
   const handleWakeActivation = useCallback(
-    async (inlineCmd) => {
+    (inlineCmd) => {
       const targetMode = getWakeOpenMode();
       onWakeOpen?.(targetMode);
-      try {
-        await window.electronAPI?.wakeRestore?.(targetMode);
-      } catch {}
+      window.electronAPI?.wakeRestore?.(targetMode)?.catch?.(() => {});
 
       if (inlineCmd && inlineCmd.trim()) {
         playWakeChime();
@@ -138,7 +152,7 @@ export function useVoiceEngine({ aiName, onSend, isLoading, autoListenSignal, on
 
   // Persistent Always-On Wake Word Listener ("Hey <AiName>") across ALL window states (even minimized / tray!)
   useEffect(() => {
-    if (!enabled || !wakeEnabled || orbState !== 'idle') {
+    if (!enabled || !wakeEnabled || orbState !== 'idle' || externalMicBusy) {
       stopWakeListener();
       return;
     }
@@ -163,7 +177,7 @@ export function useVoiceEngine({ aiName, onSend, isLoading, autoListenSignal, on
     const timer = setTimeout(() => {
       if (cancelled || phaseRef.current !== 'idle') return;
 
-      if (api?.offlineVoiceStart && api?.onOfflineVoiceEvent) {
+      if (!offlineUnsupportedRef.current && api?.offlineVoiceStart && api?.onOfflineVoiceEvent) {
         unsubOffline = api.onOfflineVoiceEvent((ev) => {
           if (cancelled) return;
           if (ev.type === 'status') {
@@ -174,6 +188,7 @@ export function useVoiceEngine({ aiName, onSend, isLoading, autoListenSignal, on
               reason: ev.reason || '',
             });
             if (ev.available === false) {
+              offlineUnsupportedRef.current = true;
               startFallbackWake();
             }
           } else if (ev.type === 'wake') {
@@ -181,11 +196,14 @@ export function useVoiceEngine({ aiName, onSend, isLoading, autoListenSignal, on
             handleWakeActivation(ev.command);
           }
         });
-        api.offlineVoiceStart(aiName).catch(() => startFallbackWake());
+        api.offlineVoiceStart(aiName).catch(() => {
+          offlineUnsupportedRef.current = true;
+          startFallbackWake();
+        });
       } else {
         startFallbackWake();
       }
-    }, 650);
+    }, 350);
 
     return () => {
       cancelled = true;
@@ -193,7 +211,7 @@ export function useVoiceEngine({ aiName, onSend, isLoading, autoListenSignal, on
       unsubOffline?.();
       stopWakeListener();
     };
-  }, [enabled, aiName, wakeEnabled, orbState, handleWakeActivation, stopWakeListener]);
+  }, [enabled, aiName, wakeEnabled, orbState, externalMicBusy, handleWakeActivation, stopWakeListener]);
 
   useEffect(() => {
     return () => {

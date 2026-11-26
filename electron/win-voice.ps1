@@ -1,6 +1,6 @@
 param(
   [string]$AiName = "Jeeva",
-  [double]$MinConfidence = 0.68
+  [double]$MinConfidence = 0.56
 )
 
 $ErrorActionPreference = "Stop"

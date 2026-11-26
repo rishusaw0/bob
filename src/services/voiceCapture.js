@@ -1,13 +1,15 @@
 // Master Voice Capture & Wake-Word Engine:
-// 1. High-accuracy Web Speech API with noise suppression + fuzzy custom wake matching
-// 2. Automatic MediaRecorder + Adaptive Energy-VAD + Gemini Audio STT (works in Electron & everywhere!)
+// 1. 16 kHz Mono PCM Ring Buffer + Pre-Roll WAV Capture + Adaptive VAD (Electron & Universal fallback)
+// 2. Native Web Speech API for Chrome/Edge/Android browsers (zero API cost)
 import { transcribeAudio } from './gemini.js';
-import { startMicMeter, stopMicMeter } from './earcon.js';
 import { matchWakePhrase, getAiName } from './voiceRouter.js';
 
 let speechApiBrokenInRuntime = false;
 
 export function isBrowserSpeechSupported() {
+  if (typeof window === 'undefined') return false;
+  // Electron Chromium lacks Google's Chrome Speech API key and always fails with 'network'
+  if (window.electronAPI) return false;
   return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition) && !speechApiBrokenInRuntime;
 }
 
@@ -20,20 +22,180 @@ const AUDIO_CONSTRAINTS = {
   },
 };
 
-function getSupportedRecorderMime() {
-  if (typeof MediaRecorder === 'undefined') return '';
-  if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) return 'audio/webm;codecs=opus';
-  if (MediaRecorder.isTypeSupported('audio/webm')) return 'audio/webm';
-  return '';
+export function downsampleFloat32(samples, inRate, outRate = 16000) {
+  if (!samples || !samples.length) return new Float32Array(0);
+  if (!inRate || inRate <= outRate) return samples;
+  const ratio = inRate / outRate;
+  const newLength = Math.max(1, Math.round(samples.length / ratio));
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+  while (offsetResult < newLength) {
+    const nextOffsetBuffer = Math.min(samples.length, Math.round((offsetResult + 1) * ratio));
+    let accum = 0;
+    let count = 0;
+    for (let i = offsetBuffer; i < nextOffsetBuffer; i++) {
+      accum += samples[i];
+      count++;
+    }
+    result[offsetResult] = count > 0 ? accum / count : 0;
+    offsetResult++;
+    offsetBuffer = nextOffsetBuffer;
+  }
+  return result;
+}
+
+function uint8ToBase64(bytes) {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
+  }
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+export function encodeWavBase64(pcmSamples, sampleRate = 16000) {
+  const numSamples = pcmSamples.length;
+  const dataLength = numSamples * 2;
+  const buffer = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(buffer);
+
+  const writeStr = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true); // PCM chunk size
+  view.setUint16(20, 1, true); // PCM format
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true); // Byte rate
+  view.setUint16(32, 2, true); // Block align
+  view.setUint16(34, 16, true); // Bits per sample
+  writeStr(36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  for (let i = 0; i < numSamples; i++) {
+    const s = Math.max(-1, Math.min(1, pcmSamples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    offset += 2;
+  }
+  return uint8ToBase64(new Uint8Array(buffer));
+}
+
+export function cleanSttTranscript(raw) {
+  let txt = String(raw || '').trim();
+  if (!txt) return '';
+  txt = txt.replace(/^["'`]+|["'`]+$/g, '').trim();
+  if (/^(\[|\()?(silence|inaudible|noise|background noise|no speech|blank_audio|music|applause|laughter|sigh|cough|static|unintelligible)(\]|\))?\.?$/i.test(txt)) {
+    return '';
+  }
+  txt = txt
+    .replace(/\[(?:silence|inaudible|noise|background noise|music|blank_audio)\]/gi, '')
+    .replace(/\((?:silence|inaudible|noise|background noise|music)\)/gi, '')
+    .trim();
+  if (/^[.\s,?!…-]+$/.test(txt)) return '';
+  return txt;
+}
+
+function concatFloat32(chunks) {
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const out = new Float32Array(total);
+  let pos = 0;
+  for (const c of chunks) {
+    out.set(c, pos);
+    pos += c.length;
+  }
+  return out;
+}
+
+function calcRmsLevel(samples, gainBoost = 3.6) {
+  if (!samples || !samples.length) return 0;
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) {
+    sum += samples[i] * samples[i];
+  }
+  const rms = Math.sqrt(sum / samples.length);
+  return Math.min(1, rms * gainBoost);
 }
 
 /**
- * Captures a single spoken command with automatic silence end-pointing.
+ * Opens a shared 16kHz PCM ring-buffer + processor session on the active microphone.
+ */
+async function createPcmStreamMonitor({ preRollSeconds = 0.75, gainBoost = 3.6, onFrame }) {
+  const stream = await navigator.mediaDevices.getUserMedia(AUDIO_CONSTRAINTS);
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new Ctx();
+  if (ctx.state === 'suspended') {
+    await ctx.resume().catch(() => {});
+  }
+
+  const source = ctx.createMediaStreamSource(stream);
+  const processor = ctx.createScriptProcessor(2048, 1, 1);
+  const silentSink = ctx.createGain();
+  silentSink.gain.value = 0;
+
+  source.connect(processor);
+  processor.connect(silentSink);
+  silentSink.connect(ctx.destination);
+
+  const maxPreRollSamples = Math.round(16000 * preRollSeconds);
+  let preRollChunks = [];
+  let preRollTotal = 0;
+  let closed = false;
+
+  processor.onaudioprocess = (ev) => {
+    if (closed) return;
+    const raw = ev.inputBuffer.getChannelData(0);
+    const pcm16k = downsampleFloat32(raw, ctx.sampleRate, 16000);
+    const level = calcRmsLevel(pcm16k, gainBoost);
+
+    preRollChunks.push(pcm16k);
+    preRollTotal += pcm16k.length;
+    while (preRollTotal > maxPreRollSamples && preRollChunks.length > 1) {
+      const dropped = preRollChunks.shift();
+      preRollTotal -= dropped.length;
+    }
+
+    onFrame?.(pcm16k, level, () => preRollChunks.slice());
+  };
+
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    try {
+      processor.onaudioprocess = null;
+      source.disconnect();
+      processor.disconnect();
+      silentSink.disconnect();
+    } catch {}
+    try {
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {}
+    try {
+      if (ctx.state !== 'closed') ctx.close().catch(() => {});
+    } catch {}
+    preRollChunks = [];
+  };
+
+  return { close };
+}
+
+/**
+ * Captures a single spoken command with pre-roll WAV capture + adaptive VAD end-pointing.
  */
 export function startVoiceCapture({
   lang = 'hi-IN',
   autoStopOnSilence = true,
-  silenceMs = 1100,
+  silenceMs = 1150,
   onInterim = () => {},
   onLevel = () => {},
   onStatus = () => {},
@@ -41,18 +203,27 @@ export function startVoiceCapture({
   onError = () => {},
 }) {
   let stopped = false;
-  let mediaRecorder = null;
-  let audioStream = null;
+  let pcmSession = null;
   let recognition = null;
   let silenceTimer = null;
+  let noSpeechTimer = null;
   let maxCapTimer = null;
   let finalText = '';
   let hasCapturedSpeech = false;
+  let recordedChunks = [];
+  let speechStarted = false;
+
+  const clearTimers = () => {
+    clearTimeout(silenceTimer);
+    clearTimeout(noSpeechTimer);
+    clearTimeout(maxCapTimer);
+    silenceTimer = null;
+    noSpeechTimer = null;
+    maxCapTimer = null;
+  };
 
   const cleanup = () => {
-    clearTimeout(silenceTimer);
-    clearTimeout(maxCapTimer);
-    stopMicMeter();
+    clearTimers();
     onLevel(0);
     if (recognition) {
       try {
@@ -62,97 +233,117 @@ export function startVoiceCapture({
       } catch {}
       recognition = null;
     }
-    if (audioStream) {
-      audioStream.getTracks().forEach((t) => t.stop());
-      audioStream = null;
+    if (pcmSession) {
+      pcmSession.close();
+      pcmSession = null;
     }
   };
 
-  const startMediaRecorderFallback = async () => {
+  const finishPcmCapture = async (shouldTranscribe) => {
+    const captured = recordedChunks;
+    recordedChunks = [];
+    cleanup();
+
+    if (!shouldTranscribe || !captured.length) {
+      onResult('');
+      return;
+    }
+
+    const pcm = concatFloat32(captured);
+    if (pcm.length < 3200) {
+      onResult('');
+      return;
+    }
+
+    try {
+      onStatus('transcribing');
+      onInterim('Understanding command...');
+      const wavBase64 = encodeWavBase64(pcm, 16000);
+      const rawText = await transcribeAudio(wavBase64, 'audio/wav', {
+        aiName: getAiName(),
+        mode: 'command',
+      });
+      onResult(cleanSttTranscript(rawText));
+    } catch (err) {
+      onError(err?.message || 'Voice transcription failed');
+    }
+  };
+
+  const startPcmCommandCapture = async () => {
     if (stopped) return;
     try {
       onStatus('listening-audio');
-      onInterim('Listening...');
-      audioStream = await navigator.mediaDevices.getUserMedia(AUDIO_CONSTRAINTS);
-      const mimeType = getSupportedRecorderMime();
+      let noiseFloor = 0.018;
+      let voicedFrames = 0;
 
-      const chunks = [];
-      mediaRecorder = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream);
+      pcmSession = await createPcmStreamMonitor({
+        preRollSeconds: 0.6,
+        gainBoost: 3.6,
+        onFrame: (pcm16k, lvl, getPreRoll) => {
+          if (stopped) return;
+          onLevel(lvl);
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunks.push(e.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        const usedMime = (mediaRecorder?.mimeType || 'audio/webm').split(';')[0];
-        cleanup();
-        if (!chunks.length) {
-          onResult('');
-          return;
-        }
-        try {
-          onStatus('transcribing');
-          onInterim('Understanding command...');
-          const blob = new Blob(chunks, { type: usedMime });
-          const reader = new FileReader();
-          reader.onloadend = async () => {
-            try {
-              const dataUrl = reader.result;
-              const base64 = String(dataUrl).split(',')[1];
-              const text = await transcribeAudio(base64, usedMime, { aiName: getAiName(), mode: 'command' });
-              onResult(text);
-            } catch (err) {
-              onError(err.message || 'Voice transcription failed');
+          if (!speechStarted) {
+            // Update noise floor ONLY on quiet background frames so sudden speech doesn't inflate threshold
+            if (lvl < Math.max(0.055, noiseFloor * 2.2)) {
+              noiseFloor = noiseFloor * 0.88 + lvl * 0.12;
             }
-          };
-          reader.readAsDataURL(blob);
-        } catch (err) {
-          onError(err.message || 'Audio processing failed');
-        }
-      };
-
-      mediaRecorder.start(200);
-
-      // Adaptive noise-floor VAD sharing the exact same audioStream
-      let speechStarted = false;
-      let noiseFloor = 0.035;
-      let samples = 0;
-
-      startMicMeter((lvl) => {
-        onLevel(lvl);
-        if (!autoStopOnSilence || stopped) return;
-
-        samples++;
-        if (samples < 12 && !speechStarted) {
-          noiseFloor = noiseFloor * 0.8 + lvl * 0.2;
-        }
-
-        const speechThreshold = Math.max(0.085, noiseFloor * 2.1);
-        if (lvl > speechThreshold) {
-          speechStarted = true;
-          clearTimeout(silenceTimer);
-          silenceTimer = setTimeout(() => {
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
-              mediaRecorder.stop();
+            const startThresh = Math.max(0.032, Math.min(0.14, noiseFloor * 2.0));
+            if (lvl > startThresh) {
+              voicedFrames++;
+              if (voicedFrames >= 2) {
+                speechStarted = true;
+                clearTimeout(noSpeechTimer);
+                noSpeechTimer = null;
+                recordedChunks = getPreRoll();
+              }
+            } else {
+              voicedFrames = Math.max(0, voicedFrames - 1);
             }
-          }, silenceMs + 150);
-        } else if (speechStarted && !silenceTimer) {
-          silenceTimer = setTimeout(() => {
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
-              mediaRecorder.stop();
+          } else {
+            recordedChunks.push(pcm16k);
+          }
+
+          if (autoStopOnSilence && speechStarted) {
+            const sustainThresh = Math.max(0.024, Math.min(0.11, noiseFloor * 1.6));
+            if (lvl > sustainThresh) {
+              clearTimeout(silenceTimer);
+              silenceTimer = setTimeout(() => {
+                if (!stopped) {
+                  stopped = true;
+                  finishPcmCapture(true);
+                }
+              }, silenceMs);
+            } else if (!silenceTimer) {
+              silenceTimer = setTimeout(() => {
+                if (!stopped) {
+                  stopped = true;
+                  finishPcmCapture(true);
+                }
+              }, silenceMs);
             }
-          }, silenceMs + 150);
-        }
-      }, audioStream);
+          }
+        },
+      });
+
+      if (autoStopOnSilence) {
+        noSpeechTimer = setTimeout(() => {
+          if (!stopped && !speechStarted) {
+            stopped = true;
+            finishPcmCapture(false);
+          }
+        }, 5500);
+      }
 
       maxCapTimer = setTimeout(() => {
-        if (mediaRecorder && mediaRecorder.state === 'recording') {
-          mediaRecorder.stop();
+        if (!stopped) {
+          stopped = true;
+          finishPcmCapture(speechStarted || recordedChunks.length > 0);
         }
-      }, 13000);
+      }, 14000);
     } catch (err) {
       cleanup();
-      onError('Microphone access denied: ' + (err.message || err));
+      onError('Microphone access denied: ' + (err?.message || err));
     }
   };
 
@@ -164,7 +355,6 @@ export function startVoiceCapture({
       recognition.continuous = true;
       recognition.interimResults = true;
       onStatus('listening-speech');
-      startMicMeter(onLevel);
 
       recognition.onresult = (event) => {
         let interim = '';
@@ -193,6 +383,12 @@ export function startVoiceCapture({
 
       recognition.onerror = (ev) => {
         const errCode = ev?.error || '';
+        if (errCode === 'no-speech' || errCode === 'aborted') {
+          stopped = true;
+          cleanup();
+          onResult('');
+          return;
+        }
         if (!hasCapturedSpeech && (errCode === 'network' || errCode === 'service-not-allowed' || errCode === 'not-allowed')) {
           if (errCode === 'network' || errCode === 'service-not-allowed') {
             speechApiBrokenInRuntime = true;
@@ -204,8 +400,7 @@ export function startVoiceCapture({
             } catch {}
             recognition = null;
           }
-          stopMicMeter();
-          startMediaRecorderFallback();
+          startPcmCommandCapture();
           return;
         }
         cleanup();
@@ -219,6 +414,7 @@ export function startVoiceCapture({
           cleanup();
           onResult(out);
         } else if (!stopped) {
+          stopped = true;
           cleanup();
           onResult('');
         }
@@ -226,18 +422,18 @@ export function startVoiceCapture({
 
       recognition.start();
     } catch {
-      startMediaRecorderFallback();
+      startPcmCommandCapture();
     }
   } else {
-    startMediaRecorderFallback();
+    startPcmCommandCapture();
   }
 
   return {
     stop() {
       if (stopped) return;
       stopped = true;
-      if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.stop();
+      if (pcmSession) {
+        finishPcmCapture(speechStarted && recordedChunks.length > 0);
         return;
       }
       const out = finalText.trim();
@@ -246,12 +442,7 @@ export function startVoiceCapture({
     },
     cancel() {
       stopped = true;
-      if (mediaRecorder && mediaRecorder.state === 'recording') {
-        mediaRecorder.onstop = null;
-        try {
-          mediaRecorder.stop();
-        } catch {}
-      }
+      recordedChunks = [];
       cleanup();
     },
   };
@@ -259,8 +450,8 @@ export function startVoiceCapture({
 
 /**
  * Passive Wake-Word Listener ("Hey <AiName>"):
- * - Uses instant native SpeechRecognition when available (Chrome/Edge/Android)
- * - Automatically falls back to Zero-Idle-API Adaptive VAD + Short Clip Gemini Wake Check in Electron!
+ * - Chrome/Edge/Android: zero-cost native SpeechRecognition with deferred inline-command wait
+ * - Electron Desktop: continuous 16kHz PCM circular Pre-Roll Ring Buffer (never clips "Hey"!) + WAV VAD
  */
 export function startWakeWordListener({
   aiName,
@@ -271,14 +462,15 @@ export function startWakeWordListener({
   let cancelled = false;
   let rec = null;
   let restartTimer = null;
-  let audioStream = null;
-  let vadRecorder = null;
+  let inlineWaitTimer = null;
+  let pcmSession = null;
   let vadSilenceTimer = null;
   let vadMaxTimer = null;
 
   const stopAll = () => {
     cancelled = true;
     clearTimeout(restartTimer);
+    clearTimeout(inlineWaitTimer);
     clearTimeout(vadSilenceTimer);
     clearTimeout(vadMaxTimer);
     if (rec) {
@@ -289,120 +481,102 @@ export function startWakeWordListener({
       } catch {}
       rec = null;
     }
-    if (vadRecorder && vadRecorder.state === 'recording') {
-      vadRecorder.onstop = null;
-      try {
-        vadRecorder.stop();
-      } catch {}
-    }
-    vadRecorder = null;
-    stopMicMeter();
-    if (audioStream) {
-      audioStream.getTracks().forEach((t) => t.stop());
-      audioStream = null;
+    if (pcmSession) {
+      pcmSession.close();
+      pcmSession = null;
     }
   };
 
-  // Fallback for Electron Desktop: only records short burst when clear vocal energy crosses noise floor
-  const startEnergyVadWakeLoop = async () => {
+  const startPcmWakeLoop = async () => {
     if (cancelled) return;
     try {
-      audioStream = await navigator.mediaDevices.getUserMedia(AUDIO_CONSTRAINTS);
-      const mimeType = getSupportedRecorderMime();
-      let isCapturingPhrase = false;
+      let isCapturing = false;
       let inFlightCheck = false;
-      let noiseFloor = 0.025;
-      let warmSamples = 0;
+      let noiseFloor = 0.018;
+      let warmFrames = 0;
       let voicedFrames = 0;
+      let activeVoicedAfterTrigger = 0;
+      let phraseChunks = [];
 
-      const beginClip = () => {
-        if (cancelled || isCapturingPhrase || inFlightCheck || !audioStream) return;
-        isCapturingPhrase = true;
-        const chunks = [];
-        const mr = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream);
-        vadRecorder = mr;
+      const finishWakeClip = async () => {
+        if (!isCapturing) return;
+        isCapturing = false;
+        clearTimeout(vadSilenceTimer);
+        clearTimeout(vadMaxTimer);
+        vadSilenceTimer = null;
+        vadMaxTimer = null;
 
-        mr.ondataavailable = (e) => {
-          if (e.data && e.data.size > 0) chunks.push(e.data);
-        };
+        const chunks = phraseChunks;
+        const spokeEnough = activeVoicedAfterTrigger >= 2;
+        phraseChunks = [];
+        activeVoicedAfterTrigger = 0;
 
-        mr.onstop = async () => {
-          isCapturingPhrase = false;
-          vadRecorder = null;
-          clearTimeout(vadMaxTimer);
-          clearTimeout(vadSilenceTimer);
-          if (cancelled || chunks.length === 0) return;
+        if (cancelled || !spokeEnough || !chunks.length) return;
+        const pcm = concatFloat32(chunks);
+        // Require at least ~0.45s total audio (pre-roll + speech)
+        if (pcm.length < 7200) return;
 
-          const usedMime = (mr.mimeType || 'audio/webm').split(';')[0];
-          const blob = new Blob(chunks, { type: usedMime });
-          if (blob.size < 1800) return; // Skip tiny clicks/pops
-
-          inFlightCheck = true;
-          try {
-            const dataUrl = await new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onloadend = () => resolve(reader.result);
-              reader.onerror = reject;
-              reader.readAsDataURL(blob);
-            });
-            if (cancelled) return;
-            const base64 = String(dataUrl).split(',')[1];
-            const transcript = await transcribeAudio(base64, usedMime, { aiName, mode: 'wake' });
-            if (cancelled) return;
-            const match = matchWakePhrase(transcript, aiName);
-            if (match.matched) {
-              stopAll();
-              onWakeTriggered(match.command);
-            }
-          } catch {
-            // Silently resume passive listening
-          } finally {
-            inFlightCheck = false;
+        inFlightCheck = true;
+        try {
+          const wavBase64 = encodeWavBase64(pcm, 16000);
+          if (cancelled) return;
+          const rawTranscript = await transcribeAudio(wavBase64, 'audio/wav', {
+            aiName,
+            mode: 'wake',
+          });
+          if (cancelled) return;
+          const cleaned = cleanSttTranscript(rawTranscript);
+          const match = matchWakePhrase(cleaned, aiName);
+          if (match.matched) {
+            stopAll();
+            onWakeTriggered(match.command);
           }
-        };
-
-        mr.start(150);
-        vadMaxTimer = setTimeout(() => {
-          if (mr.state === 'recording') mr.stop();
-        }, 4400);
+        } catch {
+          // Silently resume passive listening
+        } finally {
+          inFlightCheck = false;
+        }
       };
 
-      startMicMeter((lvl) => {
-        if (cancelled) return;
-        warmSamples++;
-        if (warmSamples < 16 && !isCapturingPhrase) {
-          noiseFloor = noiseFloor * 0.8 + lvl * 0.2;
-          return;
-        }
+      pcmSession = await createPcmStreamMonitor({
+        preRollSeconds: 0.75,
+        gainBoost: 3.8,
+        onFrame: (pcm16k, lvl, getPreRoll) => {
+          if (cancelled) return;
+          warmFrames++;
+          if (warmFrames < 10 && !isCapturing) {
+            noiseFloor = noiseFloor * 0.8 + lvl * 0.2;
+            return;
+          }
 
-        // Far-field tuned threshold (~1-3m room voice works cleanly with 2.4x boost)
-        const wakeThreshold = Math.max(0.038, noiseFloor * 1.75);
-        if (lvl > wakeThreshold && !inFlightCheck) {
-          voicedFrames++;
-          if (!isCapturingPhrase && voicedFrames >= 2) {
-            beginClip();
-          }
-          if (isCapturingPhrase) {
-            clearTimeout(vadSilenceTimer);
-            vadSilenceTimer = setTimeout(() => {
-              if (vadRecorder && vadRecorder.state === 'recording') {
-                vadRecorder.stop();
+          const wakeThresh = Math.max(0.032, Math.min(0.14, noiseFloor * 1.9));
+          if (!isCapturing) {
+            if (lvl > wakeThresh && !inFlightCheck) {
+              voicedFrames++;
+              if (voicedFrames >= 2) {
+                isCapturing = true;
+                voicedFrames = 0;
+                activeVoicedAfterTrigger = 2;
+                phraseChunks = getPreRoll();
+                vadMaxTimer = setTimeout(() => finishWakeClip(), 4200);
+                vadSilenceTimer = setTimeout(() => finishWakeClip(), 680);
               }
-            }, 720);
-          }
-        } else {
-          voicedFrames = Math.max(0, voicedFrames - 1);
-          if (!isCapturingPhrase && !inFlightCheck) {
-            noiseFloor = noiseFloor * 0.96 + lvl * 0.04;
-          } else if (isCapturingPhrase && !vadSilenceTimer) {
-            vadSilenceTimer = setTimeout(() => {
-              if (vadRecorder && vadRecorder.state === 'recording') {
-                vadRecorder.stop();
+            } else {
+              voicedFrames = Math.max(0, voicedFrames - 1);
+              if (!inFlightCheck && lvl < wakeThresh) {
+                noiseFloor = noiseFloor * 0.96 + lvl * 0.04;
               }
-            }, 720);
+            }
+          } else {
+            phraseChunks.push(pcm16k);
+            if (lvl > Math.max(0.024, noiseFloor * 1.6)) {
+              activeVoicedAfterTrigger++;
+              clearTimeout(vadSilenceTimer);
+              vadSilenceTimer = setTimeout(() => finishWakeClip(), 680);
+            }
           }
-        }
-      }, audioStream, { boost: 2.6 });
+        },
+      });
     } catch (err) {
       onError('Wake mic error: ' + (err?.message || err));
     }
@@ -423,16 +597,24 @@ export function startWakeWordListener({
             const phrase = event.results[i][0].transcript;
             const match = matchWakePhrase(phrase, aiName);
             if (match.matched) {
-              if (event.results[i].isFinal && match.command.length >= 3) {
+              clearTimeout(inlineWaitTimer);
+              if (event.results[i].isFinal && match.command.length >= 2) {
                 stopAll();
                 onWakeTriggered(match.command);
                 return;
               }
-              if (event.results[i].isFinal || match.command.length === 0) {
+              if (event.results[i].isFinal) {
                 stopAll();
                 onWakeTriggered('');
                 return;
               }
+              // Defer briefly on interim "Hey Jeeva" so same-breath inline commands arrive intact
+              inlineWaitTimer = setTimeout(() => {
+                if (!cancelled) {
+                  stopAll();
+                  onWakeTriggered(match.command);
+                }
+              }, 550);
             }
           }
         };
@@ -446,7 +628,7 @@ export function startWakeWordListener({
               rec.stop();
             } catch {}
             rec = null;
-            startEnergyVadWakeLoop();
+            startPcmWakeLoop();
           }
         };
 
@@ -458,12 +640,12 @@ export function startWakeWordListener({
 
         rec.start();
       } catch {
-        startEnergyVadWakeLoop();
+        startPcmWakeLoop();
       }
     };
     startSpeechWake();
   } else {
-    startEnergyVadWakeLoop();
+    startPcmWakeLoop();
   }
 
   return { stop: stopAll };
