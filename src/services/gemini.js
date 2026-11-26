@@ -466,11 +466,19 @@ export async function generateTitle(userMessage) {
   }
 }
 
-let regionalVoiceCache = null;
+let regionalVoiceCache = new Map();
 
-async function getRegionalVoices() {
-  if (regionalVoiceCache) return regionalVoiceCache;
-  const fallback = { english: 'Charon', hindi: 'Sulafat', hinglish: 'Achird' };
+export function resetRegionalVoiceCache() {
+  regionalVoiceCache.clear();
+}
+
+async function getRegionalVoices(accent = 'indian') {
+  const key = accent === 'global' ? 'global' : 'indian';
+  if (regionalVoiceCache.has(key)) return regionalVoiceCache.get(key);
+  const fallback =
+    key === 'indian'
+      ? { english: 'Achird', hindi: 'Sulafat', hinglish: 'Achird' }
+      : { english: 'Charon', hindi: 'Sulafat', hinglish: 'Achird' };
   if (!client?.voices?.list) return fallback;
 
   try {
@@ -480,29 +488,39 @@ async function getRegionalVoices() {
       client.voices.list({ language_code: ['en-US'], contexts: ['Audiobook', 'Conversational'], type: ['prebuilt'], page_size: 10 }).catch(() => null),
     ]);
 
-    regionalVoiceCache = {
+    const resolved = {
       hindi: hiRes?.voices?.[0]?.id || fallback.hindi,
       hinglish: inRes?.voices?.[0]?.id || hiRes?.voices?.[1]?.id || fallback.hinglish,
-      english: enRes?.voices?.[0]?.id || fallback.english,
+      english:
+        key === 'indian'
+          ? inRes?.voices?.[0]?.id || fallback.english
+          : enRes?.voices?.[0]?.id || fallback.english,
     };
-    return regionalVoiceCache;
+    regionalVoiceCache.set(key, resolved);
+    return resolved;
   } catch {
     return fallback;
   }
 }
 
 const VOICE_STYLE_HINTS = {
-  english: 'clear, articulate, warm natural English studio narrator',
-  hindi: 'warm, expressive, fluent native Hindi speaker with natural Indian Hindi pronunciation',
-  hinglish: 'friendly, natural Indian conversational Hinglish speaker, smooth bilingual Hindi and English pronunciation',
+  english: 'clear, crisp, warm Indian English accent (en-IN), fluent natural conversational tone with articulate pronunciation and calm comfortable pacing',
+  english_global: 'clear, articulate, warm natural English studio narrator with steady pacing',
+  hindi: 'warm, expressive, fluent native Indian Hindi speaker with crisp pronunciation and calm natural pacing',
+  hinglish: 'friendly, natural Indian conversational voice (en-IN / hi-IN), crystal-clear pronunciation switching smoothly between Indian English and Hindi without rushing',
 };
 
-export async function textToSpeech(text, profile = 'hinglish') {
+export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
   if (!client) throw new Error('Gemini not initialized');
 
-  const voices = await getRegionalVoices();
+  const accent =
+    opts?.accent ||
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_accent') : null) ||
+    'indian';
+  const voices = await getRegionalVoices(accent);
   const voice = voices[profile] || voices.hinglish;
-  const style = VOICE_STYLE_HINTS[profile] || VOICE_STYLE_HINTS.hinglish;
+  const styleKey = profile === 'english' && accent === 'global' ? 'english_global' : profile;
+  const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;
   const ttsModels = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
 
   let lastErr;

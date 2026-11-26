@@ -1,12 +1,69 @@
-// Smart Multi-Voice Read-Aloud Engine (English, Hindi, Hinglish + Auto-Detect)
-import { textToSpeech } from './gemini.js';
+// Smart Multi-Voice Read-Aloud Engine (Indian English, Hindi, Hinglish + Clear Pronunciation Normalizer)
+import { textToSpeech, resetRegionalVoiceCache } from './gemini.js';
 
 export const VOICE_PROFILES = {
   auto: { id: 'auto', label: 'Auto Detect', shortLabel: 'Auto' },
-  english: { id: 'english', label: 'English (Studio)', shortLabel: 'English' },
+  english: { id: 'english', label: 'Indian English', shortLabel: 'EN-IN' },
   hindi: { id: 'hindi', label: 'Hindi (Natural)', shortLabel: 'Hindi' },
   hinglish: { id: 'hinglish', label: 'Hinglish (Bilingual)', shortLabel: 'Hinglish' },
 };
+
+const VOICE_ACCENT_KEY = 'jeeva_voice_accent';
+const PREFERRED_NATIVE_VOICE_KEY = 'jeeva_native_voice';
+
+function readStorage(key, fallback = '') {
+  try {
+    return (typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStorage(key, val) {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(key, val);
+  } catch {}
+}
+
+export function getVoiceAccent() {
+  const v = readStorage(VOICE_ACCENT_KEY, 'indian');
+  return v === 'global' ? 'global' : 'indian';
+}
+
+export function setVoiceAccent(accent) {
+  const clean = accent === 'global' ? 'global' : 'indian';
+  writeStorage(VOICE_ACCENT_KEY, clean);
+  resetRegionalVoiceCache();
+  return clean;
+}
+
+export function getPreferredNativeVoice() {
+  return readStorage(PREFERRED_NATIVE_VOICE_KEY, '');
+}
+
+export function setPreferredNativeVoice(voiceName) {
+  writeStorage(PREFERRED_NATIVE_VOICE_KEY, String(voiceName || ''));
+}
+
+export function getAvailableSpeechVoices() {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return [];
+  const voices = window.speechSynthesis.getVoices() || [];
+  return voices
+    .filter((v) => /^(en|hi)/i.test(v.lang || ''))
+    .map((v) => ({ name: v.name, lang: v.lang, localService: v.localService }));
+}
+
+// Warm up Chromium speechSynthesis voices asynchronously on startup
+if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+  try {
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => {
+      try {
+        window.speechSynthesis.getVoices();
+      } catch {}
+    };
+  } catch {}
+}
 
 const HINGLISH_WORDS = new Set([
   'hai', 'hain', 'ho', 'hun', 'hoon', 'hu', 'ka', 'ki', 'ke', 'ko', 'se', 'me', 'mein',
@@ -27,7 +84,7 @@ const HINGLISH_WORDS = new Set([
   'hoga', 'mil', 'raha', 'dikh', 'sakoon', 'sake', 'chalo', 'aao', 'jao', 'bolo', 'bol',
 ]);
 
-let selectedMode = localStorage.getItem('jeeva_voice_mode') || 'auto';
+let selectedMode = readStorage('jeeva_voice_mode', 'auto');
 
 let currentState = {
   isPlaying: false,
@@ -67,7 +124,7 @@ export function subscribeSpeech(fn) {
 export function setVoiceMode(mode) {
   if (!VOICE_PROFILES[mode]) return;
   selectedMode = mode;
-  localStorage.setItem('jeeva_voice_mode', mode);
+  writeStorage('jeeva_voice_mode', mode);
   currentState = { ...currentState, voiceMode: mode };
   notify();
 }
@@ -108,19 +165,38 @@ export function detectVoiceProfile(text) {
   return 'english';
 }
 
-function cleanTextForSpeech(text) {
+/**
+ * Cleans markdown, technical symbols, paths, URLs, and spacing so spoken English/Hinglish sounds crystal clear.
+ */
+export function cleanTextForSpeech(text) {
   return String(text || '')
     .replace(/```[\s\S]*?```/g, ' Code snippet. ')
     .replace(/`([^`]+)`/g, '$1')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/https?:\/\/\S+/gi, ' web link ')
+    .replace(/[A-Za-z]:\\(?:[^\s\\/:*?"<>|]+\\)+([^\s\\/:*?"<>|]+)/g, '$1')
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\n\s*[-*•]\s+/g, ', ')
+    .replace(/\n/g, '. ')
+    .replace(/([a-z])_([a-z])/gi, '$1 $2')
+    .replace(/(\d+)\s*%/g, '$1 percent')
+    .replace(/(\d+)\s*°\s*C\b/gi, '$1 degrees Celsius')
+    .replace(/(\d+)\s*°\s*F\b/gi, '$1 degrees Fahrenheit')
+    .replace(/\s*(?:->|=>|→)\s*/g, ', to ')
+    .replace(/\s+&\s+/g, ' and ')
+    .replace(/\bapprox\b\.?/gi, 'approximately')
+    .replace(/\betc\b\.?/gi, 'and so on')
+    .replace(/\bvs\.?\b/gi, 'versus')
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, '')
     .replace(/[#*_~>|]/g, ' ')
+    .replace(/\s*,\s*,+/g, ',')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-// Split with quick ~150 char first sentence chunk for snappy first-word latency, ~360 chars thereafter
-function splitIntoChunks(text, maxLen = 360, firstChunkMax = 150) {
+// Split with quick ~140 char first sentence and <=240 char chunks so OS TTS never hits Chromium's cutoff bug
+function splitIntoChunks(text, maxLen = 240, firstChunkMax = 140) {
   const clean = cleanTextForSpeech(text);
   if (!clean) return [];
   const rawSentences = clean.match(/[^।.!?\n]+[।.!?\n]*/g) || [clean];
@@ -156,27 +232,58 @@ function splitIntoChunks(text, maxLen = 360, firstChunkMax = 150) {
   return chunks;
 }
 
+function scoreVoiceCandidate(v, targetLangOrder) {
+  const lang = String(v.lang || '').toLowerCase();
+  const name = String(v.name || '').toLowerCase();
+  let langScore = 0;
+  for (let i = 0; i < targetLangOrder.length; i++) {
+    if (lang.startsWith(targetLangOrder[i])) {
+      langScore = (targetLangOrder.length - i) * 100;
+      break;
+    }
+  }
+  if (!langScore) return -1;
+
+  let qualityBonus = 0;
+  if (/natural|neural|online/i.test(name)) qualityBonus += 45;
+  if (/neerja|prabhat|swara|madhur|ravi|heera|kalpana|hemant|veena|rishi|google\s+.*india|google हिन्दी/i.test(name)) {
+    qualityBonus += 35;
+  }
+  if (/india/i.test(name)) qualityBonus += 25;
+  if (/google/i.test(name)) qualityBonus += 15;
+  return langScore + qualityBonus;
+}
+
 function pickNativeVoice(profile) {
   const voices = window.speechSynthesis?.getVoices?.() || [];
   if (!voices.length) return null;
 
-  // Prefer natural/online neural voices if Edge/Windows has them installed
-  const preferredLangs =
+  const preferredName = getPreferredNativeVoice();
+  if (preferredName && profile !== 'hindi') {
+    const manual = voices.find((v) => v.name === preferredName);
+    if (manual) return manual;
+  }
+
+  const indianAccent = getVoiceAccent() === 'indian';
+  const targetLangOrder =
     profile === 'hindi'
       ? ['hi-in', 'hi']
       : profile === 'hinglish'
-      ? ['en-in', 'hi-in', 'en']
-      : ['en-us', 'en-gb', 'en-in', 'en'];
+        ? ['en-in', 'hi-in', 'en-gb', 'en']
+        : indianAccent
+          ? ['en-in', 'en-gb', 'en-us', 'en']
+          : ['en-us', 'en-gb', 'en-in', 'en'];
 
-  for (const lang of preferredLangs) {
-    const natural = voices.find(
-      v => v.lang.toLowerCase().startsWith(lang) && /natural|neural|online|google/i.test(v.name)
-    );
-    if (natural) return natural;
-    const any = voices.find(v => v.lang.toLowerCase().startsWith(lang));
-    if (any) return any;
+  let best = null;
+  let bestScore = -1;
+  for (const v of voices) {
+    const sc = scoreVoiceCandidate(v, targetLangOrder);
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = v;
+    }
   }
-  return voices[0];
+  return best || voices[0];
 }
 
 function speakChunkNative(text, profile) {
@@ -186,12 +293,36 @@ function speakChunkNative(text, profile) {
       return;
     }
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = profile === 'hindi' ? 'hi-IN' : profile === 'hinglish' ? 'en-IN' : 'en-US';
+    const indianAccent = getVoiceAccent() === 'indian';
+    utterance.lang = profile === 'hindi' ? 'hi-IN' : indianAccent || profile === 'hinglish' ? 'en-IN' : 'en-US';
     const voice = pickNativeVoice(profile);
     if (voice) utterance.voice = voice;
-    utterance.rate = currentState.rate;
-    utterance.onend = () => resolve();
-    utterance.onerror = () => resolve();
+    // Slight clarity pacing tuning so words enunciate cleanly without sounding rushed
+    utterance.rate = Math.min(1.5, Math.max(0.75, currentState.rate * 0.96));
+    utterance.pitch = 1.0;
+
+    let pulseTimer = setInterval(() => {
+      if (stopRequested) return;
+      const lvl = 0.28 + Math.random() * 0.45;
+      currentState = {
+        ...currentState,
+        audioLevel: lvl,
+        freqBands: [lvl * 0.8, lvl, lvl * 0.9, lvl * 0.7, lvl * 0.5],
+      };
+      notify();
+    }, 90);
+
+    const finish = () => {
+      if (pulseTimer) {
+        clearInterval(pulseTimer);
+        pulseTimer = null;
+      }
+      currentState = { ...currentState, audioLevel: 0, freqBands: [0, 0, 0, 0, 0] };
+      notify();
+      resolve();
+    };
+    utterance.onend = finish;
+    utterance.onerror = finish;
     window.speechSynthesis.speak(utterance);
   });
 }
@@ -321,7 +452,7 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
   const myToken = ++playbackToken;
   stopRequested = false;
 
-  const chunks = splitIntoChunks(clean, 420);
+  const chunks = splitIntoChunks(clean, 240, 140);
   if (!chunks.length) return;
 
   const initialProfile =
@@ -342,11 +473,12 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
   notify();
 
   // Prefetch helper: determines voice profile per chunk if in Auto mode
+  const accent = getVoiceAccent();
   const fetchChunkAudio = (idx) => {
     const chunkText = chunks[idx];
     const profile =
       forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunkText) : selectedMode);
-    return textToSpeech(chunkText, profile).then((url) => ({ url, profile }));
+    return textToSpeech(chunkText, profile, { accent }).then((url) => ({ url, profile }));
   };
 
   let nextPromise = fetchChunkAudio(0).catch((err) => ({ error: err }));

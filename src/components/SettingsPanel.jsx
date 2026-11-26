@@ -15,7 +15,14 @@ import {
 } from 'react-icons/lu';
 import { clearSessionPermissions, isUsingServerProxy, testGeminiConnection } from '../services/gemini';
 import { getBrainMode, setBrainMode, getBrainStats, resetBrainStats } from '../services/brainRouter';
-import { speakText } from '../services/speech';
+import {
+  speakText,
+  getVoiceAccent,
+  setVoiceAccent,
+  getPreferredNativeVoice,
+  setPreferredNativeVoice,
+  getAvailableSpeechVoices,
+} from '../services/speech';
 import { startVoiceCapture } from '../services/voiceCapture';
 import {
   getVoiceprintStatus,
@@ -95,6 +102,16 @@ export default function SettingsPanel({
   const [localBrain, setLocalBrain] = useState(null);
   const [brainProgress, setBrainProgress] = useState(null);
   const [brainBusy, setBrainBusy] = useState(false);
+  const [voiceAccent, setVoiceAccentState] = useState(() => getVoiceAccent());
+  const [nativeVoice, setNativeVoiceState] = useState(() => getPreferredNativeVoice());
+  const [availableVoices, setAvailableVoices] = useState(() => getAvailableSpeechVoices());
+
+  useEffect(() => {
+    const refresh = () => setAvailableVoices(getAvailableSpeechVoices());
+    refresh();
+    const t = setTimeout(refresh, 400);
+    return () => clearTimeout(t);
+  }, []);
 
   const handleEnrollVoiceprint = async () => {
     if (enrollingVoice) return;
@@ -887,6 +904,64 @@ export default function SettingsPanel({
                   )}
                 </div>
               )}
+
+              {/* Indian English Accent & Speech Clarity */}
+              <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-medium text-obsidian-text flex items-center gap-1.5">
+                      <LuVolume2 className="w-3.5 h-3.5 text-emerald-400" />
+                      English Voice Accent &amp; Clarity
+                    </p>
+                    <p className="text-[10px] text-obsidian-muted mt-0.5">
+                      Clear Indian English (en-IN) pronunciation for both Cloud TTS and Offline speech
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      speakText(
+                        'Hello! I am JEEVA AI speaking in clear Indian English. Main aapke PC ke chhote aur moderate kaam bina kisi delay ke kar sakta hoon.',
+                        { label: 'Voice Clarity Test' }
+                      )
+                    }
+                    className="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 text-[11px] font-medium flex-shrink-0"
+                  >
+                    Test Voice
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <select
+                    value={voiceAccent}
+                    onChange={(e) => {
+                      const next = setVoiceAccent(e.target.value);
+                      setVoiceAccentState(next);
+                      toast.success(`English voice accent: ${next === 'indian' ? 'Indian English (en-IN)' : 'Global'}`);
+                    }}
+                    className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
+                  >
+                    <option value="indian">Accent: Indian English (en-IN · Clear)</option>
+                    <option value="global">Accent: Global Studio (en-US)</option>
+                  </select>
+
+                  <select
+                    value={nativeVoice}
+                    onChange={(e) => {
+                      setPreferredNativeVoice(e.target.value);
+                      setNativeVoiceState(e.target.value);
+                    }}
+                    className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
+                  >
+                    <option value="">Offline Voice: Auto Best Indian Voice</option>
+                    {availableVoices.map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {v.name} ({v.lang})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
               {/* Lightweight Acoustic Voiceprint Security */}
               <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2">
