@@ -326,6 +326,7 @@ const TOOL_DESCRIPTIONS = {
   schedule_pc_task: 'timer reminder alarm schedule delayed command after minutes',
   pc_power_tools: 'power plan balanced high performance power saver display info recycle bin',
   memory_rag: 'remember recall memory preference project path past fact',
+  episodic_recall: 'what did i ask say yesterday last week monday date history timeline morning evening',
 };
 
 const PRECOMPUTED_TOOL_VECS = Object.entries(TOOL_DESCRIPTIONS).map(([name, desc]) => ({

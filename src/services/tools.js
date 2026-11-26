@@ -1,4 +1,5 @@
 import { getSystemAPI, executeMobileBrowserAction } from './bridge.js';
+import { queryEpisodicTimeline } from './episodicMemory.js';
 import {
   PERMISSION_CATEGORIES,
   getToolCategory,
@@ -500,6 +501,23 @@ export const TOOLS = [
   },
   {
     type: 'function',
+    name: 'episodic_recall',
+    description:
+      'Queries past user conversations and commands by date, weekday, time of day, or topic (e.g. what the user asked yesterday, on a specific date, or last Monday).',
+    parameters: {
+      type: 'object',
+      properties: {
+        date_key: { type: 'string', description: 'Exact date in YYYY-MM-DD format if known' },
+        date_from: { type: 'string', description: 'Start date YYYY-MM-DD' },
+        date_to: { type: 'string', description: 'End date YYYY-MM-DD' },
+        weekday: { type: 'string', description: 'Weekday name e.g. Monday' },
+        time_of_day: { type: 'string', enum: ['morning', 'afternoon', 'evening', 'night'] },
+        topic: { type: 'string', description: 'Optional keyword or topic' },
+      },
+    },
+  },
+  {
+    type: 'function',
     name: 'generate_image_tool',
     description: 'Generates an image from a text prompt when the user asks to create/draw/generate a picture, logo, or wallpaper.',
     parameters: {
@@ -532,9 +550,9 @@ export async function executeFunctionCall(
     return { result: 'Image generated successfully', generatedImage: imageUrl };
   }
 
-  const isMobileBrowser = name === 'mobile_browser_action';
+  const isLocalWebTool = name === 'mobile_browser_action' || name === 'episodic_recall';
   const api = getSystemAPI();
-  if (!isMobileBrowser && !api) {
+  if (!isLocalWebTool && !api) {
     return {
       error:
         'PC connected nahi hai. Ya to PC app par Render Cloud Relay connect karein, ya Link to PC mein 4-digit PIN daalein.',
@@ -783,6 +801,18 @@ export async function executeFunctionCall(
       case 'memory_rag': {
         const res = await api.memoryRag(args.action || 'recall', args.text || '', args.category || 'fact');
         return { result: JSON.stringify(res) };
+      }
+      case 'episodic_recall': {
+        const rows = await queryEpisodicTimeline({
+          dateKey: args.date_key || '',
+          dateFrom: args.date_from || '',
+          dateTo: args.date_to || '',
+          weekday: args.weekday || '',
+          timeOfDay: args.time_of_day || '',
+          topic: args.topic || '',
+          limit: 12,
+        });
+        return { result: JSON.stringify({ count: rows.length, entries: rows }) };
       }
       default:
         return { error: `Unknown function: ${name}` };

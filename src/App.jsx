@@ -43,6 +43,7 @@ import {
   recordBrainUsage,
   compactHistoryForCloud,
 } from './services/brainRouter';
+import { logEpisodicTurn } from './services/episodicMemory';
 import { useVoiceEngine } from './services/useVoiceEngine';
 import { useWatchdogAndStats } from './hooks/useWatchdogAndMemory';
 import ToastContainer from './components/ToastContainer';
@@ -623,7 +624,9 @@ export default function App() {
 
     const fromVoice = Boolean(meta?.fromVoice);
     const forceCloud = Boolean(meta?.forceCloud);
-    const routing = assessQueryRouting(text, attachment, forceCloud ? 'cloud' : brainMode);
+    const routing = assessQueryRouting(text, attachment, forceCloud ? 'cloud' : brainMode, {
+      batteryLow: Boolean(liveStats?.battery && liveStats.battery < 20 && !liveStats?.charging),
+    });
     const promptText = routing.cleanText;
 
     lastUserPromptRef.current = String(meta?.rawVoiceText || text).trim();
@@ -644,39 +647,74 @@ export default function App() {
     const typingId = Date.now() + 1;
     setMessages(prev => [...prev, { id: typingId, role: 'assistant', text: '', tools: [], isTyping: true }]);
 
+    const finalizeReply = ({
+      replyText,
+      tier = 'fast',
+      modelLabel = 'Instant Local',
+      routeReason = routing.routeReason,
+      image = null,
+      tools = [],
+      shouldSpeak = ttsEnabled || fromVoice,
+      speakLabel = 'Reading response...',
+    }) => {
+      if (tier && tier !== 'offline-guard') {
+        recordBrainUsage(tier, promptText.length);
+      }
+      if (messages.length === 0 && tier !== 'cloud') {
+        const localTitle = buildLocalTitle(promptText);
+        if (localTitle) {
+          setMessages(prev => prev.map(m => (m.id === userMsg.id ? { ...m, aiTitle: localTitle } : m)));
+        }
+      }
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === typingId
+            ? {
+                ...m,
+                text: replyText || 'Done.',
+                isTyping: false,
+                image,
+                tools,
+                brainMeta: { tier, modelLabel, routeReason },
+                timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+              }
+            : m
+        )
+      );
+      if (promptText && !tools.some((t) => t.name === 'episodic_recall')) {
+        logEpisodicTurn({
+          source: fromVoice ? 'voice' : 'chat',
+          brainTier: tier,
+          routeReason,
+          userPrompt: promptText,
+          assistantReply: replyText,
+          toolsUsed: tools.map((t) => t.name),
+        }).catch(() => {});
+      }
+      if (shouldSpeak && replyText) {
+        speakText(replyText, { label: speakLabel });
+      }
+    };
+
     try {
-      // Tier-0 & Tier-1: Zero-API Deterministic + Semantic Intent Local Brain (Chat + Voice unified)
+      // Tier-0 & Tier-1: Zero-API Deterministic + Episodic Date + Semantic Intent Local Brain
       if (!forceCloud && !routing.forceCloud && !attachment) {
         const quick = await runLocalQuickBrain(promptText, { requestPermission });
         if (quick?.handled) {
-          recordBrainUsage(quick.tier || 'fast', promptText.length);
-          const localTitle = messages.length === 0 ? buildLocalTitle(promptText) : null;
-          if (localTitle) {
-            setMessages(prev => prev.map(m => (m.id === userMsg.id ? { ...m, aiTitle: localTitle } : m)));
-          }
-          setMessages(prev =>
-            prev.map(m =>
-              m.id === typingId
-                ? {
-                    ...m,
-                    text: quick.replyText || 'Done.',
-                    isTyping: false,
-                    image: quick.image || null,
-                    tools: quick.tools || [],
-                    brainMeta: { tier: quick.tier || 'fast', modelLabel: quick.modelLabel || 'Instant Local' },
-                    timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-                  }
-                : m
-            )
-          );
-          if ((ttsEnabled || fromVoice) && quick.replyText) {
-            speakText(quick.replyText, { label: 'Local Brain' });
-          }
+          finalizeReply({
+            replyText: quick.replyText || 'Done.',
+            tier: quick.tier || 'fast',
+            modelLabel: quick.modelLabel || 'Instant Local',
+            routeReason: quick.routeReason || routing.routeReason,
+            image: quick.image || null,
+            tools: quick.tools || [],
+            speakLabel: 'Local Brain',
+          });
           return;
         }
       }
 
-      // Tier-2: Low-End Friendly Local SLM Brain (Qwen2.5-0.5B/1.5B / Gemma3-1B with Top-4 Tool Pruning)
+      // Tier-2: Low-End Friendly Local SLM Brain (with 15s CPU timeout guard)
       if (routing.shouldTryLocalFirst && !attachment) {
         const slm = await runLocalSlmTurn({
           text: promptText,
@@ -688,61 +726,45 @@ export default function App() {
           },
         });
         if (slm?.handled) {
-          recordBrainUsage('local-slm', promptText.length);
-          const localTitle = messages.length === 0 ? buildLocalTitle(promptText) : null;
-          if (localTitle) {
-            setMessages(prev => prev.map(m => (m.id === userMsg.id ? { ...m, aiTitle: localTitle } : m)));
-          }
-          setMessages(prev =>
-            prev.map(m =>
-              m.id === typingId
-                ? {
-                    ...m,
-                    text: slm.replyText,
-                    isTyping: false,
-                    image: slm.image || null,
-                    tools: slm.tools || [],
-                    brainMeta: { tier: 'local-slm', modelLabel: slm.modelLabel || 'Local SLM' },
-                    timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-                  }
-                : m
-            )
-          );
-          if ((ttsEnabled || fromVoice) && slm.replyText) {
-            speakText(slm.replyText, { label: 'Local SLM' });
-          }
+          finalizeReply({
+            replyText: slm.replyText,
+            tier: 'local-slm',
+            modelLabel: slm.modelLabel || 'Local SLM',
+            routeReason: !routing.online
+              ? 'Offline auto-switch: answered with Local SLM'
+              : 'Auto Hybrid: solved locally by SLM (0 Gemini API calls)',
+            image: slm.image || null,
+            tools: slm.tools || [],
+            speakLabel: 'Local SLM',
+          });
           return;
         }
       }
 
-      // Offline-Only Guard: never leak traffic or bill Gemini API if user locked Offline Brain Mode
-      if (routing.mode === 'offline') {
-        const offlineNote = window.electronAPI
-          ? 'Offline Brain Mode ON hai. Is task ke liye Settings -> Local AI Brain me halka model (Qwen 2.5 1.5B / Gemma 3 1B) setup karein, ya Brain Mode ko "Auto Hybrid" par karein.'
-          : 'Offline Brain Mode ON hai. Browser mode me complex query ke liye "Auto Hybrid" mode select karein.';
-        setMessages(prev =>
-          prev.map(m =>
-            m.id === typingId
-              ? {
-                  ...m,
-                  text: offlineNote,
-                  isTyping: false,
-                  brainMeta: { tier: 'fast', modelLabel: 'Offline Guard' },
-                  timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-                }
-              : m
-          )
-        );
+      // Offline-Only Guard (when user selected Offline Mode OR internet is completely disconnected)
+      if (routing.mode === 'offline' || !routing.online) {
+        const offlineNote = !routing.online
+          ? 'Internet offline detected — auto-switched to Local Mode. Is heavy query ke liye Internet connect karein ya Settings -> Local AI Brain me halka offline model pull karein.'
+          : window.electronAPI
+            ? 'Offline Brain Mode ON hai. Is task ke liye Settings -> Local AI Brain me halka model (Qwen 2.5 1.5B / Gemma 3 1B) setup karein, ya Brain Mode ko "Hybrid" par karein.'
+            : 'Offline Brain Mode ON hai. Complex web query ke liye "Hybrid" mode select karein.';
+        finalizeReply({
+          replyText: offlineNote,
+          tier: 'offline-guard',
+          modelLabel: !routing.online ? 'Offline Auto-Switch' : 'Offline Guard',
+          routeReason: routing.routeReason,
+          shouldSpeak: ttsEnabled || fromVoice,
+        });
         return;
       }
 
-      // Tier-3: Escalate to Gemini Cloud ONLY for heavy/vision/search/low-confidence tasks
+      // Tier-3: Escalate to Gemini Cloud (heavy/vision/search/low-confidence SLM)
       if (!isReady) {
         if (!fromVoice) {
           switchWindowMode('full');
           setShowSettings(true);
         }
-        throw new Error('Is heavy task ke liye Gemini API key ya Cloud AI URL Settings me connect karein (chhote PC tasks bina key ke bhi chalte hain).');
+        throw new Error('Is heavy task ke liye Gemini API key ya Cloud AI URL Settings me connect karein (chhote PC tasks aur date memory bina key ke bhi chalte hain).');
       }
 
       if (messages.length === 0 && promptText.trim()) {
@@ -756,53 +778,64 @@ export default function App() {
       }
 
       const historyDigest = compactHistoryForCloud(messages);
-      const response = await sendMessage(
-        promptText,
-        attachment,
-        (streamedText) => {
-          setMessages(prev =>
-            prev.map(m => (m.id === typingId ? { ...m, text: streamedText, isTyping: false } : m))
-          );
-        },
-        requestPermission,
-        (toolsSnapshot) => {
-          setMessages(prev =>
-            prev.map(m => (m.id === typingId ? { ...m, tools: toolsSnapshot } : m))
-          );
-        },
-        { fromVoice, strictVoice: getStrictVoiceMode(), historyDigest }
-      );
+      try {
+        const response = await sendMessage(
+          promptText,
+          attachment,
+          (streamedText) => {
+            setMessages(prev =>
+              prev.map(m => (m.id === typingId ? { ...m, text: streamedText, isTyping: false } : m))
+            );
+          },
+          requestPermission,
+          (toolsSnapshot) => {
+            setMessages(prev =>
+              prev.map(m => (m.id === typingId ? { ...m, tools: toolsSnapshot } : m))
+            );
+          },
+          { fromVoice, strictVoice: getStrictVoiceMode(), historyDigest }
+        );
 
-      recordBrainUsage('cloud', promptText.length);
-      const fallbackToolSummary =
-        response.tools?.length > 0
-          ? `Done: ${response.tools.map((t) => t.name.replace(/_/g, ' ')).join(', ')}.`
-          : 'Completed.';
-      const finalAssistantText = (response.text || '').trim() || fallbackToolSummary;
+        const fallbackToolSummary =
+          response.tools?.length > 0
+            ? `Done: ${response.tools.map((t) => t.name.replace(/_/g, ' ')).join(', ')}.`
+            : 'Completed.';
+        const finalAssistantText = (response.text || '').trim() || fallbackToolSummary;
 
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === typingId
-            ? {
-                ...m,
-                text: finalAssistantText,
-                isTyping: false,
-                image: response.image || null,
-                tools: response.tools || m.tools,
-                brainMeta: {
-                  tier: 'cloud',
-                  modelLabel: routing.heavyReason ? `Gemini Cloud (${routing.heavyReason.replace(/_/g, ' ')})` : 'Gemini Cloud',
-                },
-                timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-              }
-            : m
-        )
-      );
-
-      if ((response.autoSpeak || ttsEnabled || meta?.fromVoice) && finalAssistantText) {
-        speakText(finalAssistantText, {
-          label: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Reading response...',
+        finalizeReply({
+          replyText: finalAssistantText,
+          tier: 'cloud',
+          modelLabel: routing.heavyReason ? `Gemini Cloud (${routing.heavyReason.replace(/_/g, ' ')})` : 'Gemini Cloud',
+          routeReason: routing.routeReason,
+          image: response.image || null,
+          tools: response.tools || [],
+          shouldSpeak: Boolean(response.autoSpeak || ttsEnabled || meta?.fromVoice),
+          speakLabel: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Reading response...',
         });
+      } catch (cloudErr) {
+        // Reverse Auto-Switch Fallback: if Gemini rate-limited (429) or unreachable, retry with Local SLM!
+        const msg = String(cloudErr?.message || cloudErr);
+        const canFallbackLocal = !attachment && /429|503|quota|rate|fetch|network|timeout|unavailable/i.test(msg);
+        if (canFallbackLocal) {
+          const slmFallback = await runLocalSlmTurn({
+            text: promptText,
+            historyMessages: messages,
+            requestPermission,
+            fromVoice,
+          });
+          if (slmFallback?.handled) {
+            finalizeReply({
+              replyText: slmFallback.replyText,
+              tier: 'local-slm',
+              modelLabel: `${slmFallback.modelLabel || 'Local SLM'} (Auto-Fallback)`,
+              routeReason: 'Gemini busy/unreachable — Auto-Switched back to Local SLM',
+              image: slmFallback.image || null,
+              tools: slmFallback.tools || [],
+            });
+            return;
+          }
+        }
+        throw cloudErr;
       }
     } catch (err) {
       if (
@@ -832,7 +865,7 @@ export default function App() {
       voiceprintMismatchRef.current = false;
       setIsLoading(false);
     }
-  }, [isReady, brainMode, ttsEnabled, requestPermission, apiKey, serverConfig.serverManagedKey, serverConfig.requiresPin, switchWindowMode, messages]);
+  }, [isReady, brainMode, liveStats, ttsEnabled, requestPermission, apiKey, serverConfig.serverManagedKey, serverConfig.requiresPin, switchWindowMode, messages]);
 
   // Persistent Always-On Wake Word & Mic Engine:
   // - On Electron Desktop: active 24/7 across Full, Minimized, Tray, Speaker & Cortana modes once API/Cloud is ready

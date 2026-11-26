@@ -164,6 +164,7 @@ export function getToolCategory(name, args = {}) {
     case 'file_manager_pro':
     case 'clipboard_history':
     case 'memory_rag':
+    case 'episodic_recall':
       return 'files_storage';
 
     case 'take_screenshot':

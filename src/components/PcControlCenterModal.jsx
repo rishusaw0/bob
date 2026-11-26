@@ -22,6 +22,8 @@ import {
 import { getSystemAPI } from '../services/bridge';
 import { getAuditLog } from '../services/permissions';
 import { rememberUserMemory, listAllMemories, forgetMemoryItem } from '../services/memoryRag';
+import { queryEpisodicTimeline, forgetEpisodicDay } from '../services/episodicMemory';
+import { toDateKey } from '../services/dateQueryParser';
 import { getBrainStats } from '../services/brainRouter';
 import { toast } from '../services/toast';
 
@@ -81,6 +83,9 @@ export default function PcControlCenterModal({
   const [memories, setMemories] = useState([]);
   const [memInput, setMemInput] = useState('');
   const [memCategory, setMemCategory] = useState('preference');
+  const [episodicRows, setEpisodicRows] = useState([]);
+  const [episodicDate, setEpisodicDate] = useState('');
+  const [episodicTopic, setEpisodicTopic] = useState('');
 
   useEffect(() => {
     if (isOpen && initialTab) setTab(initialTab);
@@ -117,9 +122,10 @@ export default function PcControlCenterModal({
         const res = await window.electronAPI?.macros?.('list').catch(() => ({ macros: [] }));
         setMacros(Array.isArray(res?.macros) ? res.macros : []);
       } else if (targetTab === 'audit') {
-        const [hostLogs, memList] = await Promise.all([
+        const [hostLogs, memList, epRows] = await Promise.all([
           window.electronAPI?.getHostAuditLog?.().catch(() => []) || [],
           listAllMemories().catch(() => []),
+          queryEpisodicTimeline({ dateKey: episodicDate, topic: episodicTopic, limit: 40 }).catch(() => []),
         ]);
         const localLogs = getAuditLog();
         const combined = [
@@ -128,6 +134,7 @@ export default function PcControlCenterModal({
         ];
         setAuditItems(combined);
         setMemories(Array.isArray(memList) ? memList : []);
+        setEpisodicRows(Array.isArray(epRows) ? epRows : []);
       }
     } catch (err) {
       toast.error(err?.message || 'Failed to read PC state');
@@ -139,7 +146,7 @@ export default function PcControlCenterModal({
   useEffect(() => {
     if (!isOpen) return;
     loadTab(tab);
-  }, [isOpen, tab, loadTab]);
+  }, [isOpen, tab, loadTab, episodicDate, episodicTopic]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -873,6 +880,96 @@ export default function PcControlCenterModal({
                   </div>
                 );
               })()}
+
+              {/* Episodic Timeline Memory (Date & Day Indexed Q&A Log) */}
+              <div className="p-3.5 rounded-xl bg-obsidian-bg border border-obsidian-border space-y-2.5">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <p className="text-[11px] font-mono uppercase tracking-wider text-sky-300">
+                    Episodic Date Memory ({episodicRows.length} turns)
+                  </p>
+                  <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => setEpisodicDate(toDateKey(new Date()))}
+                      className={`px-2 py-0.5 rounded border ${
+                        episodicDate === toDateKey(new Date())
+                          ? 'bg-sky-500/20 border-sky-500/40 text-sky-200'
+                          : 'bg-obsidian-surface border-obsidian-border text-obsidian-muted'
+                      }`}
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const y = new Date();
+                        y.setDate(y.getDate() - 1);
+                        setEpisodicDate(toDateKey(y));
+                      }}
+                      className="px-2 py-0.5 rounded border bg-obsidian-surface border-obsidian-border text-obsidian-muted hover:text-obsidian-text"
+                    >
+                      Yesterday
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEpisodicDate('')}
+                      className={`px-2 py-0.5 rounded border ${
+                        !episodicDate
+                          ? 'bg-sky-500/20 border-sky-500/40 text-sky-200'
+                          : 'bg-obsidian-surface border-obsidian-border text-obsidian-muted'
+                      }`}
+                    >
+                      All Days
+                    </button>
+                    <input
+                      type="date"
+                      value={episodicDate}
+                      onChange={(e) => setEpisodicDate(e.target.value)}
+                      className="bg-obsidian-surface border border-obsidian-border rounded px-1.5 py-0.5 text-[11px] text-obsidian-text"
+                    />
+                    {episodicDate && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await forgetEpisodicDay(episodicDate);
+                          toast.info(`Deleted timeline for ${episodicDate}`);
+                          loadTab('audit');
+                        }}
+                        className="px-2 py-0.5 rounded bg-red-950/40 border border-red-900/50 text-red-300 text-[10px]"
+                      >
+                        Delete Day
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  value={episodicTopic}
+                  onChange={(e) => setEpisodicTopic(e.target.value)}
+                  placeholder="Search past conversations by topic (e.g. Chrome, error, volume)..."
+                  className="w-full bg-obsidian-surface border border-obsidian-border rounded-lg px-3 py-1.5 text-xs text-obsidian-text"
+                />
+                {episodicRows.length > 0 ? (
+                  <div className="max-h-40 overflow-y-auto space-y-1.5">
+                    {episodicRows.map((row) => (
+                      <div key={row.id} className="p-2 rounded bg-obsidian-surface border border-obsidian-border text-[11px]">
+                        <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-obsidian-muted">
+                          <span>{row.dateKey} ({row.weekday}) · {row.timeLabel} · {row.source}</span>
+                          <span className={row.brainTier === 'cloud' ? 'text-sky-300' : 'text-emerald-300'}>
+                            {row.brainTier}
+                          </span>
+                        </div>
+                        <p className="text-obsidian-text mt-0.5 truncate">You: {row.userPrompt}</p>
+                        {row.assistantReply && (
+                          <p className="text-obsidian-secondary truncate">JEEVA: {row.assistantReply}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-obsidian-muted">No recorded turns for this date/filter yet.</p>
+                )}
+              </div>
 
               {/* Persistent Local Memory RAG Panel */}
               <div className="p-3.5 rounded-xl bg-obsidian-bg border border-obsidian-border space-y-2.5">

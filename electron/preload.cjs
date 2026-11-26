@@ -81,6 +81,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('brain:progress', listener);
     return () => ipcRenderer.removeListener('brain:progress', listener);
   },
+  episodicLog: (entry) => ipcRenderer.invoke('episodic:log', entry),
+  episodicQuery: (filters) => ipcRenderer.invoke('episodic:query', filters),
+  episodicSummaries: (days) => ipcRenderer.invoke('episodic:summaries', days),
+  episodicForgetDay: (dateKey) => ipcRenderer.invoke('episodic:forgetDay', dateKey),
+  episodicClear: () => ipcRenderer.invoke('episodic:clear'),
   onUpdaterStatus: (cb) => {
     const listener = (_, st) => cb(st);
     ipcRenderer.on('updater:status', listener);

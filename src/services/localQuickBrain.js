@@ -2,6 +2,8 @@
 import { tryFastVoiceAction } from './voiceRouter.js';
 import { classifyIntent } from './semanticIntent.js';
 import { rememberUserMemory, recallRelevantMemories } from './memoryRag.js';
+import { isEpisodicHistoryQuery, parseEpisodicDateQuery } from './dateQueryParser.js';
+import { queryEpisodicTimeline } from './episodicMemory.js';
 import { detectCommandLanguage } from './voicePermissionPrompt.js';
 import { executeFunctionCall } from './tools.js';
 
@@ -255,6 +257,56 @@ export function buildLocalTitle(text) {
   return words.length ? words.join(' ') : 'Quick Task';
 }
 
+async function tryEpisodicHistoryRecall(text, lang) {
+  if (!isEpisodicHistoryQuery(text)) return null;
+  const parsed = parseEpisodicDateQuery(text);
+  const rows = await queryEpisodicTimeline({
+    dateKey: parsed.dateKey,
+    dateFrom: parsed.dateFrom,
+    dateTo: parsed.dateTo,
+    weekday: parsed.weekday,
+    timeOfDay: parsed.timeOfDay,
+    topic: parsed.topic,
+    limit: 6,
+  });
+
+  const scopeLabel = [parsed.matchedLabel, parsed.timeOfDay, parsed.topic ? `"${parsed.topic}"` : '']
+    .filter(Boolean)
+    .join(' · ');
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return {
+      replyText: replyByLang(
+        lang,
+        `I checked your local timeline (${scopeLabel}), and found no saved questions or commands for that period.`,
+        `Maine aapki timeline (${scopeLabel}) check ki — is time/topic ka koi saved sawal ya command nahi mila.`,
+        `मैंने आपकी टाइमलाइन (${scopeLabel}) देखी — उस समय का कोई सेव किया हुआ सवाल या कमांड नहीं मिला।`
+      ),
+      tools: [{ name: 'episodic_recall', status: 'done', args: parsed }],
+    };
+  }
+
+  const formatted = rows
+    .slice(0, 5)
+    .map((r, i) => {
+      const replyPreview = r.assistantReply ? `\n  → JEEVA: ${r.assistantReply.slice(0, 140)}${r.assistantReply.length > 140 ? '...' : ''}` : '';
+      return `${i + 1}. **[${r.dateKey} (${r.weekday}) · ${r.timeLabel}]** Aapne pucha: "${r.userPrompt.slice(0, 120)}"${replyPreview}`;
+    })
+    .join('\n');
+
+  const header = replyByLang(
+    lang,
+    `Here is what you asked/discussed (${scopeLabel}):`,
+    `${scopeLabel} par aapne ye pucha aur baat ki thi:`,
+    `${scopeLabel} पर आपने यह पूछा और बात की थी:`
+  );
+
+  return {
+    replyText: `${header}\n\n${formatted}`,
+    tools: [{ name: 'episodic_recall', status: 'done', args: parsed }],
+  };
+}
+
 /**
  * Unified Tier-0 + Tier-1 Local Execution Engine.
  * Works identically for BOTH typed Chat messages and Voice commands.
@@ -263,6 +315,19 @@ export async function runLocalQuickBrain(text, { requestPermission = null } = {}
   const clean = String(text || '').trim();
   if (!clean) return { handled: false };
   const lang = detectCommandLanguage(clean);
+
+  // 0. Zero-API Date-Indexed Episodic Memory Q&A ("Kal maine kya pucha tha?", "25 Nov ko kya bola?")
+  const episodicHit = await tryEpisodicHistoryRecall(clean, lang);
+  if (episodicHit) {
+    return {
+      handled: true,
+      tier: 'fast',
+      modelLabel: 'Episodic Date Memory',
+      routeReason: 'Answered locally from date-indexed conversation timeline (0 API calls)',
+      replyText: episodicHit.replyText,
+      tools: episodicHit.tools || [],
+    };
+  }
 
   // 1. Tier-0 Math & Unit Conversions
   const mathHit = tryOfflineMathOrUnit(clean, lang);

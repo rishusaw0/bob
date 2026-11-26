@@ -548,7 +548,7 @@ export default function MessageBubble({ message, onEdit, onRegenerate, onEscalat
                       ? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
                       : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
                   }`}
-                  title={message.brainMeta.modelLabel || 'Routing Tier'}
+                  title={message.brainMeta.routeReason || message.brainMeta.modelLabel || 'Routing Tier'}
                 >
                   {message.brainMeta.tier === 'cloud'
                     ? 'Gemini Cloud'

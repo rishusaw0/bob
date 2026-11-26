@@ -75,7 +75,7 @@ export function resetBrainStats() {
 /**
  * Strips explicit routing prefixes (@cloud, /gemini, @local) and determines routing constraints.
  */
-export function assessQueryRouting(text, attachment = null, mode = getBrainMode()) {
+export function assessQueryRouting(text, attachment = null, mode = getBrainMode(), env = {}) {
   let cleanText = String(text || '').trim();
   let forceCloud = false;
   let forceLocal = false;
@@ -88,8 +88,17 @@ export function assessQueryRouting(text, attachment = null, mode = getBrainMode(
     cleanText = cleanText.replace(/^(?:@local|\/local)\b[:\s]*/i, '').trim();
   }
 
+  const online =
+    typeof env.online === 'boolean'
+      ? env.online
+      : typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean'
+        ? navigator.onLine
+        : true;
+  const batteryLow = Boolean(env.batteryLow);
+  const freeRamLow = Boolean(env.freeRamLow);
+
   if (mode === 'cloud') forceCloud = true;
-  if (mode === 'offline') {
+  if (mode === 'offline' || (!online && mode === 'auto' && !forceCloud)) {
     forceLocal = true;
     forceCloud = false;
   }
@@ -115,13 +124,24 @@ export function assessQueryRouting(text, attachment = null, mode = getBrainMode(
     heavyReason = 'heavy_coding_or_reasoning';
   }
 
+  let routeReason = 'Auto Hybrid: running locally first to save API calls';
+  if (!online) routeReason = 'Auto-Switched to Local: internet offline detected';
+  else if (forceCloud && mode === 'cloud') routeReason = 'Cloud Mode selected';
+  else if (forceCloud) routeReason = 'Forced Cloud via @cloud tag';
+  else if (heavyReason) routeReason = `Auto-Switched to Gemini: ${heavyReason.replace(/_/g, ' ')}`;
+  else if (freeRamLow || batteryLow) routeReason = 'Low RAM/Battery Guard active — avoiding heavy SLM';
+
   return {
     cleanText: cleanText || String(text || '').trim(),
-    mode,
+    mode: !online && mode === 'auto' ? 'offline' : mode,
+    online,
+    batteryLow,
+    freeRamLow,
     forceCloud,
     forceLocal,
     heavyReason,
-    shouldTryLocalFirst: !forceCloud && (!heavyReason || forceLocal),
+    routeReason,
+    shouldTryLocalFirst: !forceCloud && ((!heavyReason && !freeRamLow) || forceLocal),
   };
 }
 

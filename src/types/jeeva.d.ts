@@ -56,6 +56,11 @@ export interface ElectronBridgeAPI {
   localBrainStop: () => Promise<any>;
   localBrainChat: (opts: { messages: any[]; tools?: any[]; temperature?: number; maxTokens?: number }) => Promise<any>;
   onLocalBrainProgress: (cb: (ev: any) => void) => () => void;
+  episodicLog: (entry: any) => Promise<any>;
+  episodicQuery: (filters?: any) => Promise<any[]>;
+  episodicSummaries: (days?: number) => Promise<any[]>;
+  episodicForgetDay: (dateKey: string) => Promise<{ removed: number }>;
+  episodicClear: () => Promise<{ cleared: boolean }>;
 }
 
 declare global {

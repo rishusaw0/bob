@@ -30,6 +30,7 @@ const { createMemoryStore } = require('./memory-store.cjs');
 const { createSystemWatchdog } = require('./system-watchdog.cjs');
 const { createWindowManager } = require('./window-manager.cjs');
 const { createLocalBrainManager } = require('./local-brain.cjs');
+const { createEpisodicMemory } = require('./episodic-memory.cjs');
 
 let bridgeServer = null;
 let permissionGuard = null;
@@ -39,6 +40,7 @@ let offlineVoice = null;
 let appUpdater = null;
 let autoLaunchManager = null;
 let memoryStore = null;
+let episodicMemory = null;
 let systemWatchdog = null;
 let lastWatchdogAlert = null;
 let windowManager = null;
@@ -89,6 +91,13 @@ function getLocalBrain() {
     });
   }
   return localBrain;
+}
+
+function getEpisodicMemory() {
+  if (!episodicMemory) {
+    episodicMemory = createEpisodicMemory({ userDataDir: app.getPath('userData'), retentionDays: 90 });
+  }
+  return episodicMemory;
 }
 
 function getOrCreateBridgePin() {
@@ -355,9 +364,16 @@ app.whenReady().then(() => {
   ipcMain.handle('brain:stop', () => getLocalBrain().stopSidecar());
   ipcMain.handle('brain:chat', (_, opts) => getLocalBrain().chat(opts || {}));
 
+  ipcMain.handle('episodic:log', (_, entry) => getEpisodicMemory().logTurn(entry || {}));
+  ipcMain.handle('episodic:query', (_, filters) => getEpisodicMemory().queryTimeline(filters || {}));
+  ipcMain.handle('episodic:summaries', (_, days) => getEpisodicMemory().getDailySummaries(days));
+  ipcMain.handle('episodic:forgetDay', (_, dateKey) => getEpisodicMemory().forgetDay(dateKey));
+  ipcMain.handle('episodic:clear', () => getEpisodicMemory().clearAll());
+
   pcActionKit.startClipboardWatcher();
   getScheduler();
   getMemoryStore();
+  getEpisodicMemory();
   systemWatchdog = createSystemWatchdog({
     actions,
     NotificationClass: Notification,
@@ -373,6 +389,7 @@ app.on('will-quit', () => {
   windowManager?.disposeTray?.();
   systemWatchdog?.stop?.();
   localBrain?.stopSidecar?.();
+  episodicMemory?.close?.();
   pcActionKit.stopClipboardWatcher();
   pcScheduler?.dispose?.();
   offlineVoice?.stop?.();

@@ -453,6 +453,47 @@ assert.equal(detectVoiceProfile('Bhai laptop bohot slow ho raha hai'), 'hinglish
 const spokenClean = cleanTextForSpeech('Check **C:\\Users\\Demo\\report.pdf** -> 45% CPU & high_performance');
 assert.ok(spokenClean.includes('report.pdf') && spokenClean.includes('45 percent') && spokenClean.includes('high performance') && !spokenClean.includes('C:\\Users'));
 
+// Auto-Switch Offline Policy & Date-Indexed Episodic Memory tests
+const offlineRoute = assessQueryRouting('Chrome ke baare me explain karo', null, 'auto', { online: false });
+assert.equal(offlineRoute.mode, 'offline');
+assert.equal(offlineRoute.forceCloud, false);
+
+const { isEpisodicHistoryQuery, parseEpisodicDateQuery, toDateKey } = await import(pathToFileURL(path.join(ROOT, 'src/services/dateQueryParser.js')).href);
+const { createEpisodicMemory } = require(path.join(ROOT, 'electron/episodic-memory.cjs'));
+assert.equal(isEpisodicHistoryQuery('Kal maine Chrome ke baare me kya pucha tha?'), true);
+const fixedNow = new Date(2026, 10, 26, 14, 0, 0); // 2026-11-26 (Thursday)
+const kalParsed = parseEpisodicDateQuery('Kal shaam maine Chrome ke baare me kya pucha tha?', fixedNow);
+assert.equal(kalParsed.dateKey, '2026-11-25');
+assert.equal(kalParsed.timeOfDay, 'evening');
+assert.ok(kalParsed.topic.includes('chrome'));
+const monParsed = parseEpisodicDateQuery('Last Monday kya baat hui thi?', fixedNow);
+assert.equal(monParsed.dateKey, '2026-11-23');
+
+const tmpEpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-test-ep-'));
+const epStore = createEpisodicMemory({ userDataDir: tmpEpDir });
+const yestTs = new Date(2026, 10, 25, 18, 30, 0).getTime();
+epStore.logTurn({
+  timestamp: yestTs,
+  source: 'voice',
+  brainTier: 'fast',
+  userPrompt: 'Open Chrome and set AIzaSyTestFakeKey123456789012345',
+  assistantReply: 'Opened Chrome cleanly',
+  toolsUsed: ['open_application'],
+});
+epStore.logTurn({
+  timestamp: new Date(2026, 10, 26, 10, 15, 0).getTime(),
+  source: 'chat',
+  brainTier: 'cloud',
+  userPrompt: 'Explain React hooks',
+  assistantReply: 'Hooks let you use state...',
+});
+const epRes = epStore.queryTimeline({ dateKey: toDateKey(new Date(2026, 10, 25)), timeOfDay: 'evening', topic: 'chrome' });
+assert.equal(epRes.length, 1);
+assert.ok(epRes[0].userPrompt.includes('[REDACTED_API_KEY]') && !epRes[0].userPrompt.includes('AIzaSyTestFakeKey'));
+assert.equal(epStore.forgetDay('2026-11-25').removed, 1);
+epStore.close();
+fs.rmSync(tmpEpDir, { recursive: true, force: true });
+
 // 6. PowerShell AST validation on ALL .ps1 scripts
 console.log('[6/6] Checking PowerShell AST across all electron/*.ps1...');
 const psFiles = fs.readdirSync(path.join(ROOT, 'electron')).filter((f) => f.endsWith('.ps1'));
