@@ -19,6 +19,7 @@ const AI_NAME_KEY = 'jeeva_ai_name';
 const STRICT_VOICE_KEY = 'jeeva_strict_voice';
 const WAKE_ENABLED_KEY = 'jeeva_wake_word';
 const WAKE_OPEN_MODE_KEY = 'jeeva_wake_open_mode';
+const WAKE_TRIGGER_KEY = 'jeeva_wake_trigger';
 
 export function getWakeOpenMode() {
   const mode = localStorage.getItem(WAKE_OPEN_MODE_KEY) || 'notch';
@@ -43,8 +44,29 @@ export function setAiName(name) {
     .slice(0, 24);
   const finalName = cleaned || 'Jeeva';
   localStorage.setItem(AI_NAME_KEY, finalName);
-  window.dispatchEvent(new CustomEvent('jeeva-ai-name-updated', { detail: finalName }));
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('jeeva-ai-name-updated', { detail: finalName }));
+  }
   return finalName;
+}
+
+export function getWakeTriggerPhrase() {
+  const saved = (localStorage.getItem(WAKE_TRIGGER_KEY) || '').trim();
+  return saved || `Hey ${getAiName()}`;
+}
+
+export function setWakeTriggerPhrase(phrase) {
+  const cleaned = String(phrase || '')
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 36);
+  const finalPhrase = cleaned || `Hey ${getAiName()}`;
+  localStorage.setItem(WAKE_TRIGGER_KEY, finalPhrase);
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent('jeeva-wake-trigger-updated', { detail: finalPhrase }));
+  }
+  return finalPhrase;
 }
 
 export function getStrictVoiceMode() {
@@ -93,13 +115,13 @@ const PREFIX_FILLERS = new Set(['hey', 'he', 'hay', 'ok', 'okay', 'hi', 'hello',
  * Checks whether a spoken transcript starts with or contains the AI wake name.
  * Works cleanly for any user-chosen name ("Jarvis", "Friday", "Jeeva", etc.) + Hindi/Hinglish variants.
  */
-export function matchWakePhrase(transcript, aiName = getAiName()) {
+export function matchWakePhrase(
+  transcript,
+  aiName = getAiName(),
+  customTrigger = getWakeTriggerPhrase()
+) {
   const raw = String(transcript || '').trim();
   if (!raw) return { matched: false, command: '' };
-
-  const target = String(aiName || 'Jeeva').trim().toLowerCase();
-  const isDefaultJeeva = target === 'jeeva';
-  const maxDist = target.length >= 6 ? 2 : target.length >= 4 ? 1 : 0;
 
   // Tokenize keeping combining marks (\p{M}) so Devanagari matras stay intact with letters
   const tokens = [];
@@ -108,6 +130,37 @@ export function matchWakePhrase(transcript, aiName = getAiName()) {
   while ((m = tokenRegex.exec(raw)) !== null) {
     tokens.push({ word: m[0], lower: m[0].toLowerCase(), start: m.index, end: m.index + m[0].length });
   }
+  if (tokens.length === 0) return { matched: false, command: '' };
+
+  // 1. Check user's custom wake trigger phrase first (e.g. "Sun Bhai", "Ok Jarvis", "Wake Up")
+  const triggerTokens = String(customTrigger || '')
+    .trim()
+    .toLowerCase()
+    .match(/[\p{L}\p{M}\p{N}]+/gu) || [];
+  if (triggerTokens.length > 0 && tokens.length >= triggerTokens.length) {
+    for (let offset = 0; offset <= Math.min(2, tokens.length - triggerTokens.length); offset++) {
+      let allMatch = true;
+      for (let j = 0; j < triggerTokens.length; j++) {
+        const spoken = tokens[offset + j].lower;
+        const expected = triggerTokens[j];
+        const maxD = expected.length >= 6 ? 2 : expected.length >= 4 ? 1 : 0;
+        if (spoken !== expected && !(maxD > 0 && levenshtein(spoken, expected) <= maxD)) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) {
+        const lastTok = tokens[offset + triggerTokens.length - 1];
+        const rest = raw.slice(lastTok.end).replace(/^[\s,.:;!?-]+/, '').trim();
+        return { matched: true, command: rest };
+      }
+    }
+  }
+
+  // 2. Fallback to AI assistant name (with phonetic/Hindi filler forgiveness)
+  const target = String(aiName || 'Jeeva').trim().toLowerCase();
+  const isDefaultJeeva = target === 'jeeva';
+  const maxDist = target.length >= 6 ? 2 : target.length >= 4 ? 1 : 0;
 
   for (let i = 0; i < Math.min(tokens.length, 6); i++) {
     const tok = tokens[i];
@@ -516,6 +569,98 @@ async function trySingleFastVoiceAction(rawText, requestPermission = null) {
   const lower = cleaned.toLowerCase();
   if (!lower) return { handled: false };
 
+  const hasCompoundConjunction = /\b(and|then|phir)\b/i.test(lower);
+
+  // A. Universal Type Anywhere ("type hello world", "notepad me hello world type karo", "likho ...")
+  const isLongCreativeWrite =
+    /\b(?:write|likho)\s+(?:an?\s+)?(?:essay|story|poem|letter|email|code|program|script|paragraph|article|blog|notes)\b/i.test(lower);
+  if (!hasCompoundConjunction && !isLongCreativeWrite) {
+    const appThenText =
+      cleaned.match(/^(?:in\s+)?([a-z0-9][a-z0-9\s._-]{1,22}?)\s+(?:mein|me|pe|par)\s+(.+?)\s+(?:type|likho|likh)(?:\s+(?:karo|kr|kar\s+do|do))?$/i) ||
+      cleaned.match(/^(?:type|likho|likh)(?:\s+(?:karo|kr|kar\s+do|do))?\s+(?:in|into|on)\s+([a-z0-9][a-z0-9\s._-]{1,22}?)\s+(?:mein|me|pe|par)?\s*[:,-]?\s*(.+)$/i);
+    const directType = cleaned.match(/^(?:please\s+)?(?:type\s+karo|type\s+kr|type\s+kar\s+do|type|likho|likh\s+do)\s*[:,-]?\s*(.+)$/i);
+
+    let targetApp = '';
+    let textToType = '';
+    if (appThenText && appThenText[1] && appThenText[2]) {
+      targetApp = appThenText[1].trim();
+      textToType = appThenText[2].trim();
+    } else if (directType && directType[1]) {
+      textToType = directType[1].trim();
+    }
+
+    if (textToType && typeof api.typeClipboard === 'function') {
+      const ranTools = [];
+      if (targetApp && !/\b(screen|yahan|here|box|field|search)\b/i.test(targetApp) && typeof api.openApp === 'function') {
+        const appOut = await runFast('open_application', { app_name: targetApp }, () => api.openApp(targetApp, ''));
+        ranTools.push({ name: 'open_application', status: appOut.ok ? 'done' : 'error', args: { app_name: targetApp } });
+        if (!appOut.ok) {
+          return { handled: true, replyText: appOut.error, tools: ranTools };
+        }
+        await new Promise((r) => setTimeout(r, process?.env?.NODE_ENV ? 25 : 420));
+      }
+      const typeOut = await runFast('type_text', { text: textToType }, () => api.typeClipboard(textToType));
+      ranTools.push({ name: 'type_text', status: typeOut.ok ? 'done' : 'error', args: { text: textToType } });
+      return {
+        handled: true,
+        replyText: typeOut.ok
+          ? targetApp
+            ? reply(
+                `I opened ${targetApp} and typed "${textToType}".`,
+                `${targetApp} mein "${textToType}" type kar diya hai.`,
+                `${targetApp} में "${textToType}" टाइप कर दिया है।`
+              )
+            : reply(
+                `I have typed "${textToType}".`,
+                `"${textToType}" type kar diya hai.`,
+                `"${textToType}" टाइप कर दिया है।`
+              )
+          : typeOut.error,
+        tools: ranTools,
+      };
+    }
+  }
+
+  // B. Named Video / Song Playback ("play kesariya", "youtube par arijit singh play karo", "play video...")
+  if (!hasCompoundConjunction && !/\b(why|how|explain|install|uninstall|pdf)\b/i.test(lower)) {
+    const namedPlayMatch =
+      cleaned.match(/^(?:on\s+youtube|youtube\s+(?:par|pe|mein|me)|on\s+spotify|spotify\s+(?:par|pe))\s+(.+?)\s+(?:play|chalao|chala|bajao|lagao|dekho)(?:\s+(?:karo|kar\s+do|do))?$/i) ||
+      cleaned.match(/^(?:please\s+)?(?:play|chalao|bajao|lagao)\s+(?:a\s+|the\s+)?(?:video|song|track|gaana|gana|music)?\s*(?:of\s+|called\s+|named\s+)?(.+?)(?:\s+(?:on\s+youtube|youtube\s+(?:par|pe)|on\s+spotify|spotify\s+(?:par|pe)|song|video|gaana|gana))?$/i) ||
+      cleaned.match(/^(.+?)\s+(?:song|video|gaana|gana)\s+(?:play|chalao|chala|bajao|lagao)(?:\s+(?:karo|kar\s+do|do))?$/i);
+
+    if (namedPlayMatch && namedPlayMatch[1]) {
+      const rawQuery = namedPlayMatch[1]
+        .replace(/^(?:on\s+youtube|on\s+spotify|youtube\s+(?:par|pe)|spotify\s+(?:par|pe)|play|karo|kar\s+do)\s+/i, '')
+        .replace(/\s+(?:on\s+youtube|on\s+spotify|youtube\s+(?:par|pe)|spotify\s+(?:par|pe)|karo|kar\s+do|play)$/i, '')
+        .trim();
+      const genericOnly = /^(?:music|song|songs|gaana|gana|track|video|media|pause|next|previous|prev|stop|youtube|spotify|it|this)$/i.test(rawQuery);
+      if (rawQuery.length >= 2 && !genericOnly && typeof api.openURL === 'function') {
+        const useSpotify = /\bspotify\b/i.test(lower);
+        const url = useSpotify
+          ? `spotify:search:${encodeURIComponent(rawQuery)}`
+          : `https://www.youtube.com/results?search_query=${encodeURIComponent(rawQuery)}`;
+        const out = await runFast('open_url', { url }, () => api.openURL(url));
+        return {
+          handled: true,
+          replyText: out.ok
+            ? useSpotify
+              ? reply(
+                  `Opening "${rawQuery}" on Spotify.`,
+                  `Spotify par "${rawQuery}" khol diya hai.`,
+                  `Spotify पर "${rawQuery}" खोल दिया है।`
+                )
+              : reply(
+                  `Playing "${rawQuery}" on YouTube.`,
+                  `YouTube par "${rawQuery}" play kar diya hai.`,
+                  `YouTube पर "${rawQuery}" चला दिया है।`
+                )
+            : out.error,
+          tools: [{ name: 'open_url', status: out.ok ? 'done' : 'error', args: { url } }],
+        };
+      }
+    }
+  }
+
   // Never intercept multi-clause, deictic context queries, or complex winget/UIA tasks
   const isReadStatusCheck = /\b(top process|top processes|cpu status|ram status|pc health|system health|disk space|battery|clipboard history|active tab|wifi status)\b/i.test(lower);
   const isHindiMoreModifier = /\baur\s+(badhao|badha|kam|ghatao|tez|dheema|dhima|up|down|high|low)\b/i.test(lower);
@@ -525,6 +670,43 @@ async function trySingleFastVoiceAction(rawText, requestPermission = null) {
     (!isReadStatusCheck && /\bbatao\b/i.test(lower))
   ) {
     return { handled: false };
+  }
+
+  // C. Universal Active-App Scroll & Quick Hotkeys (Copy, Paste, Undo, Save, Select All, Enter)
+  if (/\b(scroll down|niche scroll|neeche scroll|scroll niche|neeche jao|scroll up|upar scroll|scroll upar|upar jao)\b/i.test(lower) && typeof api.mouseAction === 'function') {
+    const dir = /\b(up|upar)\b/i.test(lower) ? 'up' : 'down';
+    const delta = dir === 'up' ? 480 : -480;
+    const out = await runFast('scroll_screen', { direction: dir }, () => api.mouseAction('scroll', null, null, null, null, delta, 'pixels'));
+    return {
+      handled: true,
+      replyText: out.ok
+        ? dir === 'up'
+          ? reply('Scrolled up.', 'Upar scroll kar diya hai.', 'ऊपर स्क्रॉल कर दिया है।')
+          : reply('Scrolled down.', 'Neeche scroll kar diya hai.', 'नीचे स्क्रॉल कर दिया है।')
+        : out.error,
+      tools: [{ name: 'scroll_screen', status: out.ok ? 'done' : 'error', args: { direction: dir } }],
+    };
+  }
+  if (/^(?:please\s+)?(?:copy(?:\s+karo|\s+this|\s+that)?|paste(?:\s+karo|\s+here)?|save(?:\s+karo|\s+file|\s+this)?|undo(?:\s+karo)?|select all|press enter|enter dabao|hit enter)$/i.test(lower) && typeof api.sendHotkey === 'function') {
+    const combo = lower.includes('copy')
+      ? 'ctrl+c'
+      : lower.includes('paste')
+        ? 'ctrl+v'
+        : lower.includes('save')
+          ? 'ctrl+s'
+          : lower.includes('undo')
+            ? 'ctrl+z'
+            : lower.includes('select all')
+              ? 'ctrl+a'
+              : 'enter';
+    const out = await runFast('press_shortcut', { shortcut: combo }, () => api.sendHotkey(combo));
+    return {
+      handled: true,
+      replyText: out.ok
+        ? reply(`Pressed ${combo.toUpperCase()}.`, `${combo.toUpperCase()} kar diya hai.`, `${combo.toUpperCase()} कर दिया है।`)
+        : out.error,
+      tools: [{ name: 'press_shortcut', status: out.ok ? 'done' : 'error', args: { shortcut: combo } }],
+    };
   }
 
   // 0. Presets & Wi-Fi single commands

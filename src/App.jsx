@@ -34,6 +34,7 @@ import {
 } from './services/voicePermissionPrompt';
 import { refreshRenderRelayDevices, setPairToken, getAuthHeaders } from './services/bridge';
 import { getAiName, getStrictVoiceMode, getWakeOpenMode } from './services/voiceRouter';
+import { getDocSummaryPref, setDocSummaryPref, getReplyStyle, setReplyStyle } from './services/userPrefs';
 import { runLocalQuickBrain, buildLocalTitle } from './services/localQuickBrain';
 import { runLocalSlmTurn } from './services/localLlm';
 import {
@@ -93,6 +94,8 @@ export default function App() {
   });
   const [ttsEnabled, setTtsEnabled] = useState(() => localStorage.getItem('jeeva_tts') === 'true');
   const [voiceMode, setVoiceMode] = useState(() => getVoiceMode());
+  const [docSummaryPref, setDocSummaryPrefState] = useState(() => getDocSummaryPref());
+  const [replyStyle, setReplyStyleState] = useState(() => getReplyStyle());
   const [aiName, setAiNameState] = useState(() => getAiName());
   const [brainMode, setBrainModeState] = useState(() => getBrainMode());
   const [permissionRequest, setPermissionRequest] = useState(null);
@@ -355,6 +358,22 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('jeeva_tts', ttsEnabled.toString());
   }, [ttsEnabled]);
+
+  useEffect(() => {
+    const onTtsSync = (ev) => {
+      if (typeof ev?.detail === 'boolean') setTtsEnabled(ev.detail);
+    };
+    const onPrefsSync = (ev) => {
+      if (ev?.detail?.docSummaryPref) setDocSummaryPrefState(ev.detail.docSummaryPref);
+      if (ev?.detail?.replyStyle) setReplyStyleState(ev.detail.replyStyle);
+    };
+    window.addEventListener('jeeva-tts-updated', onTtsSync);
+    window.addEventListener('jeeva-prefs-updated', onPrefsSync);
+    return () => {
+      window.removeEventListener('jeeva-tts-updated', onTtsSync);
+      window.removeEventListener('jeeva-prefs-updated', onPrefsSync);
+    };
+  }, []);
 
   useEffect(() => {
     setSpeechVoiceMode(voiceMode);
@@ -701,6 +720,7 @@ export default function App() {
     };
 
     try {
+      const userAskedSpeech = /\b(read aloud|speak|sunao|bolkar|bol kar|awaz mein)\b/i.test(promptText);
       // Tier-0 & Tier-1: Zero-API Deterministic + Episodic Date + Semantic Intent Local Brain
       if (!forceCloud && !routing.forceCloud && !attachment) {
         const quick = await runLocalQuickBrain(promptText, { requestPermission });
@@ -712,7 +732,7 @@ export default function App() {
             routeReason: quick.routeReason || routing.routeReason,
             image: quick.image || null,
             tools: quick.tools || [],
-            shouldSpeak: Boolean(quick.autoSpeak || ttsEnabled || fromVoice),
+            shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
             speakLabel: 'Local Brain',
           });
           return;
@@ -735,7 +755,7 @@ export default function App() {
             modelLabel: docTurn.modelLabel || 'Offline Doc Reader',
             routeReason: docTurn.routeReason,
             tools: docTurn.tools || [],
-            shouldSpeak: Boolean(docTurn.autoSpeak || ttsEnabled || fromVoice),
+            shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
             speakLabel: `Reading: ${attachment.name}`,
           });
           return;
@@ -837,7 +857,7 @@ export default function App() {
           routeReason: routing.routeReason,
           image: response.image || null,
           tools: response.tools || [],
-          shouldSpeak: Boolean(response.autoSpeak || ttsEnabled || meta?.fromVoice),
+          shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
           speakLabel: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Reading response...',
         });
       } catch (cloudErr) {
@@ -1238,6 +1258,10 @@ export default function App() {
             onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
             voiceMode={voiceMode}
             onVoiceModeChange={setVoiceMode}
+            docSummaryPref={docSummaryPref}
+            onDocSummaryPrefChange={(m) => setDocSummaryPrefState(setDocSummaryPref(m))}
+            replyStyle={replyStyle}
+            onReplyStyleChange={(s) => setReplyStyleState(setReplyStyle(s))}
             onClear={handleClearHistory}
             onExport={handleExportChat}
           />

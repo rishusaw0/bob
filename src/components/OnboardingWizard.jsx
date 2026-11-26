@@ -15,6 +15,8 @@ import {
   savePermissionRules,
 } from '../services/permissions';
 import { testGeminiConnection } from '../services/gemini';
+import { getAiName, setAiName, getWakeTriggerPhrase, setWakeTriggerPhrase } from '../services/voiceRouter';
+import { getDocSummaryPref, setDocSummaryPref } from '../services/userPrefs';
 import { toast } from '../services/toast';
 
 export default function OnboardingWizard({
@@ -26,6 +28,10 @@ export default function OnboardingWizard({
   onComplete,
 }) {
   const [step, setStep] = useState(1);
+  const [assistantNameInput, setAssistantNameInput] = useState(() => getAiName());
+  const [wakeTriggerInput, setWakeTriggerInput] = useState(() => getWakeTriggerPhrase());
+  const [speakReplies, setSpeakReplies] = useState(() => localStorage.getItem('jeeva_tts') === 'true');
+  const [docPref, setDocPref] = useState(() => getDocSummaryPref());
   const [apiKeyInput, setApiKeyInput] = useState(initialApiKey || '');
   const [cloudUrlInput, setCloudUrlInput] = useState(
     initialCloudUrl || localStorage.getItem('jeeva_last_render_url') || 'https://jeeva-ai.onrender.com'
@@ -123,6 +129,13 @@ export default function OnboardingWizard({
   };
 
   const handleSaveStep1 = () => {
+    const cleanName = setAiName(assistantNameInput.trim() || 'Jeeva');
+    const triggerVal = wakeTriggerInput.trim();
+    setWakeTriggerPhrase(triggerVal || `Hey ${cleanName}`);
+    localStorage.setItem('jeeva_tts', String(speakReplies));
+    window.dispatchEvent(new CustomEvent('jeeva-tts-updated', { detail: Boolean(speakReplies) }));
+    setDocSummaryPref(docPref);
+
     if (apiKeyInput.trim()) {
       onSaveApiKey(apiKeyInput.trim());
     } else if (cloudUrlInput.trim() && (cloudVerified || cloudRequiresPin)) {
@@ -201,10 +214,10 @@ export default function OnboardingWizard({
             </div>
             <h2 className="text-base font-semibold text-obsidian-text mt-0.5">
               {step === 1
-                ? 'Connect AI Engine (Cloud or Personal Key)'
+                ? 'Name Your Assistant & Preferences'
                 : step === 2
                 ? 'Grant PC Access Permissions'
-                : 'Link Your Phone / Render Web Console'}
+                : 'Link Your Phone / Web Console'}
             </h2>
           </div>
           <button
@@ -219,6 +232,69 @@ export default function OnboardingWizard({
         <div className="p-6 max-h-[65vh] overflow-y-auto space-y-4">
           {step === 1 && (
             <>
+              <div className="p-3.5 rounded-xl bg-obsidian-bg border border-emerald-500/30 space-y-3">
+                <p className="text-xs font-semibold text-obsidian-text">
+                  Personalize Your AI &amp; Voice Command Trigger
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] text-obsidian-secondary mb-1">
+                      Assistant Name
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={24}
+                      value={assistantNameInput}
+                      onChange={(e) => {
+                        const prevDefault = `Hey ${assistantNameInput || 'Jeeva'}`;
+                        const nextName = e.target.value;
+                        setAssistantNameInput(nextName);
+                        if (!wakeTriggerInput || wakeTriggerInput === prevDefault) {
+                          setWakeTriggerInput(`Hey ${nextName || 'Jeeva'}`);
+                        }
+                      }}
+                      placeholder="Jeeva, Jarvis, Buddy..."
+                      className="w-full bg-obsidian-surface border border-obsidian-border rounded-lg px-3 py-1.5 text-xs text-obsidian-text focus:outline-none focus:border-zinc-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-obsidian-secondary mb-1">
+                      Voice Activation Phrase
+                    </label>
+                    <input
+                      type="text"
+                      maxLength={36}
+                      value={wakeTriggerInput}
+                      onChange={(e) => setWakeTriggerInput(e.target.value)}
+                      placeholder="Hey Jeeva, Sun Bhai..."
+                      className="w-full bg-obsidian-surface border border-obsidian-border rounded-lg px-3 py-1.5 text-xs text-obsidian-text focus:outline-none focus:border-zinc-500"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-obsidian-border/60">
+                  <button
+                    type="button"
+                    onClick={() => setSpeakReplies((v) => !v)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] border transition-colors ${
+                      speakReplies
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                        : 'bg-obsidian-surface border-obsidian-border text-obsidian-secondary'
+                    }`}
+                  >
+                    Speak Replies: {speakReplies ? 'On' : 'Off'}
+                  </button>
+                  <select
+                    value={docPref}
+                    onChange={(e) => setDocPref(e.target.value)}
+                    className="bg-obsidian-surface border border-obsidian-border rounded-lg px-2.5 py-1 text-[11px] text-obsidian-text focus:outline-none"
+                  >
+                    <option value="ask">PDFs: Ask / Smart Auto</option>
+                    <option value="summarize">PDFs: Always Summarize</option>
+                    <option value="read_full">PDFs: Always Read Full</option>
+                  </select>
+                </div>
+              </div>
+
               <div className="p-3.5 rounded-xl bg-obsidian-bg border border-obsidian-border space-y-2.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-obsidian-text flex items-center gap-1.5">

@@ -474,11 +474,17 @@ export async function runLocalQuickBrain(text, { requestPermission = null } = {}
         result?.result ||
         result?.error ||
         (ok ? `Completed ${intent.tool.replace(/_/g, ' ')}.` : 'Action failed.');
+      const formattedObj =
+        msg && typeof msg === 'object'
+          ? Object.entries(msg)
+              .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' ? String(v) : v}`)
+              .join(', ')
+          : '';
       return {
         handled: true,
         tier: 'intent',
-        modelLabel: `Intent Router (${Math.round(intent.confidence * 100)}%)`,
-        replyText: typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2),
+        modelLabel: `Smart Local`,
+        replyText: typeof msg === 'string' ? msg : (formattedObj || `Done: ${intent.tool.replace(/_/g, ' ')}.`),
         image: result?.screenshot || null,
         tools: [{ name: intent.tool, status: ok ? 'done' : 'error', args: intent.args }],
       };

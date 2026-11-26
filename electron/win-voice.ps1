@@ -61,11 +61,14 @@ if ($Mode -eq "dictate") {
   exit 0
 }
 
-$cleanName = ($AiName -replace '[^a-zA-Z0-9\s]', '').Trim()
+$rawParts = $AiName -split '\|'
+$cleanName = ($rawParts[0] -replace '[^a-zA-Z0-9\s]', '').Trim()
 if (-not $cleanName) { $cleanName = "Jeeva" }
+$customTrigger = if ($rawParts.Count -gt 1) { ($rawParts[1] -replace '[^a-zA-Z0-9\s]', '').Trim() } else { "" }
 
 $wakeChoices = New-Object System.Speech.Recognition.Choices
-$wakePhrases = @(
+$wakeList = New-Object System.Collections.Generic.List[string]
+foreach ($p in @(
   "hey $cleanName",
   "hi $cleanName",
   "hello $cleanName",
@@ -74,7 +77,13 @@ $wakePhrases = @(
   "listen $cleanName",
   "suno $cleanName",
   $cleanName
-)
+)) {
+  if ($p -and -not $wakeList.Contains($p)) { $wakeList.Add($p) }
+}
+if ($customTrigger -and -not $wakeList.Contains($customTrigger)) {
+  $wakeList.Insert(0, $customTrigger)
+}
+$wakePhrases = $wakeList.ToArray()
 foreach ($p in $wakePhrases) { $wakeChoices.Add($p) }
 
 $cmdChoices = New-Object System.Speech.Recognition.Choices

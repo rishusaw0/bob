@@ -47,6 +47,10 @@ export default function InputBar({
   onToggleTTS,
   voiceMode,
   onVoiceModeChange,
+  docSummaryPref = 'ask',
+  onDocSummaryPrefChange = null,
+  replyStyle = 'concise',
+  onReplyStyleChange = null,
   onClear,
   onExport,
 }) {
@@ -474,18 +478,43 @@ export default function InputBar({
                 <select
                   value={brainMode}
                   onChange={(e) => onBrainModeChange(e.target.value)}
-                  className={`bg-obsidian-bg hover:bg-obsidian-elevated border rounded-lg px-2 py-1 text-[11px] font-mono focus:outline-none cursor-pointer transition-colors ${
+                  className={`bg-obsidian-bg hover:bg-obsidian-elevated border rounded-lg px-2 py-1 text-[11px] focus:outline-none cursor-pointer transition-colors ${
                     brainMode === 'offline'
                       ? 'border-emerald-500/40 text-emerald-300'
                       : brainMode === 'cloud'
                         ? 'border-sky-500/40 text-sky-300'
                         : 'border-obsidian-border text-obsidian-secondary hover:text-obsidian-text'
                   }`}
-                  title="Brain Mode: Auto Hybrid (chhota/moderate=Local, bada=Gemini), Offline Only (0 API), or Gemini Cloud"
+                  title="Choose whether Jeeva answers offline or uses Cloud AI"
                 >
-                  <option value="auto" className="bg-obsidian-surface">Brain: Hybrid</option>
-                  <option value="offline" className="bg-obsidian-surface">Brain: Offline</option>
-                  <option value="cloud" className="bg-obsidian-surface">Brain: Gemini</option>
+                  <option value="auto" className="bg-obsidian-surface">Mode: Smart Auto</option>
+                  <option value="offline" className="bg-obsidian-surface">Mode: Offline Only</option>
+                  <option value="cloud" className="bg-obsidian-surface">Mode: Cloud AI</option>
+                </select>
+              )}
+
+              {onDocSummaryPrefChange && (
+                <select
+                  value={docSummaryPref}
+                  onChange={(e) => onDocSummaryPrefChange(e.target.value)}
+                  className="bg-obsidian-bg hover:bg-obsidian-elevated border border-obsidian-border rounded-lg px-2 py-1 text-[11px] text-obsidian-secondary hover:text-obsidian-text focus:outline-none cursor-pointer transition-colors"
+                  title="Choose whether uploaded PDFs/files are summarized or read in full"
+                >
+                  <option value="ask" className="bg-obsidian-surface">PDF: Auto</option>
+                  <option value="summarize" className="bg-obsidian-surface">PDF: Summarize</option>
+                  <option value="read_full" className="bg-obsidian-surface">PDF: Read Full</option>
+                </select>
+              )}
+
+              {onReplyStyleChange && (
+                <select
+                  value={replyStyle}
+                  onChange={(e) => onReplyStyleChange(e.target.value)}
+                  className="bg-obsidian-bg hover:bg-obsidian-elevated border border-obsidian-border rounded-lg px-2 py-1 text-[11px] text-obsidian-secondary hover:text-obsidian-text focus:outline-none cursor-pointer transition-colors hidden md:inline-block"
+                  title="Answer detail level"
+                >
+                  <option value="concise" className="bg-obsidian-surface">Reply: Short</option>
+                  <option value="detailed" className="bg-obsidian-surface">Reply: Detailed</option>
                 </select>
               )}
 

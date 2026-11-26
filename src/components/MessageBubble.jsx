@@ -36,6 +36,50 @@ import {
 import { speakText } from '../services/speech';
 import { toast } from '../services/toast';
 
+const HUMAN_TOOL_LABELS = {
+  open_application: 'Opened App',
+  close_application: 'Closed App',
+  open_url: 'Opened Link',
+  open_windows_setting: 'Opened Settings',
+  toggle_windows_theme: 'Switched Theme',
+  control_volume: 'Volume Adjusted',
+  brightness_control: 'Brightness Adjusted',
+  media_control: 'Media Playback',
+  press_shortcut: 'Keyboard Shortcut',
+  type_text: 'Typed Text',
+  scroll_screen: 'Scrolled Screen',
+  mouse_click: 'Clicked Item',
+  take_screenshot: 'Captured Screen',
+  screen_reader: 'Read Active Screen',
+  read_document_file: 'Read Document',
+  system_diagnostics: 'PC Health Check',
+  get_battery_status: 'Battery Status',
+  wifi_control: 'Wi-Fi Control',
+  pc_power_tools: 'PC Power & Display',
+  power_action: 'Power Action',
+  clipboard_history: 'Clipboard History',
+  file_manager_pro: 'Managed Files',
+  search_files: 'Searched Files',
+  read_file: 'Opened File',
+  write_file: 'Saved File',
+  delete_file: 'Deleted File',
+  manage_software: 'Software Manager',
+  list_installed_apps: 'Listed Apps',
+  browser_control: 'Browser Control',
+  schedule_pc_task: 'Reminder / Timer',
+  memory_rag: 'Saved Memory',
+  episodic_recall: 'Past Chat Memory',
+  ui_automate: 'App UI Action',
+  run_terminal_command: 'System Command',
+};
+
+function formatHumanToolLabel(name = '') {
+  if (HUMAN_TOOL_LABELS[name]) return HUMAN_TOOL_LABELS[name];
+  return String(name || 'Action')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 // Register highlight.js languages
 hljs.registerLanguage('javascript', javascript);
 hljs.registerLanguage('js', javascript);
@@ -490,16 +534,16 @@ export default function MessageBubble({ message, onEdit, onRegenerate, onEscalat
   // Assistant message
   return (
     <div className="group py-3 animate-fade-in">
-      {/* Executed Tools Trace */}
+      {/* Executed Actions Trace */}
       {message.tools?.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 mb-2.5 pl-9">
+        <div className="flex flex-wrap gap-1.5 mb-2 pl-9">
           {message.tools.map((t, i) => (
             <span
               key={i}
-              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-obsidian-surface border border-obsidian-border text-[11px] font-mono text-obsidian-secondary"
+              className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-obsidian-surface border border-obsidian-border text-[11px] text-obsidian-secondary"
             >
               <span className={`w-1.5 h-1.5 rounded-full ${t.status === 'error' ? 'bg-red-500' : 'bg-emerald-500'}`} />
-              {t.name}
+              {formatHumanToolLabel(t.name)}
             </span>
           ))}
         </div>
@@ -543,20 +587,20 @@ export default function MessageBubble({ message, onEdit, onRegenerate, onEscalat
             <div className="flex items-center gap-2 mt-2 opacity-75 group-hover:opacity-100 transition-opacity flex-wrap">
               {message.brainMeta?.tier && (
                 <span
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border ${
                     message.brainMeta.tier === 'cloud'
                       ? 'bg-sky-500/10 text-sky-300 border-sky-500/30'
                       : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
                   }`}
-                  title={message.brainMeta.routeReason || message.brainMeta.modelLabel || 'Routing Tier'}
+                  title={message.brainMeta.routeReason || message.brainMeta.modelLabel || 'Response Engine'}
                 >
                   {message.brainMeta.tier === 'cloud'
-                    ? 'Gemini Cloud'
+                    ? 'Cloud AI'
                     : message.brainMeta.tier === 'local-slm'
-                      ? `Local SLM`
+                      ? 'Local AI'
                       : message.brainMeta.tier === 'intent'
-                        ? 'Local Intent'
-                        : 'Instant Local'}
+                        ? 'Smart Local'
+                        : 'Instant'}
                 </span>
               )}
               {message.timestamp && (

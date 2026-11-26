@@ -2,6 +2,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { TOOLS, executeFunctionCall, clearToolSessionPermissions } from './tools.js';
 import { recallRelevantMemories } from './memoryRag.js';
+import { getReplyStyle } from './userPrefs.js';
 
 let client = null;
 let previousInteractionId = null;
@@ -37,12 +38,16 @@ ALWAYS use your tools directly when the user asks you to perform an action — d
 SENSITIVE ACTIONS RULE: When the user asks to install, uninstall, or update software, change Windows settings, force-close apps, delete files, or run system power/terminal actions, call the corresponding tool cleanly right away — JEEVA's voice and chat permission guard will ask the user for confirmation before execution.
 LANGUAGE & CONFIRMATION RULE: Always reply in the SAME language and script style the user used (if English -> clear English; if Romanized Hinglish -> natural Hinglish; if Devanagari Hindi -> Hindi). After executing any tool, explicitly tell the user BOTH that the task is done AND exactly what action was performed (e.g. "Maine Chrome khol diya hai" or "I have set volume to 60%"), never just a vague "Done".`;
 
+  const styleHint =
+    getReplyStyle() === 'detailed'
+      ? '\n\nRESPONSE STYLE: Provide clear step-by-step explanations in plain everyday language (avoid raw code syntax unless the user asks for code).'
+      : '\n\nRESPONSE STYLE: Keep answers concise, warm, and easy to understand in plain everyday language (avoid developer jargon or raw code names unless explicitly asked).';
   const customBlock = customInstructions ? `\n\nUSER CUSTOM PREFERENCES:\n${customInstructions}` : '';
   const voiceBlock =
     fromVoice && strictVoice
       ? `\n\nVOICE COMMAND RULE: The user spoke a direct voice command. Execute requested tool(s) immediately with ZERO filler, ZERO lecturing, and ZERO markdown formatting. Reply in ONE clear spoken sentence in the user's exact language confirming that the action was completed and exactly what was done.`
       : '';
-  return `${base}${customBlock}${voiceBlock}`;
+  return `${base}${styleHint}${customBlock}${voiceBlock}`;
 }
 
 export function isUsingServerProxy() {

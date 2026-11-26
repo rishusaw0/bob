@@ -1,6 +1,7 @@
 // Zero-Gemini Local PDF / Text / Office Document Reader & Extractive Summarizer
 import { runLocalSlmTurn } from './localLlm.js';
 import { detectCommandLanguage } from './voicePermissionPrompt.js';
+import { getDocSummaryPref } from './userPrefs.js';
 
 const TEXT_EXTENSIONS = new Set([
   '.txt', '.md', '.markdown', '.csv', '.tsv', '.json', '.log', '.ini', '.yaml', '.yml',
@@ -117,10 +118,18 @@ export async function runLocalDocumentTurn({
 
   const lang = detectCommandLanguage(userPrompt);
   const lower = String(userPrompt || '').toLowerCase();
-  const wantsSummaryOrQuestion =
-    /\b(summary|summarize|summarise|short|brief|key points|explain|samjhao|batao|what is|kya likha|question|extract|find|search|kyun|why)\b/i.test(
-      lower
-    ) && !/\b(poora read|full read|read aloud|poora padh|word by word)\b/i.test(lower);
+  const docPref = getDocSummaryPref();
+  const explicitFullRead = /\b(poora read|full read|read aloud|poora padh|word by word|read full)\b/i.test(lower);
+  const explicitSummaryOrQ = /\b(summary|summarize|summarise|short|brief|key points|explain|samjhao|batao|what is|kya likha|question|extract|find|search|kyun|why)\b/i.test(lower);
+  const wantsSummaryOrQuestion = explicitFullRead
+    ? false
+    : explicitSummaryOrQ
+      ? true
+      : docPref === 'summarize'
+        ? true
+        : docPref === 'read_full'
+          ? false
+          : false;
 
   const docText = extracted.text;
   const fileLabel = extracted.name || 'document';

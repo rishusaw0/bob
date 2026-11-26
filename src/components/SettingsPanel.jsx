@@ -35,6 +35,8 @@ import {
 import {
   getAiName,
   setAiName,
+  getWakeTriggerPhrase,
+  setWakeTriggerPhrase,
   getStrictVoiceMode,
   setStrictVoiceMode,
   getWakeWordEnabled,
@@ -42,6 +44,12 @@ import {
   getWakeOpenMode,
   setWakeOpenMode,
 } from '../services/voiceRouter';
+import {
+  getDocSummaryPref,
+  setDocSummaryPref,
+  getReplyStyle,
+  setReplyStyle,
+} from '../services/userPrefs';
 import {
   PERMISSION_CATEGORIES,
   getPermissionRules,
@@ -78,6 +86,9 @@ export default function SettingsPanel({
   const [key, setKey] = useState(apiKey);
   const [cloudUrl, setCloudUrl] = useState(() => localStorage.getItem('jeeva_cloud_api_url') || '');
   const [assistantName, setAssistantName] = useState(() => getAiName());
+  const [wakeTrigger, setWakeTrigger] = useState(() => getWakeTriggerPhrase());
+  const [docSummaryPref, setDocSummaryPrefState] = useState(() => getDocSummaryPref());
+  const [replyStyle, setReplyStyleState] = useState(() => getReplyStyle());
   const [wakeWordOn, setWakeWordOn] = useState(() => getWakeWordEnabled());
   const [wakeOpenMode, setWakeOpenModeState] = useState(() => getWakeOpenMode());
   const [strictVoice, setStrictVoice] = useState(() => getStrictVoiceMode());
@@ -265,7 +276,10 @@ export default function SettingsPanel({
     onApiKeyChange(key.trim());
     onCustomInstructionsChange(instructions);
     savePermissionRules(permRules);
-    setAiName(assistantName);
+    const savedName = setAiName(assistantName);
+    setWakeTriggerPhrase(wakeTrigger.trim() || `Hey ${savedName}`);
+    setDocSummaryPref(docSummaryPref);
+    setReplyStyle(replyStyle);
     setWakeWordEnabled(wakeWordOn);
     setStrictVoiceMode(strictVoice);
     if (isElectron) {
@@ -541,6 +555,22 @@ export default function SettingsPanel({
                       ))}
                     </div>
                   </div>
+                  <div className="pt-2 border-t border-obsidian-border/60">
+                    <label className="block text-xs font-medium text-obsidian-text mb-1">
+                      Custom Voice Activation Phrase
+                    </label>
+                    <p className="text-[10px] text-obsidian-muted mb-1.5">
+                      Apne hisab se activation phrase set karein (jaise &quot;Hey Jeeva&quot;, &quot;Sun Bhai&quot;, &quot;Ok Jarvis&quot;)
+                    </p>
+                    <input
+                      type="text"
+                      maxLength={36}
+                      value={wakeTrigger}
+                      onChange={(e) => setWakeTrigger(e.target.value)}
+                      placeholder={`Hey ${assistantName || 'Jeeva'}`}
+                      className="w-full bg-obsidian-surface border border-obsidian-border rounded-lg px-3 py-1.5 text-xs text-obsidian-text focus:outline-none focus:border-zinc-500"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between pt-1 border-t border-obsidian-border/60">
@@ -586,6 +616,22 @@ export default function SettingsPanel({
                     <option value="full">Full Workstation Window</option>
                     <option value="speaker">Mini Speaker Pill</option>
                   </select>
+                  <div className="pt-2 border-t border-obsidian-border/60">
+                    <label className="block text-xs font-medium text-obsidian-text mb-1">
+                      Custom Voice Activation Phrase
+                    </label>
+                    <p className="text-[10px] text-obsidian-muted mb-1.5">
+                      Apne hisab se activation phrase set karein (jaise &quot;Hey Jeeva&quot;, &quot;Sun Bhai&quot;, &quot;Ok Jarvis&quot;)
+                    </p>
+                    <input
+                      type="text"
+                      maxLength={36}
+                      value={wakeTrigger}
+                      onChange={(e) => setWakeTrigger(e.target.value)}
+                      placeholder={`Hey ${assistantName || 'Jeeva'}`}
+                      className="w-full bg-obsidian-surface border border-obsidian-border rounded-lg px-3 py-1.5 text-xs text-obsidian-text focus:outline-none focus:border-zinc-500"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between pt-1 border-t border-obsidian-border/60">
@@ -608,6 +654,37 @@ export default function SettingsPanel({
                       }`}
                     />
                   </button>
+                </div>
+              </div>
+
+              {/* Answer & PDF Preferences */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border">
+                <div>
+                  <label className="block text-xs font-medium text-obsidian-text mb-1">
+                    PDF / File Mode
+                  </label>
+                  <select
+                    value={docSummaryPref}
+                    onChange={(e) => setDocSummaryPrefState(setDocSummaryPref(e.target.value))}
+                    className="w-full bg-obsidian-surface border border-obsidian-border rounded-lg px-2.5 py-1.5 text-xs text-obsidian-text focus:outline-none"
+                  >
+                    <option value="ask">Smart Auto (Follow prompt)</option>
+                    <option value="summarize">Always Summarize</option>
+                    <option value="read_full">Read Full Text</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-obsidian-text mb-1">
+                    Chat Answer Style
+                  </label>
+                  <select
+                    value={replyStyle}
+                    onChange={(e) => setReplyStyleState(setReplyStyle(e.target.value))}
+                    className="w-full bg-obsidian-surface border border-obsidian-border rounded-lg px-2.5 py-1.5 text-xs text-obsidian-text focus:outline-none"
+                  >
+                    <option value="concise">Short &amp; Easy English/Hinglish</option>
+                    <option value="detailed">Detailed Step-by-Step</option>
+                  </select>
                 </div>
               </div>
 

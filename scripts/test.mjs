@@ -234,20 +234,38 @@ globalThis.window = {
     brightness: async (a) => `Bright ${a}`,
     powerProfile: async (p) => `Plan ${p}`,
     openApp: async (a) => `Opened ${a}`,
+    openURL: async (u) => `Opened URL ${u}`,
     wifi: async (m) => `Wifi ${m}`,
     screenshot: async () => ({ base64: 'data:image/png;base64,test' }),
     theme: async (m) => `Theme ${m}`,
     closeApp: async (a) => `Closed ${a}`,
+    typeClipboard: async (t) => `Typed ${t}`,
+    sendHotkey: async (c) => `Sent ${c}`,
+    mouseAction: async (s, _x, _y, _x2, _y2, d) => `Mouse ${s} ${d}`,
   },
 };
 
 const vrUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceRouter.js')).href;
 const vcUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceCapture.js')).href;
+const upUrl = pathToFileURL(path.join(ROOT, 'src/services/userPrefs.js')).href;
 const vpUrl = pathToFileURL(path.join(ROOT, 'src/services/voicePermissionPrompt.js')).href;
 const vctxUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceContext.js')).href;
 const svUrl = pathToFileURL(path.join(ROOT, 'src/services/speakerVerify.js')).href;
 
-const { tryFastVoiceAction, matchWakePhrase, getWakeOpenMode, setWakeOpenMode } = await import(vrUrl);
+const {
+  tryFastVoiceAction,
+  matchWakePhrase,
+  getWakeOpenMode,
+  setWakeOpenMode,
+  getWakeTriggerPhrase,
+  setWakeTriggerPhrase,
+} = await import(vrUrl);
+const {
+  getDocSummaryPref,
+  setDocSummaryPref,
+  getReplyStyle,
+  setReplyStyle,
+} = await import(upUrl);
 const {
   downsampleFloat32,
   encodeWavBase64,
@@ -338,6 +356,37 @@ assert.ok(topBatao.replyText.includes('Code'));
 const batBatao = await tryFastVoiceAction('battery batao');
 assert.equal(batBatao.handled, true);
 assert.ok(batBatao.replyText.includes('85%'));
+
+// Custom wake trigger phrase + userPrefs tests
+assert.equal(setWakeTriggerPhrase('Sun Bhai'), 'Sun Bhai');
+assert.equal(getWakeTriggerPhrase(), 'Sun Bhai');
+const customWake = matchWakePhrase('Sun Bhai youtube kholo', 'Jeeva', 'Sun Bhai');
+assert.equal(customWake.matched, true);
+assert.equal(customWake.command, 'youtube kholo');
+
+assert.equal(setDocSummaryPref('summarize'), 'summarize');
+assert.equal(getDocSummaryPref(), 'summarize');
+assert.equal(setDocSummaryPref('read_full'), 'read_full');
+assert.equal(getDocSummaryPref(), 'read_full');
+assert.equal(setReplyStyle('detailed'), 'detailed');
+assert.equal(getReplyStyle(), 'detailed');
+assert.equal(setReplyStyle('concise'), 'concise');
+
+// Universal app typing, named video playback & shortcut fast commands
+const typedInApp = await tryFastVoiceAction('notepad mein hello world type karo');
+assert.equal(typedInApp.handled, true);
+assert.equal(typedInApp.tools.length, 2);
+assert.equal(typedInApp.tools[0].name, 'open_application');
+assert.equal(typedInApp.tools[1].name, 'type_text');
+
+const namedPlay = await tryFastVoiceAction('youtube par kesariya play karo');
+assert.equal(namedPlay.handled, true);
+assert.equal(namedPlay.tools[0].name, 'open_url');
+assert.ok(namedPlay.tools[0].args.url.includes('youtube.com/results?search_query=kesariya'));
+
+const copyCmd = await tryFastVoiceAction('copy karo');
+assert.equal(copyCmd.handled, true);
+assert.equal(copyCmd.tools[0].args.shortcut, 'ctrl+c');
 
 const volAur = await tryFastVoiceAction('volume thoda aur badhao');
 assert.equal(volAur.handled, true);

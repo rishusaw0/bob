@@ -17,6 +17,7 @@ import {
   getWakeWordEnabled,
   setWakeWordEnabled as persistWakeEnabled,
   getWakeOpenMode,
+  getWakeTriggerPhrase,
 } from './voiceRouter.js';
 import { captureVoiceContextSnapshot } from './voiceContext.js';
 import { verifySpeakerVoiceprint } from './speakerVerify.js';
@@ -36,6 +37,7 @@ export function useVoiceEngine({
   const [micLevel, setMicLevel] = useState(0);
   const [micBands, setMicBands] = useState([0, 0, 0, 0, 0]);
   const [wakeEnabled, setWakeEnabled] = useState(() => getWakeWordEnabled());
+  const [wakeTrigger, setWakeTrigger] = useState(() => getWakeTriggerPhrase());
   const [offlineWakeStatus, setOfflineWakeStatus] = useState({ available: null, running: false, culture: '' });
   const [externalMicBusy, setExternalMicBusy] = useState(false);
   const [speechState, setSpeechState] = useState({
@@ -73,13 +75,19 @@ export function useVoiceEngine({
     const onWakeChanged = (ev) => {
       if (typeof ev?.detail === 'boolean') setWakeEnabled(ev.detail);
     };
+    const onTriggerChanged = () => {
+      offlineUnsupportedRef.current = false;
+      setWakeTrigger(getWakeTriggerPhrase());
+    };
     const onExternalMic = (ev) => {
       setExternalMicBusy(Boolean(ev?.detail));
     };
     window.addEventListener('jeeva-wake-settings-changed', onWakeChanged);
+    window.addEventListener('jeeva-wake-trigger-updated', onTriggerChanged);
     window.addEventListener('jeeva-mic-active', onExternalMic);
     return () => {
       window.removeEventListener('jeeva-wake-settings-changed', onWakeChanged);
+      window.removeEventListener('jeeva-wake-trigger-updated', onTriggerChanged);
       window.removeEventListener('jeeva-mic-active', onExternalMic);
     };
   }, []);
@@ -378,7 +386,8 @@ export function useVoiceEngine({
             handleWakeActivation(ev.command);
           }
         });
-        api.offlineVoiceStart(aiName).catch(() => {
+        const offlineSpec = wakeTrigger ? `${aiName}|${wakeTrigger}` : aiName;
+        api.offlineVoiceStart(offlineSpec).catch(() => {
           offlineUnsupportedRef.current = true;
           startFallbackWake();
         });
@@ -393,7 +402,7 @@ export function useVoiceEngine({
       unsubOffline?.();
       stopWakeListener();
     };
-  }, [enabled, aiName, wakeEnabled, orbState, externalMicBusy, liveActive, handleWakeActivation, stopWakeListener]);
+  }, [enabled, aiName, wakeTrigger, wakeEnabled, orbState, externalMicBusy, liveActive, handleWakeActivation, stopWakeListener]);
 
   const stopLiveCall = useCallback(() => {
     if (liveSessionRef.current) {
