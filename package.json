@@ -17,6 +17,10 @@
   },
   "author": "Roushan Kumar",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rishusaw0/bob.git"
+  },
   "type": "module",
   "dependencies": {
     "@google/genai": "^3.5.0",

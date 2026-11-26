@@ -133,8 +133,18 @@ export default function OnboardingWizard({
 
   const handleToggleAutoLaunch = async () => {
     if (!window.electronAPI?.setAutoLaunch) return;
-    const next = await window.electronAPI.setAutoLaunch(!autoLaunch);
-    setAutoLaunch(Boolean(next));
+    try {
+      const wantEnable = !autoLaunch;
+      const next = Boolean(await window.electronAPI.setAutoLaunch(wantEnable));
+      setAutoLaunch(next);
+      if (wantEnable && !next) {
+        toast.error('Windows ne auto-start block kiya — Tray Startup folder check karein');
+      } else {
+        toast.success(next ? 'JEEVA ab Windows ke saath System Tray mein auto-start hoga' : 'Windows auto-start band kiya gaya');
+      }
+    } catch (err) {
+      toast.error(err?.message || 'Could not toggle Windows auto-start');
+    }
   };
 
   const handleRuleChange = (catId, policy) => {
@@ -332,8 +342,11 @@ export default function OnboardingWizard({
                 </div>
                 <button
                   type="button"
+                  role="switch"
+                  aria-checked={autoLaunch}
+                  aria-label="Start Automatically with Windows"
                   onClick={handleToggleAutoLaunch}
-                  className={`w-10 h-5 rounded-full transition-colors p-0.5 ${
+                  className={`w-10 h-5 rounded-full transition-colors p-0.5 cursor-pointer ${
                     autoLaunch ? 'bg-emerald-500' : 'bg-zinc-700'
                   }`}
                 >

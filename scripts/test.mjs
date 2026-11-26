@@ -90,12 +90,13 @@ for (const act of actionKeys) {
 }
 console.log(`   Verified ${declaredTools.length} tools, ${preloadInvokes.length} IPC handlers, ${actionKeys.length} actions.`);
 
-// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard
-console.log('[3/6] Testing coord-mapper, updater, scheduler & permission guard...');
+// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard, auto-launch
+console.log('[3/6] Testing coord-mapper, updater, scheduler, permission guard & auto-launch...');
 const { mapCoordsToPhysical } = require(path.join(ROOT, 'electron/coord-mapper.cjs'));
 const { compareSemver } = require(path.join(ROOT, 'electron/updater.cjs'));
 const { createScheduler } = require(path.join(ROOT, 'electron/pc-scheduler.cjs'));
 const { getActionCategory, isActionHighRisk } = require(path.join(ROOT, 'electron/permission-guard.cjs'));
+const { createAutoLaunchManager } = require(path.join(ROOT, 'electron/auto-launch.cjs'));
 
 const mapped150 = mapCoordsToPhysical({
   x: 960,
@@ -135,6 +136,56 @@ await new Promise((r) => setTimeout(r, 320));
 assert.equal(fired, true);
 sched.dispose();
 fs.rmSync(tmpSchedDir, { recursive: true, force: true });
+
+// Auto-launch registry + Windows Startup shortcut fallback tests
+const tmpAutoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-test-auto-'));
+let storedEntry = null;
+const mockRegApp = {
+  setLoginItemSettings: (s) => {
+    storedEntry = s?.openAtLogin ? { path: s.path, args: s.args || [] } : null;
+  },
+  getLoginItemSettings: (opts) => {
+    const match =
+      storedEntry &&
+      opts?.path === storedEntry.path &&
+      JSON.stringify(opts?.args || []) === JSON.stringify(storedEntry.args || []);
+    return { openAtLogin: Boolean(match), executableWillLaunchAtLogin: Boolean(storedEntry) };
+  },
+};
+const regMgr = createAutoLaunchManager({
+  app: mockRegApp,
+  shell: { writeShortcutLink: () => false },
+  platform: 'win32',
+  appDataPath: tmpAutoDir,
+  isPackaged: true,
+  execPath: 'C:\\Users\\Test User\\JEEVA AI.exe',
+});
+assert.equal(regMgr.setEnabled(true).enabled, true);
+assert.equal(regMgr.isEnabled(), true);
+assert.equal(regMgr.setEnabled(false).enabled, false);
+assert.equal(regMgr.isEnabled(), false);
+
+// Simulate Registry locked/denied -> Startup .lnk fallback must kick in cleanly
+const fallbackMgr = createAutoLaunchManager({
+  app: { setLoginItemSettings: () => {}, getLoginItemSettings: () => ({ openAtLogin: false, executableWillLaunchAtLogin: false }) },
+  shell: {
+    writeShortcutLink: (lnkPath) => {
+      fs.writeFileSync(lnkPath, 'LNK');
+      return true;
+    },
+  },
+  platform: 'win32',
+  appDataPath: tmpAutoDir,
+  isPackaged: true,
+  execPath: 'C:\\Users\\Test User\\JEEVA AI.exe',
+});
+const fbOn = fallbackMgr.setEnabled(true);
+assert.equal(fbOn.enabled, true);
+assert.equal(fbOn.method, 'startup_shortcut');
+assert.equal(fallbackMgr.isEnabled(), true);
+assert.equal(fallbackMgr.setEnabled(false).enabled, false);
+assert.equal(fallbackMgr.isEnabled(), false);
+fs.rmSync(tmpAutoDir, { recursive: true, force: true });
 
 // 4. Voice router verification (including "batao" status exception + battery + browser)
 console.log('[4/6] Testing fast Voice Router rules...');

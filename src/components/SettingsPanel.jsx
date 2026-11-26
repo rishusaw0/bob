@@ -73,7 +73,10 @@ export default function SettingsPanel({
   const [autoLaunch, setAutoLaunch] = useState(false);
   const [testingConn, setTestingConn] = useState(false);
   const [connStatus, setConnStatus] = useState(null);
-  const [updateRepo, setUpdateRepo] = useState(() => localStorage.getItem('jeeva_update_repo') || '');
+  const [updateRepo, setUpdateRepo] = useState(() => {
+    const savedRepo = localStorage.getItem('jeeva_update_repo');
+    return savedRepo !== null ? savedRepo : 'rishusaw0/bob';
+  });
   const [updaterState, setUpdaterState] = useState(null);
 
   useEffect(() => {
@@ -118,7 +121,7 @@ export default function SettingsPanel({
   const handleCheckUpdates = async () => {
     if (!window.electronAPI?.checkForUpdates) return;
     const cleanRepo = updateRepo.trim();
-    if (cleanRepo) localStorage.setItem('jeeva_update_repo', cleanRepo);
+    localStorage.setItem('jeeva_update_repo', cleanRepo);
     const cleanCloud = cloudUrl.trim().replace(/\/+$/, '');
     await window.electronAPI.checkForUpdates({
       githubRepo: cleanRepo.includes('/') ? cleanRepo : '',
@@ -162,9 +165,18 @@ export default function SettingsPanel({
 
   const handleToggleAutoLaunch = async () => {
     if (!window.electronAPI?.setAutoLaunch) return;
-    const updated = await window.electronAPI.setAutoLaunch(!autoLaunch);
-    setAutoLaunch(Boolean(updated));
-    toast.info(updated ? 'JEEVA will start automatically in Tray with Windows' : 'Auto-start disabled');
+    try {
+      const wantEnable = !autoLaunch;
+      const updated = Boolean(await window.electronAPI.setAutoLaunch(wantEnable));
+      setAutoLaunch(updated);
+      if (wantEnable && !updated) {
+        toast.error('Windows blocked auto-start registration — check Windows Startup settings');
+      } else {
+        toast.info(updated ? 'JEEVA will start automatically in Tray with Windows' : 'Auto-start disabled');
+      }
+    } catch (err) {
+      toast.error(err?.message || 'Failed to update Windows auto-start');
+    }
   };
 
   const handleClearAudit = async () => {
@@ -575,8 +587,11 @@ export default function SettingsPanel({
                     </div>
                     <button
                       type="button"
+                      role="switch"
+                      aria-checked={autoLaunch}
+                      aria-label="Start with Windows"
                       onClick={handleToggleAutoLaunch}
-                      className={`w-10 h-5 rounded-full transition-colors p-0.5 ${
+                      className={`w-10 h-5 rounded-full transition-colors p-0.5 cursor-pointer ${
                         autoLaunch ? 'bg-emerald-500' : 'bg-zinc-700'
                       }`}
                     >
@@ -610,7 +625,7 @@ export default function SettingsPanel({
                       type="text"
                       value={updateRepo}
                       onChange={(e) => setUpdateRepo(e.target.value)}
-                      placeholder="Optional GitHub repo: owner/jeeva-ai (blank = use Render URL)"
+                      placeholder="GitHub repo: rishusaw0/bob (blank = use Render URL)"
                       className="w-full bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1 text-[11px] font-mono text-obsidian-text placeholder:text-obsidian-muted focus:outline-none"
                     />
                     {updaterState?.lastError && (

@@ -24,6 +24,7 @@ const { createPcActions } = require('./pc-actions.cjs');
 const { getLanIPs, startBridgeServer } = require('./bridge-server.cjs');
 const { createOfflineVoice } = require('./offline-voice.cjs');
 const { createUpdater } = require('./updater.cjs');
+const { createAutoLaunchManager, APP_MODEL_ID } = require('./auto-launch.cjs');
 
 let mainWindow;
 let reticleWindow = null;
@@ -36,6 +37,20 @@ let cloudRelay = null;
 let pcScheduler = null;
 let offlineVoice = null;
 let appUpdater = null;
+let autoLaunchManager = null;
+
+function getAutoLaunchManager() {
+  if (!autoLaunchManager) {
+    autoLaunchManager = createAutoLaunchManager({
+      app,
+      shell,
+      isPackaged: app.isPackaged,
+      execPath: process.execPath,
+      argv: process.argv,
+    });
+  }
+  return autoLaunchManager;
+}
 
 function resolveUnpackedPath(...parts) {
   const p = path.join(__dirname, ...parts);
@@ -150,7 +165,7 @@ function createWindow() {
   });
 
   mainWindow.on('close', (event) => {
-    const keepInTray = Boolean(cloudRelay?.getStatus?.().enabled || app.getLoginItemSettings().openAtLogin);
+    const keepInTray = Boolean(cloudRelay?.getStatus?.().enabled || getAutoLaunchManager().isEnabled());
     if (!app.isQuitting && keepInTray) {
       event.preventDefault();
       mainWindow.hide();
@@ -368,6 +383,10 @@ if (!gotSingleInstanceLock) {
   });
 }
 
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_MODEL_ID);
+}
+
 app.whenReady().then(() => {
   if (process.defaultApp && process.argv.length >= 2) {
     app.setAsDefaultProtocolClient('jeeva', process.execPath, [path.resolve(process.argv[1])]);
@@ -478,10 +497,10 @@ app.whenReady().then(() => {
   ipcMain.handle('relay:regeneratePairToken', () => cloudRelay.regeneratePairToken());
   ipcMain.handle('relay:status', () => cloudRelay.getStatus());
 
-  ipcMain.handle('app:getAutoLaunch', () => Boolean(app.getLoginItemSettings().openAtLogin));
+  ipcMain.handle('app:getAutoLaunch', () => getAutoLaunchManager().isEnabled());
   ipcMain.handle('app:setAutoLaunch', (_, enabled) => {
-    app.setLoginItemSettings({ openAtLogin: Boolean(enabled), args: ['--hidden'] });
-    return Boolean(app.getLoginItemSettings().openAtLogin);
+    const res = getAutoLaunchManager().setEnabled(Boolean(enabled));
+    return Boolean(res.enabled);
   });
 
   ipcMain.handle('voice:offlineStart', (_, aiName) => offlineVoice.start(aiName));
