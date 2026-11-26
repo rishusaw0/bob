@@ -74,12 +74,14 @@ export function getToolCategory(name, args = {}) {
     case 'control_volume':
     case 'brightness_control':
     case 'media_control':
-    case 'open_windows_setting':
-    case 'toggle_windows_theme':
     case 'get_battery_status':
     case 'get_wifi_status':
     case 'get_system_info':
       return 'hardware_settings';
+
+    case 'open_windows_setting':
+    case 'toggle_windows_theme':
+      return 'apps_window';
 
     case 'generate_image_tool':
       return 'apps_window';
@@ -88,7 +90,11 @@ export function getToolCategory(name, args = {}) {
       return args?.action === 'kill_process' ? 'terminal_power' : 'hardware_settings';
 
     case 'pc_power_tools':
-      return args?.action === 'empty_recycle_bin' ? 'terminal_power' : 'hardware_settings';
+      return args?.action === 'empty_recycle_bin'
+        ? 'terminal_power'
+        : args?.action === 'power_plan' && args?.plan && args?.plan !== 'get'
+          ? 'apps_window'
+          : 'hardware_settings';
 
     case 'open_application':
     case 'get_running_apps':
@@ -138,6 +144,14 @@ export function getToolCategory(name, args = {}) {
   }
 }
 
+export function isSensitiveVoiceAction(name, args = {}) {
+  if (getToolRiskLevel(name, args) === 'high') return true;
+  if (name === 'open_windows_setting' || name === 'toggle_windows_theme') return true;
+  if (name === 'pc_power_tools' && args?.action === 'power_plan' && args?.plan && args?.plan !== 'get') return true;
+  if (name === 'file_operation' && args?.operation === 'write') return true;
+  return false;
+}
+
 export function getToolRiskLevel(name, args = {}) {
   if (
     name === 'system_power' ||
@@ -156,6 +170,8 @@ export function getToolRiskLevel(name, args = {}) {
   if (
     name === 'ui_automate' ||
     name === 'mouse_and_hotkey' ||
+    name === 'open_windows_setting' ||
+    name === 'toggle_windows_theme' ||
     (name === 'browser_control' && ['youtube_skip_ad', 'launch_debug'].includes(args?.action)) ||
     name === 'type_text' ||
     name === 'press_shortcut' ||

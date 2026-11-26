@@ -214,8 +214,23 @@ globalThis.window = {
 
 const vrUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceRouter.js')).href;
 const vcUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceCapture.js')).href;
+const vpUrl = pathToFileURL(path.join(ROOT, 'src/services/voicePermissionPrompt.js')).href;
 const { tryFastVoiceAction, matchWakePhrase, getWakeOpenMode, setWakeOpenMode } = await import(vrUrl);
 const { downsampleFloat32, encodeWavBase64, cleanSttTranscript } = await import(vcUrl);
+const { detectCommandLanguage, buildLocalizedPermissionQuestion, parseVoiceConfirmation } = await import(vpUrl);
+
+assert.equal(detectCommandLanguage('hamko chrome uninstall krna hai'), 'hinglish');
+assert.equal(detectCommandLanguage('Please uninstall Chrome from PC'), 'english');
+assert.equal(detectCommandLanguage('मुझे क्रोम अनइंस्टॉल करना है'), 'hindi');
+const qEn = buildLocalizedPermissionQuestion({ name: 'manage_software', args: { action: 'uninstall', package: 'Chrome' } }, 'english');
+const qHg = buildLocalizedPermissionQuestion({ name: 'manage_software', args: { action: 'uninstall', package: 'Chrome' } }, 'hinglish');
+assert.ok(/uninstall Chrome/i.test(qEn));
+assert.ok(/Chrome ko uninstall karna chahte hain/i.test(qHg));
+assert.equal(parseVoiceConfirmation('haan kar do'), 'yes');
+assert.equal(parseVoiceConfirmation('Yes please confirm'), 'yes');
+assert.equal(parseVoiceConfirmation('nahi cancel karo'), 'no');
+assert.equal(parseVoiceConfirmation('No stop'), 'no');
+assert.equal(parseVoiceConfirmation('maybe later'), 'unclear');
 
 const pcm48 = new Float32Array(480).fill(0.25);
 const pcm16 = downsampleFloat32(pcm48, 48000, 16000);

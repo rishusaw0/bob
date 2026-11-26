@@ -24,7 +24,14 @@ import {
   resetConversation,
   generateTitle,
 } from './services/gemini';
-import { speakText, getVoiceMode, setVoiceMode as setSpeechVoiceMode } from './services/speech';
+import { speakText, stopSpeech, getVoiceMode, setVoiceMode as setSpeechVoiceMode } from './services/speech';
+import { playWakeChime } from './services/earcon';
+import { startVoiceCapture } from './services/voiceCapture';
+import {
+  detectCommandLanguage,
+  buildLocalizedPermissionQuestion,
+  parseVoiceConfirmation,
+} from './services/voicePermissionPrompt';
 import { refreshRenderRelayDevices, setPairToken, getAuthHeaders } from './services/bridge';
 import { getAiName, getStrictVoiceMode, tryFastVoiceAction } from './services/voiceRouter';
 import { useVoiceEngine } from './services/useVoiceEngine';
@@ -96,6 +103,10 @@ export default function App() {
     () => Boolean(window.electronAPI) && localStorage.getItem('jeeva_onboarding_done') !== 'true'
   );
   const permissionResolverRef = useRef(null);
+  const permissionCleanupRef = useRef(null);
+  const activePermIdRef = useRef(null);
+  const activeVoiceTurnRef = useRef(false);
+  const lastUserPromptRef = useRef('');
 
   const updateCloudApiUrl = useCallback((url) => {
     const clean = String(url || '').trim().replace(/\/+$/, '');
@@ -414,6 +425,37 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleNewChat]);
 
+  const handlePermissionDecision = useCallback((decision) => {
+    const permId = activePermIdRef.current;
+    activePermIdRef.current = null;
+    permissionCleanupRef.current?.();
+    permissionCleanupRef.current = null;
+    stopSpeech();
+    setPermissionRequest(null);
+
+    if (permId) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === permId && m.permissionPrompt
+            ? {
+                ...m,
+                permissionPrompt: {
+                  ...m.permissionPrompt,
+                  status: decision === 'deny' ? 'denied' : 'allowed',
+                },
+              }
+            : m
+        )
+      );
+    }
+
+    if (permissionResolverRef.current) {
+      const resolve = permissionResolverRef.current;
+      permissionResolverRef.current = null;
+      resolve(decision);
+    }
+  }, []);
+
   const requestPermission = useCallback((req) => {
     // Expand tiny corner pill before displaying PermissionModal so buttons are never clipped
     setWindowMode((prevMode) => {
@@ -423,25 +465,137 @@ export default function App() {
       }
       return prevMode;
     });
+
+    const isVoice = Boolean(req.fromVoice || activeVoiceTurnRef.current);
+    const userLang = req.userLang || detectCommandLanguage(req.userPrompt || lastUserPromptRef.current || '');
+    const questionText = buildLocalizedPermissionQuestion(req, userLang);
+    const permId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    permissionCleanupRef.current?.();
+    activePermIdRef.current = permId;
+
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: permId,
+        role: 'assistant',
+        text: '',
+        permissionPrompt: {
+          id: permId,
+          questionText,
+          summary: req.summary,
+          riskLevel: req.riskLevel,
+          fromVoice: isVoice,
+          status: 'pending',
+        },
+      },
+    ]);
+
     return new Promise((resolve) => {
       permissionResolverRef.current = resolve;
-      setPermissionRequest(req);
-    });
-  }, []);
+      setPermissionRequest({
+        ...req,
+        id: permId,
+        questionText,
+        userLang,
+        fromVoice: isVoice,
+        voiceStatus: isVoice ? 'speaking' : 'idle',
+        heardText: '',
+      });
 
-  const handlePermissionDecision = useCallback((decision) => {
-    setPermissionRequest(null);
-    if (permissionResolverRef.current) {
-      permissionResolverRef.current(decision);
-      permissionResolverRef.current = null;
-    }
-  }, []);
+      if (!isVoice) return;
+
+      let cancelled = false;
+      let activeCap = null;
+      permissionCleanupRef.current = () => {
+        cancelled = true;
+        activeCap?.cancel?.();
+        activeCap = null;
+        window.dispatchEvent(new CustomEvent('jeeva-mic-active', { detail: false }));
+      };
+
+      (async () => {
+        window.dispatchEvent(new CustomEvent('jeeva-mic-active', { detail: true }));
+        try {
+          await speakText(questionText, { label: 'Confirm Action', forceProfile: userLang });
+          if (cancelled || permissionResolverRef.current !== resolve) return;
+
+          for (let attempt = 0; attempt < 2; attempt++) {
+            if (cancelled || permissionResolverRef.current !== resolve) return;
+            setPermissionRequest((cur) =>
+              cur && cur.id === permId ? { ...cur, voiceStatus: 'listening', heardText: '' } : cur
+            );
+            playWakeChime();
+            await new Promise((r) => setTimeout(r, 150));
+            if (cancelled || permissionResolverRef.current !== resolve) return;
+
+            const heard = await new Promise((resVoice) => {
+              activeCap = startVoiceCapture({
+                lang: userLang === 'english' ? 'en-IN' : 'hi-IN',
+                autoStopOnSilence: true,
+                silenceMs: 900,
+                onResult: (txt) => {
+                  activeCap = null;
+                  resVoice(txt || '');
+                },
+                onError: () => {
+                  activeCap = null;
+                  resVoice('');
+                },
+              });
+            });
+
+            if (cancelled || permissionResolverRef.current !== resolve) return;
+            if (heard) {
+              setPermissionRequest((cur) =>
+                cur && cur.id === permId ? { ...cur, heardText: heard } : cur
+              );
+            }
+
+            const verdict = parseVoiceConfirmation(heard);
+            if (verdict === 'yes') {
+              handlePermissionDecision('once');
+              return;
+            }
+            if (verdict === 'no') {
+              handlePermissionDecision('deny');
+              return;
+            }
+            if (attempt === 0) {
+              setPermissionRequest((cur) =>
+                cur && cur.id === permId ? { ...cur, voiceStatus: 'speaking' } : cur
+              );
+              const retryAsk =
+                userLang === 'english'
+                  ? 'Please say yes to allow or no to cancel.'
+                  : userLang === 'hindi'
+                    ? 'कृपया हाँ या नहीं कहें।'
+                    : 'Samajh nahi aaya. Haan ya Nahi bolein.';
+              await speakText(retryAsk, { label: 'Confirm Action', forceProfile: userLang });
+            }
+          }
+
+          if (!cancelled && permissionResolverRef.current === resolve) {
+            setPermissionRequest((cur) =>
+              cur && cur.id === permId ? { ...cur, voiceStatus: 'waiting_click' } : cur
+            );
+            window.dispatchEvent(new CustomEvent('jeeva-mic-active', { detail: false }));
+          }
+        } catch {
+          window.dispatchEvent(new CustomEvent('jeeva-mic-active', { detail: false }));
+        }
+      })();
+    });
+  }, [handlePermissionDecision]);
 
   const handleSend = useCallback(async (text, attachment = null, meta = null) => {
     if (!text.trim() && !attachment) return;
 
     const fromVoice = Boolean(meta?.fromVoice);
+    lastUserPromptRef.current = text.trim();
+    activeVoiceTurnRef.current = fromVoice;
     if (!isReady && !fromVoice) {
+      activeVoiceTurnRef.current = false;
       setShowSettings(true);
       return;
     }
@@ -520,12 +674,18 @@ export default function App() {
         { fromVoice, strictVoice: getStrictVoiceMode() }
       );
 
+      const fallbackToolSummary =
+        response.tools?.length > 0
+          ? `Done: ${response.tools.map((t) => t.name.replace(/_/g, ' ')).join(', ')}.`
+          : 'Completed.';
+      const finalAssistantText = (response.text || '').trim() || fallbackToolSummary;
+
       setMessages(prev =>
         prev.map(m =>
           m.id === typingId
             ? {
                 ...m,
-                text: response.text || 'Completed.',
+                text: finalAssistantText,
                 isTyping: false,
                 image: response.image || null,
                 tools: response.tools || m.tools,
@@ -535,8 +695,8 @@ export default function App() {
         )
       );
 
-      if ((response.autoSpeak || ttsEnabled || meta?.fromVoice) && response.text) {
-        speakText(response.text, {
+      if ((response.autoSpeak || ttsEnabled || meta?.fromVoice) && finalAssistantText) {
+        speakText(finalAssistantText, {
           label: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Reading response...',
         });
       }
@@ -564,6 +724,7 @@ export default function App() {
         )
       );
     } finally {
+      activeVoiceTurnRef.current = false;
       setIsLoading(false);
     }
   }, [isReady, ttsEnabled, requestPermission, apiKey, serverConfig.serverManagedKey, serverConfig.requiresPin, switchWindowMode, messages.length]);
@@ -841,7 +1002,12 @@ export default function App() {
               onSetupClick={() => setShowSettings(true)}
             />
           ) : (
-            <ChatWindow messages={messages} onEdit={handleEditMessage} onRegenerate={handleRegenerate} />
+            <ChatWindow
+              messages={messages}
+              onEdit={handleEditMessage}
+              onRegenerate={handleRegenerate}
+              onPermissionDecision={handlePermissionDecision}
+            />
           )}
 
           <AudioPlayerBar />

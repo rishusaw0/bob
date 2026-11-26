@@ -3,6 +3,7 @@ import {
   PERMISSION_CATEGORIES,
   getToolCategory,
   getToolRiskLevel,
+  isSensitiveVoiceAction,
   formatToolSummary,
   getCategoryPolicy,
   allowCategoryForSession,
@@ -506,7 +507,7 @@ export async function executeFunctionCall(
   name,
   args = {},
   requestPermission = null,
-  { client, preferredModel, generateImage } = {}
+  { client, preferredModel, generateImage, fromVoice = false, userPrompt = '' } = {}
 ) {
   if (name === 'generate_image_tool') {
     const imageUrl = await generateImage(args.prompt);
@@ -533,9 +534,11 @@ export async function executeFunctionCall(
     return { error: `Blocked by Permission Center (${catMeta?.label || category}).` };
   }
 
+  const alwaysAskHigh = riskLevel === 'high';
+  const sensitiveVoicePrompt = Boolean(fromVoice && isSensitiveVoiceAction(name, args));
   const needsPrompt =
     !sessionAllowedTools.has(name) &&
-    (policy === 'ask' || (riskLevel === 'high' && policy !== 'always'));
+    (alwaysAskHigh || sensitiveVoicePrompt || policy === 'ask');
 
   if (needsPrompt && requestPermission) {
     const decision = await requestPermission({
@@ -546,6 +549,8 @@ export async function executeFunctionCall(
       categoryLabel: catMeta?.label || category,
       summary,
       isRemote: isRemoteEnvironment(),
+      fromVoice: Boolean(fromVoice),
+      userPrompt,
     });
 
     if (!decision || decision === 'deny') {

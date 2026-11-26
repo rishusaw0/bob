@@ -4,6 +4,7 @@ import {
   PERMISSION_CATEGORIES,
   getToolCategory,
   getToolRiskLevel,
+  isSensitiveVoiceAction,
   formatToolSummary,
   getCategoryPolicy,
   allowCategoryForSession,
@@ -12,6 +13,7 @@ import {
   appendAuditLog,
   isRemoteEnvironment,
 } from './permissions.js';
+import { detectCommandLanguage } from './voicePermissionPrompt.js';
 
 const AI_NAME_KEY = 'jeeva_ai_name';
 const STRICT_VOICE_KEY = 'jeeva_strict_voice';
@@ -155,19 +157,30 @@ function extractNumber0to100(text) {
   return null;
 }
 
-async function runAuthorizedFastTool(name, args, executor, requestPermission) {
+async function runAuthorizedFastTool(name, args, executor, requestPermission, meta = {}) {
   const category = getToolCategory(name, args);
   const catMeta = PERMISSION_CATEGORIES.find((c) => c.id === category);
   const policy = getCategoryPolicy(category);
   const riskLevel = getToolRiskLevel(name, args);
   const summary = formatToolSummary(name, args);
+  const userLang = meta.userLang || detectCommandLanguage(meta.userPrompt || '');
 
   if (policy === 'block') {
     appendAuditLog({ tool: name, category, summary, decision: 'blocked' });
-    return { ok: false, error: `Blocked by Permission Center (${catMeta?.label || category}).` };
+    return {
+      ok: false,
+      error:
+        userLang === 'english'
+          ? `Blocked by Permission Center (${catMeta?.label || category}).`
+          : `Permission Center ne is action ko block kiya hai (${catMeta?.label || category}).`,
+    };
   }
 
-  const needsPrompt = policy === 'ask' || (riskLevel === 'high' && policy !== 'always');
+  const needsPrompt =
+    riskLevel === 'high' ||
+    isSensitiveVoiceAction(name, args) ||
+    policy === 'ask';
+
   if (needsPrompt && requestPermission) {
     const decision = await requestPermission({
       name,
@@ -177,10 +190,21 @@ async function runAuthorizedFastTool(name, args, executor, requestPermission) {
       categoryLabel: catMeta?.label || category,
       summary,
       isRemote: isRemoteEnvironment(),
+      fromVoice: true,
+      userLang,
+      userPrompt: meta.userPrompt || '',
     });
     if (!decision || decision === 'deny') {
       appendAuditLog({ tool: name, category, summary, decision: 'denied' });
-      return { ok: false, error: 'Permission denied.' };
+      return {
+        ok: false,
+        error:
+          userLang === 'english'
+            ? `Cancelled: ${summary}.`
+            : userLang === 'hindi'
+              ? `रद्द कर दिया गया: ${summary}।`
+              : `Theek hai, yeh action cancel kar diya hai.`,
+      };
     }
     if (decision === 'session_category' && riskLevel !== 'high') {
       allowCategoryForSession(category);
@@ -211,6 +235,15 @@ function hasAny(text, enRegex, hiTerms = []) {
 export async function tryFastVoiceAction(rawText, requestPermission = null) {
   const api = getSystemAPI();
   if (!api) return { handled: false };
+
+  const userLang = detectCommandLanguage(rawText);
+  const runFast = (toolName, toolArgs, execFn) =>
+    runAuthorizedFastTool(toolName, toolArgs, execFn, requestPermission, {
+      userLang,
+      userPrompt: rawText,
+    });
+  const reply = (en, hinglish, hi) =>
+    userLang === 'english' ? en : userLang === 'hindi' ? hi || hinglish : hinglish;
 
   const wake = matchWakePhrase(rawText);
   const cleaned = (wake.matched && wake.command ? wake.command : String(rawText || ''))
@@ -247,24 +280,19 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
 
     if (action) {
       const args = action === 'set' ? { action, level: pct } : { action };
-      const out = await runAuthorizedFastTool(
-        'control_volume',
-        args,
-        () => api.volume(action, pct !== null ? pct : 15),
-        requestPermission
-      );
+      const out = await runFast('control_volume', args, () => api.volume(action, pct !== null ? pct : 15));
       return {
         handled: true,
         replyText: out.ok
           ? action === 'set'
-            ? `Volume ${pct}% kar diya.`
+            ? reply(`I have set volume to ${pct}%.`, `Volume ${pct}% kar diya hai.`, `वॉल्यूम ${pct}% कर दिया है।`)
             : action === 'mute'
-            ? 'Volume mute kar diya.'
+            ? reply('I have muted the volume.', 'Volume mute kar diya hai.', 'आवाज़ म्यूट कर दी है।')
             : action === 'unmute'
-            ? 'Volume unmute kar diya.'
+            ? reply('I have unmuted the volume.', 'Volume unmute kar diya hai.', 'आवाज़ अनम्यूट कर दी है।')
             : action === 'up'
-            ? 'Volume badha diya.'
-            : 'Volume kam kar diya.'
+            ? reply('I have increased the volume.', 'Volume badha diya hai.', 'आवाज़ बढ़ा दी है।')
+            : reply('I have lowered the volume.', 'Volume kam kar diya hai.', 'आवाज़ कम कर दी है।')
           : out.error,
         tools: [{ name: 'control_volume', status: out.ok ? 'done' : 'error', args }],
       };
@@ -281,20 +309,15 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
 
     if (action) {
       const args = action === 'set' ? { action, level: pct } : { action };
-      const out = await runAuthorizedFastTool(
-        'brightness_control',
-        args,
-        () => api.brightness(action, pct !== null ? pct : 15),
-        requestPermission
-      );
+      const out = await runFast('brightness_control', args, () => api.brightness(action, pct !== null ? pct : 15));
       return {
         handled: true,
         replyText: out.ok
           ? action === 'set'
-            ? `Brightness ${pct}% kar di.`
+            ? reply(`I have set brightness to ${pct}%.`, `Brightness ${pct}% kar di hai.`, `ब्राइटनेस ${pct}% कर दी है।`)
             : action === 'up'
-            ? 'Brightness badha di.'
-            : 'Brightness kam kar di.'
+            ? reply('I have increased screen brightness.', 'Brightness badha di hai.', 'ब्राइटनेस बढ़ा दी है।')
+            : reply('I have lowered screen brightness.', 'Brightness kam kar di hai.', 'ब्राइटनेस कम कर दी है।')
           : out.error,
         tools: [{ name: 'brightness_control', status: out.ok ? 'done' : 'error', args }],
       };
@@ -314,15 +337,16 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
     else if (hasAny(lower, /\b(prev|previous|pichla|peeche)\b/i, ['पिछला'])) mediaAct = 'previous';
     else if (hasAny(lower, /\b(stop)\b/i, ['स्टॉप'])) mediaAct = 'stop';
 
-    const out = await runAuthorizedFastTool(
-      'media_control',
-      { action: mediaAct },
-      () => api.media(mediaAct),
-      requestPermission
-    );
+    const out = await runFast('media_control', { action: mediaAct }, () => api.media(mediaAct));
     return {
       handled: true,
-      replyText: out.ok ? (mediaAct === 'next' ? 'Next track.' : mediaAct === 'previous' ? 'Previous track.' : 'Media toggled.') : out.error,
+      replyText: out.ok
+        ? mediaAct === 'next'
+          ? reply('Switched to the next track.', 'Agla track chala diya hai.', 'अगला गाना चला दिया है।')
+          : mediaAct === 'previous'
+          ? reply('Switched to the previous track.', 'Pichla track chala diya hai.', 'पिछला गाना चला दिया है।')
+          : reply('Updated media playback.', 'Media playback update kar diya hai.', 'मीडिया अपडेट कर दिया है।')
+        : out.error,
       tools: [{ name: 'media_control', status: out.ok ? 'done' : 'error', args: { action: mediaAct } }],
     };
   }
@@ -330,45 +354,40 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   // 4. Theme Dark/Light
   if (/\b(dark mode|light mode|dark theme|light theme|theme toggle)\b/i.test(lower)) {
     const mode = lower.includes('light') ? 'light' : 'dark';
-    const out = await runAuthorizedFastTool(
-      'toggle_windows_theme',
-      { mode },
-      () => api.theme(mode),
-      requestPermission
-    );
+    const out = await runFast('toggle_windows_theme', { mode }, () => api.theme(mode));
     return {
       handled: true,
-      replyText: out.ok ? `${mode === 'dark' ? 'Dark' : 'Light'} mode on.` : out.error,
+      replyText: out.ok
+        ? reply(
+            `I have switched Windows to ${mode} mode.`,
+            `Windows mein ${mode} mode on kar diya hai.`,
+            `विंडोज़ ${mode} मोड चालू कर दिया है।`
+          )
+        : out.error,
       tools: [{ name: 'toggle_windows_theme', status: out.ok ? 'done' : 'error', args: { mode } }],
     };
   }
 
   // 5. Minimize all / Show desktop
   if (/\b(minimize all|sab minimize|show desktop|desktop dikhao|window minimize)\b/i.test(lower)) {
-    const out = await runAuthorizedFastTool(
-      'press_shortcut',
-      { shortcut: 'minimize_all' },
-      () => api.minimizeAll(),
-      requestPermission
-    );
+    const out = await runFast('press_shortcut', { shortcut: 'minimize_all' }, () => api.minimizeAll());
     return {
       handled: true,
-      replyText: out.ok ? 'Sab windows minimize kar di.' : out.error,
+      replyText: out.ok
+        ? reply('I have minimized all windows.', 'Sabhi windows minimize kar di hain.', 'सभी विंडोज़ मिनिमाइज़ कर दी हैं।')
+        : out.error,
       tools: [{ name: 'press_shortcut', status: out.ok ? 'done' : 'error', args: { shortcut: 'minimize_all' } }],
     };
   }
 
   // 6. Screenshot
   if (/\b(screenshot|screen shot|capture screen)\b/i.test(lower) && !/\b(analyze|read|kya hai|check|describe|dikha)\b/i.test(lower)) {
-    const out = await runAuthorizedFastTool(
-      'take_screenshot',
-      {},
-      () => api.screenshot(),
-      requestPermission
-    );
+    const out = await runFast('take_screenshot', {}, () => api.screenshot());
     return {
       handled: true,
-      replyText: out.ok ? 'Screenshot le liya.' : out.error,
+      replyText: out.ok
+        ? reply('I have taken a screenshot of your screen.', 'Screen ka screenshot le liya hai.', 'स्क्रीनशॉट ले लिया है।')
+        : out.error,
       image: out.ok ? out.result?.base64 : null,
       tools: [{ name: 'take_screenshot', status: out.ok ? 'done' : 'error', args: {} }],
     };
@@ -380,15 +399,12 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   if (openMatch) {
     const appTarget = openMatch[1].trim();
     if (!/\b(setting|settings|file|folder|tab|url|gaana|gana|music|song|track|volume|brightness|awaz|mode|theme)\b/i.test(appTarget)) {
-      const out = await runAuthorizedFastTool(
-        'open_application',
-        { app_name: appTarget },
-        () => api.openApp(appTarget, ''),
-        requestPermission
-      );
+      const out = await runFast('open_application', { app_name: appTarget }, () => api.openApp(appTarget, ''));
       return {
         handled: true,
-        replyText: out.ok ? `${appTarget} khol diya.` : out.error,
+        replyText: out.ok
+          ? reply(`I have opened ${appTarget}.`, `Maine ${appTarget} khol diya hai.`, `मैंने ${appTarget} खोल दिया है।`)
+          : out.error,
         tools: [{ name: 'open_application', status: out.ok ? 'done' : 'error', args: { app_name: appTarget } }],
       };
     }
@@ -399,15 +415,12 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   if (closeMatch) {
     const appTarget = closeMatch[1].trim();
     if (!/\b(tab|window|pc|computer|laptop|system|awaz|sound|volume|screen)\b/i.test(appTarget)) {
-      const out = await runAuthorizedFastTool(
-        'close_application',
-        { app_name: appTarget },
-        () => api.closeApp(appTarget),
-        requestPermission
-      );
+      const out = await runFast('close_application', { app_name: appTarget }, () => api.closeApp(appTarget));
       return {
         handled: true,
-        replyText: out.ok ? `${appTarget} band kar diya.` : out.error,
+        replyText: out.ok
+          ? reply(`I have closed ${appTarget}.`, `Maine ${appTarget} band kar diya hai.`, `मैंने ${appTarget} बंद कर दिया है।`)
+          : out.error,
         tools: [{ name: 'close_application', status: out.ok ? 'done' : 'error', args: { app_name: appTarget } }],
       };
     }
@@ -512,15 +525,16 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
       : lower.includes('saver')
         ? 'power_saver'
         : 'balanced';
-    const out = await runAuthorizedFastTool(
-      'pc_power_tools',
-      { action: 'power_plan', plan },
-      () => api.powerProfile(plan),
-      requestPermission
-    );
+    const out = await runFast('pc_power_tools', { action: 'power_plan', plan }, () => api.powerProfile(plan));
     return {
       handled: true,
-      replyText: out.ok ? `Power plan ${plan.replace('_', ' ')} set kar diya.` : out.error,
+      replyText: out.ok
+        ? reply(
+            `I have set the power plan to ${plan.replace('_', ' ')}.`,
+            `Power plan ${plan.replace('_', ' ')} par set kar diya hai.`,
+            `पावर प्लान ${plan.replace('_', ' ')} पर सेट कर दिया है।`
+          )
+        : out.error,
       tools: [{ name: 'pc_power_tools', status: out.ok ? 'done' : 'error', args: { action: 'power_plan', plan } }],
     };
   }
@@ -559,15 +573,14 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
             : lower.includes('active')
               ? 'active_tab_info'
               : 'new_tab';
-    const out = await runAuthorizedFastTool(
-      'browser_control',
-      { action },
-      () => api.browserControl(action, ''),
-      requestPermission
-    );
+    const out = await runFast('browser_control', { action }, () => api.browserControl(action, ''));
     return {
       handled: true,
-      replyText: out.ok ? (typeof out.result === 'string' ? out.result : 'Browser action done.') : out.error,
+      replyText: out.ok
+        ? typeof out.result === 'string'
+          ? out.result
+          : reply('Browser action completed.', 'Browser action poora kar diya hai.', 'ब्राउज़र कार्य पूरा कर दिया है।')
+        : out.error,
       tools: [{ name: 'browser_control', status: out.ok ? 'done' : 'error', args: { action } }],
     };
   }

@@ -1,9 +1,9 @@
-import { LuShieldAlert, LuShieldCheck, LuCheck, LuX, LuGlobe } from 'react-icons/lu';
+import { LuShieldAlert, LuShieldCheck, LuCheck, LuX, LuGlobe, LuMic, LuVolume2 } from 'react-icons/lu';
 
 export default function PermissionModal({ request, onDecision }) {
   if (!request) return null;
 
-  const { name, args, riskLevel, categoryLabel, summary, isRemote } = request;
+  const { name, args, riskLevel, categoryLabel, summary, isRemote, questionText, fromVoice, voiceStatus, heardText } = request;
   const isHigh = riskLevel === 'high';
 
   return (
@@ -49,6 +49,31 @@ export default function PermissionModal({ request, onDecision }) {
             </span>
           )}
         </div>
+
+        {questionText && (
+          <div className="mb-2.5 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-xs text-obsidian-text leading-relaxed">
+            <p className="font-medium">{questionText}</p>
+            {fromVoice && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-mono text-sky-300">
+                {voiceStatus === 'speaking' ? (
+                  <>
+                    <LuVolume2 className="w-3.5 h-3.5 animate-pulse" />
+                    <span>Asking via voice...</span>
+                  </>
+                ) : voiceStatus === 'listening' ? (
+                  <>
+                    <LuMic className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+                    <span className="text-emerald-300">
+                      Listening for Yes / Haan or No / Nahi{heardText ? ` ("${heardText}")` : '...'}
+                    </span>
+                  </>
+                ) : (
+                  <span className="text-obsidian-muted">Tap a button below to confirm</span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {summary && (
           <div className="mb-2.5 px-3 py-2 rounded-lg bg-obsidian-elevated border border-obsidian-border text-xs text-obsidian-text font-medium">

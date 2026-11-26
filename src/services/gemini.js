@@ -32,12 +32,13 @@ You have deep PC control tools:
 - Files, Clipboard & Scheduler: browse/search/read PDFs & Office docs, auto-organize folders like Downloads/Desktop by type, zip/unzip/move/rename (file_manager_pro), recall 20-item clipboard history (clipboard_history), and set Windows desktop/spoken reminders or delayed commands (schedule_pc_task).
 - Multi-step Workstation Modes: if user asks for "Coding Mode", switch power_plan to high_performance, open vscode, and check diagnostics; for "Night Focus", switch dark theme, lower brightness to 35%, and set balanced power.
 ALWAYS use your tools directly when the user asks you to perform an action — do not just explain how to do it manually.
-Keep responses clear, helpful, and concise.`;
+SENSITIVE ACTIONS RULE: When the user asks to install, uninstall, or update software, change Windows settings, force-close apps, delete files, or run system power/terminal actions, call the corresponding tool cleanly right away — JEEVA's voice and chat permission guard will ask the user for confirmation before execution.
+LANGUAGE & CONFIRMATION RULE: Always reply in the SAME language and script style the user used (if English -> clear English; if Romanized Hinglish -> natural Hinglish; if Devanagari Hindi -> Hindi). After executing any tool, explicitly tell the user BOTH that the task is done AND exactly what action was performed (e.g. "Maine Chrome khol diya hai" or "I have set volume to 60%"), never just a vague "Done".`;
 
   const customBlock = customInstructions ? `\n\nUSER CUSTOM PREFERENCES:\n${customInstructions}` : '';
   const voiceBlock =
     fromVoice && strictVoice
-      ? `\n\nVOICE COMMAND RULE: The user spoke a direct voice command. Execute requested tool(s) immediately with ZERO filler, ZERO lecturing, and ZERO markdown formatting. Reply in ONE crisp spoken sentence (under 15 words).`
+      ? `\n\nVOICE COMMAND RULE: The user spoke a direct voice command. Execute requested tool(s) immediately with ZERO filler, ZERO lecturing, and ZERO markdown formatting. Reply in ONE clear spoken sentence in the user's exact language confirming that the action was completed and exactly what was done.`
       : '';
   return `${base}${customBlock}${voiceBlock}`;
 }
@@ -326,6 +327,8 @@ export async function sendMessage(
         client,
         preferredModel,
         generateImage,
+        fromVoice: Boolean(options?.fromVoice),
+        userPrompt: typeof text === 'string' ? text : '',
       });
       toolEntry.status = result.error ? 'error' : 'done';
       if (onToolUpdate) onToolUpdate([...executedTools]);

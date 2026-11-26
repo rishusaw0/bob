@@ -28,6 +28,9 @@ import {
   LuTerminal,
   LuThumbsUp,
   LuThumbsDown,
+  LuShieldAlert,
+  LuX,
+  LuMic,
 } from 'react-icons/lu';
 import { speakText } from '../services/speech';
 import { toast } from '../services/toast';
@@ -233,7 +236,7 @@ function StreamingText({ text, isStreaming }) {
   );
 }
 
-export default function MessageBubble({ message, onEdit, onRegenerate }) {
+export default function MessageBubble({ message, onEdit, onRegenerate, onPermissionDecision }) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
@@ -306,6 +309,77 @@ export default function MessageBubble({ message, onEdit, onRegenerate }) {
       }
     } catch {}
   };
+
+  const perm = message.permissionPrompt;
+  if (perm) {
+    const isPending = perm.status === 'pending';
+    const isAllowed = perm.status === 'allowed';
+    const isHigh = perm.riskLevel === 'high';
+    return (
+      <div className="py-2 animate-fade-in">
+        <div className="flex items-start gap-3">
+          <div className="w-6 h-6 rounded-md bg-zinc-100 text-zinc-950 flex items-center justify-center font-mono text-[10px] font-bold flex-shrink-0 mt-0.5">
+            JV
+          </div>
+          <div
+            className={`flex-1 min-w-0 rounded-xl border p-3.5 ${
+              isPending
+                ? isHigh
+                  ? 'bg-red-950/20 border-red-500/40'
+                  : 'bg-amber-950/20 border-amber-500/40'
+                : 'bg-obsidian-surface border-obsidian-border'
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-mono font-semibold text-amber-300">
+                <LuShieldAlert className="w-3.5 h-3.5" />
+                {isHigh ? 'Confirmation Required (High Risk)' : 'Permission Required'}
+              </span>
+              {perm.fromVoice && isPending && (
+                <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-300">
+                  <LuMic className="w-3 h-3 animate-pulse" />
+                  Say Haan / Yes or Nahi / No
+                </span>
+              )}
+              {!isPending && (
+                <span
+                  className={`text-[10px] font-mono px-2 py-0.5 rounded ${
+                    isAllowed ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'
+                  }`}
+                >
+                  {isAllowed ? 'Approved' : 'Cancelled'}
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-obsidian-text leading-relaxed">{perm.questionText}</p>
+            {perm.summary && (
+              <p className="text-[11px] font-mono text-obsidian-muted mt-1">{perm.summary}</p>
+            )}
+            {isPending && onPermissionDecision && (
+              <div className="flex items-center gap-2 mt-3 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => onPermissionDecision('once')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-950 text-xs font-medium hover:bg-white transition-colors"
+                >
+                  <LuCheck className="w-3.5 h-3.5" />
+                  Yes, Allow
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onPermissionDecision('deny')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-obsidian-bg border border-obsidian-border text-xs text-obsidian-secondary hover:text-red-300 hover:border-red-500/40 transition-colors"
+                >
+                  <LuX className="w-3.5 h-3.5" />
+                  No, Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Typing indicator with tool trace
   if (message.isTyping) {
