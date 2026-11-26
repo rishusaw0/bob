@@ -22,6 +22,8 @@ import {
   getPreferredNativeVoice,
   setPreferredNativeVoice,
   getAvailableSpeechVoices,
+  getSpeechSpeedMode,
+  setSpeechSpeedMode,
 } from '../services/speech';
 import { startVoiceCapture } from '../services/voiceCapture';
 import {
@@ -105,6 +107,7 @@ export default function SettingsPanel({
   const [voiceAccent, setVoiceAccentState] = useState(() => getVoiceAccent());
   const [nativeVoice, setNativeVoiceState] = useState(() => getPreferredNativeVoice());
   const [availableVoices, setAvailableVoices] = useState(() => getAvailableSpeechVoices());
+  const [speechSpeedMode, setSpeechSpeedModeState] = useState(() => getSpeechSpeedMode());
 
   useEffect(() => {
     const refresh = () => setAvailableVoices(getAvailableSpeechVoices());
@@ -931,7 +934,7 @@ export default function SettingsPanel({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <select
                     value={voiceAccent}
                     onChange={(e) => {
@@ -943,6 +946,20 @@ export default function SettingsPanel({
                   >
                     <option value="indian">Accent: Indian English (en-IN · Clear)</option>
                     <option value="global">Accent: Global Studio (en-US)</option>
+                  </select>
+
+                  <select
+                    value={speechSpeedMode}
+                    onChange={(e) => {
+                      const next = setSpeechSpeedMode(e.target.value);
+                      setSpeechSpeedModeState(next);
+                      toast.success(`Speech mode: ${next}`);
+                    }}
+                    className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
+                  >
+                    <option value="hybrid_fast">Speed: Fast Hybrid (&lt;50ms Instant)</option>
+                    <option value="instant_local">Speed: Always Instant Offline</option>
+                    <option value="cloud_studio">Speed: Cloud Studio First</option>
                   </select>
 
                   <select

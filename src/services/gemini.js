@@ -396,15 +396,8 @@ export async function transcribeAudio(base64Data, mimeType = 'audio/wav', opts =
 
   const basePreferred = /tts|image|nano-banana/i.test(preferredModel) ? '' : preferredModel;
   const models = Array.from(
-    new Set([
-      basePreferred,
-      'gemini-3.5-flash-lite',
-      'gemini-3.8-flash',
-      'gemini-4-hydrogen',
-      'gemini-2.5-flash',
-      'gemini-3.5-transcribe',
-    ].filter(Boolean))
-  );
+    new Set([basePreferred, 'gemini-3.5-flash-lite', 'gemini-2.5-flash'].filter(Boolean))
+  ).slice(0, 3);
 
   let lastErr;
   for (const model of models) {
@@ -481,26 +474,24 @@ async function getRegionalVoices(accent = 'indian') {
       : { english: 'Charon', hindi: 'Sulafat', hinglish: 'Achird' };
   if (!client?.voices?.list) return fallback;
 
-  try {
-    const [hiRes, inRes, enRes] = await Promise.all([
-      client.voices.list({ language_code: ['hi-IN'], type: ['prebuilt'], page_size: 10 }).catch(() => null),
-      client.voices.list({ language_code: ['en-IN'], type: ['prebuilt'], page_size: 10 }).catch(() => null),
-      client.voices.list({ language_code: ['en-US'], contexts: ['Audiobook', 'Conversational'], type: ['prebuilt'], page_size: 10 }).catch(() => null),
-    ]);
-
-    const resolved = {
-      hindi: hiRes?.voices?.[0]?.id || fallback.hindi,
-      hinglish: inRes?.voices?.[0]?.id || hiRes?.voices?.[1]?.id || fallback.hinglish,
-      english:
-        key === 'indian'
-          ? inRes?.voices?.[0]?.id || fallback.english
-          : enRes?.voices?.[0]?.id || fallback.english,
-    };
-    regionalVoiceCache.set(key, resolved);
-    return resolved;
-  } catch {
-    return fallback;
+  // Background refresh without blocking first spoken word latency (0ms stall)
+  if (!regionalVoiceCache.has(`${key}_warming`)) {
+    regionalVoiceCache.set(`${key}_warming`, fallback);
+    Promise.all([
+      client.voices.list({ language_code: ['hi-IN'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
+      client.voices.list({ language_code: ['en-IN'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
+      client.voices.list({ language_code: ['en-US'], contexts: ['Conversational'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
+    ])
+      .then(([hiRes, inRes, enRes]) => {
+        regionalVoiceCache.set(key, {
+          hindi: hiRes?.voices?.[0]?.id || fallback.hindi,
+          hinglish: inRes?.voices?.[0]?.id || hiRes?.voices?.[1]?.id || fallback.hinglish,
+          english: key === 'indian' ? inRes?.voices?.[0]?.id || fallback.english : enRes?.voices?.[0]?.id || fallback.english,
+        });
+      })
+      .catch(() => {});
   }
+  return fallback;
 }
 
 const VOICE_STYLE_HINTS = {

@@ -169,7 +169,7 @@ export function useVoiceEngine({
       captureRef.current = startVoiceCapture({
         lang: 'hi-IN',
         autoStopOnSilence: true,
-        silenceMs: 950,
+        silenceMs: 740,
         noSpeechTimeoutMs,
         onInterim: (txt) => setLiveTranscript(txt),
         onLevel: (lvl, bands) => {

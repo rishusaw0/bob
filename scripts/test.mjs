@@ -445,9 +445,11 @@ assert.ok(hw.totalGb > 0 && hw.safeThreads >= 2);
 assert.ok(LOW_END_MODELS.some((m) => m.id === 'qwen2.5:1.5b'));
 assert.ok(compactHistoryForCloud([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }, { role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }], 2).includes('CONVERSATION CONTEXT DIGEST'));
 
-// Indian-style TTS accent default & Speech Clarity text normalizer tests
-const { cleanTextForSpeech, detectVoiceProfile, getVoiceAccent } = await import(pathToFileURL(path.join(ROOT, 'src/services/speech.js')).href);
+// Indian-style TTS accent default, Fast Hybrid Speed & Speech Clarity text normalizer tests
+const { cleanTextForSpeech, detectVoiceProfile, getVoiceAccent, getSpeechSpeedMode } = await import(pathToFileURL(path.join(ROOT, 'src/services/speech.js')).href);
 assert.equal(getVoiceAccent(), 'indian');
+assert.equal(getSpeechSpeedMode(), 'hybrid_fast');
+assert.ok(computeAdaptiveSilenceMs(500, 740) <= 540);
 assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'), 'english');
 assert.equal(detectVoiceProfile('Bhai laptop bohot slow ho raha hai'), 'hinglish');
 const spokenClean = cleanTextForSpeech('Check **C:\\Users\\Demo\\report.pdf** -> 45% CPU & high_performance');

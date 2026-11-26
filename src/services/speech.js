@@ -10,6 +10,20 @@ export const VOICE_PROFILES = {
 
 const VOICE_ACCENT_KEY = 'jeeva_voice_accent';
 const PREFERRED_NATIVE_VOICE_KEY = 'jeeva_native_voice';
+const SPEECH_SPEED_MODE_KEY = 'jeeva_speech_speed';
+
+const ttsAudioCache = new Map();
+
+export function getSpeechSpeedMode() {
+  const v = readStorage(SPEECH_SPEED_MODE_KEY, 'hybrid_fast');
+  return ['hybrid_fast', 'instant_local', 'cloud_studio'].includes(v) ? v : 'hybrid_fast';
+}
+
+export function setSpeechSpeedMode(mode) {
+  const clean = ['hybrid_fast', 'instant_local', 'cloud_studio'].includes(mode) ? mode : 'hybrid_fast';
+  writeStorage(SPEECH_SPEED_MODE_KEY, clean);
+  return clean;
+}
 
 function readStorage(key, fallback = '') {
   try {
@@ -444,10 +458,15 @@ function playAudioUrl(audioUrl) {
   });
 }
 
-export async function speakText(text, { label = 'Reading aloud...', forceProfile = null } = {}) {
+export async function speakText(text, { label = 'Reading aloud...', forceProfile = null, instant = false } = {}) {
   stopSpeech();
   const clean = cleanTextForSpeech(text);
   if (!clean) return;
+
+  // Brief 20ms yield when Chromium speechSynthesis was just cancelled so next utterance is never dropped
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
 
   const myToken = ++playbackToken;
   stopRequested = false;
@@ -457,28 +476,81 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
 
   const initialProfile =
     forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(clean) : selectedMode);
+  const speedMode = getSpeechSpeedMode();
+  const useInstantDirect =
+    speedMode === 'instant_local' ||
+    (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+    (speedMode === 'hybrid_fast' && (instant || clean.length <= 180));
 
   currentState = {
     ...currentState,
     isPlaying: true,
     isPaused: false,
-    isLoading: true,
+    isLoading: !useInstantDirect,
     currentChunk: 1,
     totalChunks: chunks.length,
     label,
     voiceMode: selectedMode,
     detectedProfile: initialProfile,
-    engine: 'gemini',
+    engine: useInstantDirect ? 'instant-local' : 'gemini',
   };
   notify();
 
-  // Prefetch helper: determines voice profile per chunk if in Auto mode
+  // Fast <40ms Direct Local Indian Voice path (no multi-second Gemini Cloud wait!)
+  if (useInstantDirect) {
+    for (let i = 0; i < chunks.length; i++) {
+      if (stopRequested || myToken !== playbackToken) break;
+      const chunkProfile =
+        forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunks[i]) : selectedMode);
+      currentState = {
+        ...currentState,
+        isLoading: false,
+        currentChunk: i + 1,
+        totalChunks: chunks.length,
+        detectedProfile: chunkProfile,
+        engine: 'instant-local',
+      };
+      notify();
+      await speakChunkNative(chunks[i], chunkProfile);
+    }
+    if (myToken === playbackToken) {
+      currentState = {
+        ...currentState,
+        isPlaying: false,
+        isPaused: false,
+        isLoading: false,
+        currentChunk: 0,
+        totalChunks: 0,
+        label: '',
+      };
+      notify();
+    }
+    return;
+  }
+
+  // Prefetch helper with strict 1500ms race timeout + phrase cache so Cloud TTS never hangs
   const accent = getVoiceAccent();
+  const timeoutMs = speedMode === 'cloud_studio' ? 3500 : 1500;
   const fetchChunkAudio = (idx) => {
     const chunkText = chunks[idx];
     const profile =
       forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunkText) : selectedMode);
-    return textToSpeech(chunkText, profile, { accent }).then((url) => ({ url, profile }));
+    const cacheKey = `${accent}:${profile}:${chunkText}`;
+    if (ttsAudioCache.has(cacheKey)) {
+      return Promise.resolve({ url: ttsAudioCache.get(cacheKey), profile });
+    }
+    const ttsPromise = textToSpeech(chunkText, profile, { accent }).then((url) => {
+      if (ttsAudioCache.size >= 24) {
+        const firstKey = ttsAudioCache.keys().next().value;
+        ttsAudioCache.delete(firstKey);
+      }
+      ttsAudioCache.set(cacheKey, url);
+      return { url, profile };
+    });
+    const timerPromise = new Promise((_, rej) =>
+      setTimeout(() => rej(new Error('TTS timeout — fast local fallback')), timeoutMs)
+    );
+    return Promise.race([ttsPromise, timerPromise]);
   };
 
   let nextPromise = fetchChunkAudio(0).catch((err) => ({ error: err }));

@@ -178,12 +178,12 @@ export function computeVocalVadMetrics(samples, gainBoost = 3.6, sampleRate = 16
 }
 
 /**
- * Adapts trailing silence cutoff dynamically: fast ~700ms on crisp commands, up to ~1200ms on longer speech.
+ * Adapts trailing silence cutoff dynamically: snappy ~480ms on crisp commands, ~1020ms on longer speech.
  */
-export function computeAdaptiveSilenceMs(speechDurationMs, baseSilenceMs = 950) {
-  if (speechDurationMs <= 900) return Math.max(660, Math.min(820, baseSilenceMs - 220));
-  if (speechDurationMs <= 2200) return Math.max(850, baseSilenceMs);
-  return Math.min(1350, Math.max(1150, baseSilenceMs + 220));
+export function computeAdaptiveSilenceMs(speechDurationMs, baseSilenceMs = 740) {
+  if (speechDurationMs <= 900) return Math.max(450, Math.min(540, baseSilenceMs - 220));
+  if (speechDurationMs <= 2200) return Math.max(620, Math.min(760, baseSilenceMs));
+  return Math.min(1080, Math.max(880, baseSilenceMs + 180));
 }
 
 /**
@@ -634,8 +634,8 @@ export function startWakeWordListener({
                 voicedFrames = 0;
                 activeVoicedAfterTrigger = 2;
                 phraseChunks = getPreRoll();
-                vadMaxTimer = setTimeout(() => finishWakeClip(), 4200);
-                vadSilenceTimer = setTimeout(() => finishWakeClip(), 680);
+                vadMaxTimer = setTimeout(() => finishWakeClip(), 3600);
+                vadSilenceTimer = setTimeout(() => finishWakeClip(), 480);
               }
             } else {
               voicedFrames = Math.max(0, voicedFrames - 1);
@@ -648,7 +648,7 @@ export function startWakeWordListener({
             if (lvl > Math.max(0.024, noiseFloor * 1.6) && isVocalFrame) {
               activeVoicedAfterTrigger++;
               clearTimeout(vadSilenceTimer);
-              vadSilenceTimer = setTimeout(() => finishWakeClip(), 680);
+              vadSilenceTimer = setTimeout(() => finishWakeClip(), 480);
             }
           }
         },

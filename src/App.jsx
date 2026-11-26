@@ -692,7 +692,7 @@ export default function App() {
         }).catch(() => {});
       }
       if (shouldSpeak && replyText) {
-        speakText(replyText, { label: speakLabel });
+        speakText(replyText, { label: speakLabel, instant: tier !== 'cloud' });
       }
     };
 
