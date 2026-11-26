@@ -209,8 +209,8 @@ export function cleanTextForSpeech(text) {
     .trim();
 }
 
-// Split with quick ~140 char first sentence and <=240 char chunks so OS TTS never hits Chromium's cutoff bug
-function splitIntoChunks(text, maxLen = 240, firstChunkMax = 140) {
+// Split with quick ~100 char first chunk and <=220 char chunks so speech starts immediately on Sentence 1
+export function splitIntoChunks(text, maxLen = 220, firstChunkMax = 100) {
   const clean = cleanTextForSpeech(text);
   if (!clean) return [];
   const rawSentences = clean.match(/[^।.!?\n]+[।.!?\n]*/g) || [clean];
@@ -311,10 +311,10 @@ function speakChunkNative(text, profile) {
     utterance.lang = profile === 'hindi' ? 'hi-IN' : indianAccent || profile === 'hinglish' ? 'en-IN' : 'en-US';
     const voice = pickNativeVoice(profile);
     if (voice) utterance.voice = voice;
-    // Slight clarity pacing tuning so words enunciate cleanly without sounding rushed
-    utterance.rate = Math.min(1.5, Math.max(0.75, currentState.rate * 0.96));
+    utterance.rate = Math.min(1.6, Math.max(0.8, currentState.rate * 1.04));
     utterance.pitch = 1.0;
 
+    let done = false;
     let pulseTimer = setInterval(() => {
       if (stopRequested) return;
       const lvl = 0.28 + Math.random() * 0.45;
@@ -326,7 +326,13 @@ function speakChunkNative(text, profile) {
       notify();
     }, 90);
 
+    const safetyMs = Math.max(4500, text.length * 140);
+    let safetyTimer = null;
+
     const finish = () => {
+      if (done) return;
+      done = true;
+      if (safetyTimer) clearTimeout(safetyTimer);
       if (pulseTimer) {
         clearInterval(pulseTimer);
         pulseTimer = null;
@@ -335,6 +341,7 @@ function speakChunkNative(text, profile) {
       notify();
       resolve();
     };
+    safetyTimer = setTimeout(finish, safetyMs);
     utterance.onend = finish;
     utterance.onerror = finish;
     window.speechSynthesis.speak(utterance);
@@ -459,28 +466,29 @@ function playAudioUrl(audioUrl) {
 }
 
 export async function speakText(text, { label = 'Reading aloud...', forceProfile = null, instant = false } = {}) {
+  const wasSpeaking = typeof window !== 'undefined' && Boolean(window.speechSynthesis?.speaking || activeAudio);
   stopSpeech();
   const clean = cleanTextForSpeech(text);
   if (!clean) return;
 
-  // Brief 20ms yield when Chromium speechSynthesis was just cancelled so next utterance is never dropped
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    await new Promise((r) => setTimeout(r, 20));
+  // Brief 12ms yield only when interrupting active Chromium speechSynthesis so the next utterance never drops
+  if (wasSpeaking && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    await new Promise((r) => setTimeout(r, 12));
   }
 
   const myToken = ++playbackToken;
   stopRequested = false;
 
-  const chunks = splitIntoChunks(clean, 240, 140);
+  const chunks = splitIntoChunks(clean, 220, 100);
   if (!chunks.length) return;
 
   const initialProfile =
     forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(clean) : selectedMode);
   const speedMode = getSpeechSpeedMode();
   const useInstantDirect =
-    speedMode === 'instant_local' ||
+    speedMode !== 'cloud_studio' ||
     (typeof navigator !== 'undefined' && navigator.onLine === false) ||
-    (speedMode === 'hybrid_fast' && (instant || clean.length <= 180));
+    Boolean(instant);
 
   currentState = {
     ...currentState,
@@ -616,6 +624,154 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
     };
     notify();
   }
+}
+
+/**
+ * Progressive Streaming Speaker: speaks completed sentences immediately as tokens stream in,
+ * so there is ~0ms wait for the full AI answer before voice starts.
+ */
+export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = null } = {}) {
+  const wasSpeaking = typeof window !== 'undefined' && Boolean(window.speechSynthesis?.speaking || activeAudio);
+  stopSpeech();
+  const myToken = ++playbackToken;
+  stopRequested = false;
+
+  let consumedLen = 0;
+  let lastRaw = '';
+  let started = false;
+  let streamFinished = false;
+  const queue = [];
+  let draining = false;
+  let spokenChunks = 0;
+  let totalQueued = 0;
+
+  const drainQueue = async () => {
+    if (draining) return;
+    draining = true;
+    try {
+      if (wasSpeaking && spokenChunks === 0 && typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        await new Promise((r) => setTimeout(r, 12));
+      }
+      while (queue.length > 0 && !stopRequested && myToken === playbackToken) {
+        const nextText = queue.shift();
+        const subChunks = splitIntoChunks(nextText, 220, 100);
+        for (const chunk of subChunks) {
+          if (stopRequested || myToken !== playbackToken) break;
+          const profile =
+            forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunk) : selectedMode);
+          spokenChunks++;
+          currentState = {
+            ...currentState,
+            isPlaying: true,
+            isPaused: false,
+            isLoading: false,
+            currentChunk: spokenChunks,
+            totalChunks: Math.max(spokenChunks, totalQueued),
+            label,
+            voiceMode: selectedMode,
+            detectedProfile: profile,
+            engine: 'instant-local',
+          };
+          notify();
+          await speakChunkNative(chunk, profile);
+        }
+      }
+    } finally {
+      draining = false;
+      if (streamFinished && queue.length === 0 && myToken === playbackToken) {
+        currentState = {
+          ...currentState,
+          isPlaying: false,
+          isPaused: false,
+          isLoading: false,
+          currentChunk: 0,
+          totalChunks: 0,
+          label: '',
+        };
+        notify();
+      }
+    }
+  };
+
+  const enqueueText = (rawSegment) => {
+    const cleaned = cleanTextForSpeech(rawSegment);
+    if (!cleaned) return;
+    started = true;
+    totalQueued++;
+    queue.push(cleaned);
+    drainQueue();
+  };
+
+  const push = (fullTextSoFar) => {
+    if (stopRequested || myToken !== playbackToken) return;
+    const raw = String(fullTextSoFar || '');
+    if (raw.length < consumedLen) {
+      // Stream restarted for a new tool hop; advance safely without clipping previous speech
+      consumedLen = 0;
+    }
+    lastRaw = raw;
+
+    // Avoid cutting inside an unclosed ``` code fence
+    const slice = raw.slice(consumedLen);
+    if ((slice.match(/```/g) || []).length % 2 === 1) return;
+
+    // Extract complete sentences (or a clean word boundary past 95 chars for immediate start)
+    let searchFrom = 0;
+    while (searchFrom < slice.length) {
+      const rest = slice.slice(searchFrom);
+      const sentEnd = rest.search(/[।.!?\n]/);
+      if (sentEnd >= 16) {
+        const segment = rest.slice(0, sentEnd + 1);
+        consumedLen += sentEnd + 1;
+        searchFrom += sentEnd + 1;
+        enqueueText(segment);
+      } else if (rest.length >= 105) {
+        const spaceIdx = rest.lastIndexOf(' ', 105);
+        const cut = spaceIdx >= 30 ? spaceIdx : 105;
+        const segment = rest.slice(0, cut);
+        consumedLen += cut;
+        searchFrom += cut;
+        enqueueText(segment);
+      } else {
+        break;
+      }
+    }
+  };
+
+  const finish = (finalText = lastRaw) => {
+    streamFinished = true;
+    if (stopRequested || myToken !== playbackToken) return;
+    const raw = String(finalText || lastRaw || '');
+    const tail = raw.slice(consumedLen).trim();
+    consumedLen = raw.length;
+    if (tail) {
+      enqueueText(tail);
+    } else if (!draining && queue.length === 0 && myToken === playbackToken) {
+      currentState = {
+        ...currentState,
+        isPlaying: false,
+        isPaused: false,
+        isLoading: false,
+        currentChunk: 0,
+        totalChunks: 0,
+        label: '',
+      };
+      notify();
+    }
+  };
+
+  const cancel = () => {
+    streamFinished = true;
+    queue.length = 0;
+    if (myToken === playbackToken) stopSpeech();
+  };
+
+  return {
+    push,
+    finish,
+    cancel,
+    didStart: () => started,
+  };
 }
 
 export function pauseSpeech() {

@@ -388,6 +388,13 @@ const copyCmd = await tryFastVoiceAction('copy karo');
 assert.equal(copyCmd.handled, true);
 assert.equal(copyCmd.tools[0].args.shortcut, 'ctrl+c');
 
+// Streaming TTS & fast speech exports check
+const spUrl = pathToFileURL(path.join(ROOT, 'src/services/speech.js')).href;
+const { createStreamingSpeaker, splitIntoChunks } = await import(spUrl);
+assert.equal(typeof createStreamingSpeaker, 'function');
+const spChunks = splitIntoChunks('First short answer sentence. Second longer explanation sentence right after it.', 220, 100);
+assert.ok(spChunks.length >= 1 && spChunks[0].length <= 100);
+
 const volAur = await tryFastVoiceAction('volume thoda aur badhao');
 assert.equal(volAur.handled, true);
 assert.equal(volAur.tools[0].args.action, 'up');

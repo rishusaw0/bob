@@ -24,7 +24,7 @@ import {
   resetConversation,
   generateTitle,
 } from './services/gemini';
-import { speakText, stopSpeech, getVoiceMode, setVoiceMode as setSpeechVoiceMode } from './services/speech';
+import { speakText, stopSpeech, getVoiceMode, setVoiceMode as setSpeechVoiceMode, createStreamingSpeaker, getSpeechSpeedMode } from './services/speech';
 import { playWakeChime } from './services/earcon';
 import { startVoiceCapture } from './services/voiceCapture';
 import {
@@ -826,11 +826,17 @@ export default function App() {
       }
 
       const historyDigest = compactHistoryForCloud(messages);
+      const wantSpeech = Boolean(ttsEnabled || fromVoice || userAskedSpeech);
+      const streamSpeaker =
+        wantSpeech && getSpeechSpeedMode() !== 'cloud_studio'
+          ? createStreamingSpeaker({ label: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Answering...' })
+          : null;
       try {
         const response = await sendMessage(
           promptText,
           attachment,
           (streamedText) => {
+            streamSpeaker?.push(streamedText);
             setMessages(prev =>
               prev.map(m => (m.id === typingId ? { ...m, text: streamedText, isTyping: false } : m))
             );
@@ -850,6 +856,10 @@ export default function App() {
             : 'Completed.';
         const finalAssistantText = (response.text || '').trim() || fallbackToolSummary;
 
+        if (streamSpeaker) {
+          streamSpeaker.finish(finalAssistantText);
+        }
+
         finalizeReply({
           replyText: finalAssistantText,
           tier: 'cloud',
@@ -857,10 +867,11 @@ export default function App() {
           routeReason: routing.routeReason,
           image: response.image || null,
           tools: response.tools || [],
-          shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
+          shouldSpeak: wantSpeech && !streamSpeaker,
           speakLabel: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Reading response...',
         });
       } catch (cloudErr) {
+        streamSpeaker?.cancel();
         // Reverse Auto-Switch Fallback: if Gemini rate-limited (429) or unreachable, retry with Local SLM!
         const msg = String(cloudErr?.message || cloudErr);
         const canFallbackLocal = !attachment && /429|503|quota|rate|fetch|network|timeout|unavailable/i.test(msg);
