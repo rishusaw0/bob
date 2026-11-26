@@ -147,6 +147,7 @@ export function getToolCategory(name, args = {}) {
 export function isSensitiveVoiceAction(name, args = {}) {
   if (getToolRiskLevel(name, args) === 'high') return true;
   if (name === 'open_windows_setting' || name === 'toggle_windows_theme') return true;
+  if (name === 'get_wifi_status' && String(args?.action || '').toLowerCase() === 'off') return true;
   if (name === 'pc_power_tools' && args?.action === 'power_plan' && args?.plan && args?.plan !== 'get') return true;
   if (name === 'file_operation' && args?.operation === 'write') return true;
   return false;

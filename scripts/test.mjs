@@ -206,6 +206,10 @@ globalThis.window = {
     browserControl: async (act) => `Ran ${act}`,
     clipboardHistory: async () => ({ items: [{ preview: 'hello' }] }),
     volume: async (a) => `Vol ${a}`,
+    brightness: async (a) => `Bright ${a}`,
+    powerProfile: async (p) => `Plan ${p}`,
+    openApp: async (a) => `Opened ${a}`,
+    wifi: async (m) => `Wifi ${m}`,
     screenshot: async () => ({ base64: 'data:image/png;base64,test' }),
     theme: async (m) => `Theme ${m}`,
     closeApp: async (a) => `Closed ${a}`,
@@ -215,9 +219,55 @@ globalThis.window = {
 const vrUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceRouter.js')).href;
 const vcUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceCapture.js')).href;
 const vpUrl = pathToFileURL(path.join(ROOT, 'src/services/voicePermissionPrompt.js')).href;
+const vctxUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceContext.js')).href;
+const svUrl = pathToFileURL(path.join(ROOT, 'src/services/speakerVerify.js')).href;
+
 const { tryFastVoiceAction, matchWakePhrase, getWakeOpenMode, setWakeOpenMode } = await import(vrUrl);
-const { downsampleFloat32, encodeWavBase64, cleanSttTranscript } = await import(vcUrl);
+const {
+  downsampleFloat32,
+  encodeWavBase64,
+  cleanSttTranscript,
+  computeVocalVadMetrics,
+  computeAdaptiveSilenceMs,
+  pcmFloat32ToInt16Base64,
+} = await import(vcUrl);
 const { detectCommandLanguage, buildLocalizedPermissionQuestion, parseVoiceConfirmation } = await import(vpUrl);
+const { isDeicticVoiceCommand } = await import(vctxUrl);
+const { extractVoiceprint, compareVoiceprints, enrollVoiceprintSamples, setVoiceprintGuardEnabled, verifySpeakerVoiceprint } = await import(svUrl);
+
+// Vocal-band spectral VAD & dynamic silence tests
+const synthVoice = new Float32Array(2048);
+for (let i = 0; i < synthVoice.length; i++) {
+  synthVoice[i] = 0.25 * Math.sin((2 * Math.PI * 680 * i) / 16000) + 0.15 * Math.sin((2 * Math.PI * 1400 * i) / 16000);
+}
+const vocalMetrics = computeVocalVadMetrics(synthVoice, 3.6, 16000);
+assert.equal(vocalMetrics.isVocalFrame, true);
+assert.equal(vocalMetrics.bands.length, 5);
+assert.ok(computeAdaptiveSilenceMs(500) < computeAdaptiveSilenceMs(3000));
+assert.ok(pcmFloat32ToInt16Base64(synthVoice.subarray(0, 160)).length > 20);
+
+// Acoustic speaker voiceprint tests
+const fpSelf = extractVoiceprint(synthVoice, 16000);
+assert.ok(fpSelf?.vector?.length === 13);
+assert.ok(compareVoiceprints(fpSelf, fpSelf) >= 0.99);
+enrollVoiceprintSamples([synthVoice]);
+setVoiceprintGuardEnabled(true);
+assert.equal(verifySpeakerVoiceprint(synthVoice).verified, true);
+setVoiceprintGuardEnabled(false);
+
+// Deictic context matcher tests
+assert.equal(isDeicticVoiceCommand('is error ko explain karo'), true);
+assert.equal(isDeicticVoiceCommand('isko close karo'), true);
+assert.equal(isDeicticVoiceCommand('open chrome'), false);
+
+// Chained Tier-1 voice command test ("Coding mode on karo, Spotify chalao, aur brightness 60% kar do")
+const chainRes = await tryFastVoiceAction('Coding mode on karo, Spotify chalao, aur brigtness 60% kar do', async () => 'once');
+assert.equal(chainRes.handled, true);
+assert.equal(chainRes.chained, true);
+assert.equal(chainRes.tools.length, 4);
+
+const mixedChain = await tryFastVoiceAction('Coding mode on karo, aur Python ka kya use hai batao', async () => 'once');
+assert.equal(mixedChain.handled, false);
 
 assert.equal(detectCommandLanguage('hamko chrome uninstall krna hai'), 'hinglish');
 assert.equal(detectCommandLanguage('Please uninstall Chrome from PC'), 'english');

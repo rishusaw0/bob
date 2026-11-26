@@ -106,6 +106,7 @@ export default function App() {
   const permissionCleanupRef = useRef(null);
   const activePermIdRef = useRef(null);
   const activeVoiceTurnRef = useRef(false);
+  const voiceprintMismatchRef = useRef(false);
   const lastUserPromptRef = useRef('');
 
   const updateCloudApiUrl = useCallback((url) => {
@@ -467,8 +468,13 @@ export default function App() {
     });
 
     const isVoice = Boolean(req.fromVoice || activeVoiceTurnRef.current);
+    const voiceBlockedByMismatch = Boolean(isVoice && voiceprintMismatchRef.current && req.riskLevel === 'high');
     const userLang = req.userLang || detectCommandLanguage(req.userPrompt || lastUserPromptRef.current || '');
-    const questionText = buildLocalizedPermissionQuestion(req, userLang);
+    const questionText = voiceBlockedByMismatch
+      ? userLang === 'english'
+        ? `Voiceprint did not match registered owner. Click Allow manually for: ${req.summary}`
+        : `Aapki aawaz registered voiceprint se match nahi hui — manual Allow button dabayein: ${req.summary}`
+      : buildLocalizedPermissionQuestion(req, userLang);
     const permId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
     permissionCleanupRef.current?.();
@@ -499,11 +505,16 @@ export default function App() {
         questionText,
         userLang,
         fromVoice: isVoice,
-        voiceStatus: isVoice ? 'speaking' : 'idle',
+        voiceStatus: isVoice ? (voiceBlockedByMismatch ? 'waiting_click' : 'speaking') : 'idle',
         heardText: '',
       });
 
       if (!isVoice) return;
+
+      if (voiceBlockedByMismatch) {
+        speakText(questionText, { label: 'Voiceprint Check', forceProfile: userLang }).catch(() => {});
+        return;
+      }
 
       let cancelled = false;
       let activeCap = null;
@@ -592,10 +603,12 @@ export default function App() {
     if (!text.trim() && !attachment) return;
 
     const fromVoice = Boolean(meta?.fromVoice);
-    lastUserPromptRef.current = text.trim();
+    lastUserPromptRef.current = String(meta?.rawVoiceText || text).trim();
     activeVoiceTurnRef.current = fromVoice;
+    voiceprintMismatchRef.current = meta?.speakerVerified === false;
     if (!isReady && !fromVoice) {
       activeVoiceTurnRef.current = false;
+      voiceprintMismatchRef.current = false;
       setShowSettings(true);
       return;
     }
@@ -725,6 +738,7 @@ export default function App() {
       );
     } finally {
       activeVoiceTurnRef.current = false;
+      voiceprintMismatchRef.current = false;
       setIsLoading(false);
     }
   }, [isReady, ttsEnabled, requestPermission, apiKey, serverConfig.serverManagedKey, serverConfig.requiresPin, switchWindowMode, messages.length]);
@@ -743,6 +757,7 @@ export default function App() {
     onSend: handleSend,
     isLoading,
     autoListenSignal,
+    requestPermission,
     enabled: Boolean(isReady && !isLockedScreen && (window.electronAPI || (routeView === 'app' && windowMode !== 'full'))),
     onWakeOpen: (mode) => setWindowMode(mode),
   });

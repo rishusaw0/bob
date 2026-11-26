@@ -228,11 +228,266 @@ function hasAny(text, enRegex, hiTerms = []) {
   return false;
 }
 
+const PHONETIC_SYNONYMS = [
+  [/\b(?:volum|valume|vollume|voulme|avaaz)\b/gi, 'volume'],
+  [/\b(?:brigtness|brightnes|britness|roshani)\b/gi, 'brightness'],
+  [/\b(?:batery|battry|bettery|batry)\b/gi, 'battery'],
+  [/\b(?:screensht|screnshot|screen shot)\b/gi, 'screenshot'],
+  [/\b(?:wi-fi|wai-fai|waifi|wify)\b/gi, 'wifi'],
+  [/\b(?:spotfy|spotifi)\b/gi, 'spotify'],
+  [/\b(?:vs\s*code|v\s*s\s*code)\b/gi, 'vscode'],
+  [/\b(?:khol\s*do|chala\s*do)\b/gi, 'kholo'],
+];
+
+export function normalizePhoneticVoiceText(text) {
+  let out = String(text || '');
+  for (const [pattern, replacement] of PHONETIC_SYNONYMS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
+export function splitChainedVoiceClauses(rawText) {
+  const wake = matchWakePhrase(rawText);
+  const body = (wake.matched && wake.command ? wake.command : String(rawText || '')).trim();
+  if (!body) return [];
+  // Do NOT split on "aur" when it modifies degree ("aur badhao", "aur kam karo")
+  const parts = body
+    .split(/\s*(?:,|;|\bthen\b|\bphir\b|\bfir\b|\band\b|\baur\b(?!\s+(?:badhao|badha|kam|ghatao|tez|dheema|dhima|up|down|high|low)\b))\s*/i)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts;
+}
+
 /**
- * Attempts instant (<150ms) deterministic execution for crisp single-intent voice commands.
- * Complex/multi-step/conversational/app-install queries fall back cleanly to Gemini AI.
+ * Attempts instant (<50ms) deterministic Tier-1 execution including single & multi-action chained commands.
+ * Complex/deictic/conversational/app-install queries fall back cleanly to Gemini AI.
  */
 export async function tryFastVoiceAction(rawText, requestPermission = null) {
+  const api = getSystemAPI();
+  if (!api) return { handled: false };
+
+  const normalizedRaw = normalizePhoneticVoiceText(rawText);
+  const clauses = splitChainedVoiceClauses(normalizedRaw);
+  if (clauses.length >= 2 && clauses.length <= 5) {
+    // Only run multi-action Tier-1 chaining when EVERY clause resolves deterministically!
+    const planned = clauses.map((c) => planSingleFastClause(c, normalizedRaw)).filter(Boolean);
+    if (planned.length !== clauses.length) {
+      return { handled: false };
+    }
+    const userLang = detectCommandLanguage(normalizedRaw);
+    const runFast = (toolName, toolArgs, execFn) =>
+      runAuthorizedFastTool(toolName, toolArgs, execFn, requestPermission, {
+        userLang,
+        userPrompt: normalizedRaw,
+      });
+    const allTools = [];
+    const replyParts = [];
+    for (const plan of planned) {
+      const execRes = await executePlannedClause(plan, api, runFast, userLang);
+      if (execRes.tools?.length) allTools.push(...execRes.tools);
+      if (execRes.replyText) replyParts.push(execRes.replyText.replace(/\.+$/, ''));
+    }
+    return {
+      handled: true,
+      chained: true,
+      replyText: replyParts.join(', ') + '.',
+      tools: allTools,
+    };
+  }
+
+  return await trySingleFastVoiceAction(normalizedRaw, requestPermission);
+}
+
+function cleanClause(raw) {
+  const wake = matchWakePhrase(raw);
+  return (wake.matched && wake.command ? wake.command : String(raw || ''))
+    .replace(/\b(please|plz|zara|thoda|abhi|jaldi|bhai|yaar|karo|karde|krde|kardo|kar do|ho jaye)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function planSingleFastClause(clauseText) {
+  const cleaned = cleanClause(clauseText);
+  const lower = cleaned.toLowerCase();
+  if (!lower) return null;
+
+  const isReadStatusCheck = /\b(top process|top processes|cpu status|ram status|pc health|system health|disk space|battery|clipboard history|active tab|wifi status)\b/i.test(lower);
+  const isHindiMoreModifier = /\baur\s+(badhao|badha|kam|ghatao|tez|dheema|dhima|up|down|high|low)\b/i.test(lower);
+  if (
+    (/\b(and|then|phir|kyun|why|what|how|kya|kaise|install|uninstall|explain|likho|write|pdf|search|google|isko|is\s+error|yahan)\b/i.test(lower)) ||
+    (/\baur\b/i.test(lower) && !isHindiMoreModifier) ||
+    (!isReadStatusCheck && /\bbatao\b/i.test(lower))
+  ) {
+    return null;
+  }
+
+  // Preset modes: Coding Mode / Night Focus Mode
+  if (/\b(coding mode|developer mode|work mode)\b/i.test(lower)) {
+    return { kind: 'preset', preset: 'coding' };
+  }
+  if (/\b(night mode|night focus|focus mode)\b/i.test(lower)) {
+    return { kind: 'preset', preset: 'night' };
+  }
+
+  // Wi-Fi control ("wifi on", "wifi off", "wifi status")
+  if (/\b(wifi)\b/i.test(lower)) {
+    const mode = /\b(off|band|disable)\b/i.test(lower)
+      ? 'off'
+      : /\b(on|chalu|enable)\b/i.test(lower)
+        ? 'on'
+        : 'status';
+    return { kind: 'wifi', mode };
+  }
+
+  if (hasAny(lower, /\b(volume|vol|awaz|awaaz|sound|mute|unmute|chup)\b/i, ['आवाज़', 'आवाज', 'वॉल्यूम', 'म्यूट'])) {
+    const pct = extractNumber0to100(lower);
+    let action = null;
+    if (hasAny(lower, /\b(unmute|awaz chalu|sound on)\b/i, ['अनम्यूट'])) action = 'unmute';
+    else if (hasAny(lower, /\b(mute|chup|silent|awaz band|sound off)\b/i, ['म्यूट', 'चुप'])) action = 'mute';
+    else if (pct !== null) action = 'set';
+    else if (hasAny(lower, /\b(up|high|badhao|badha|tez|zyada|jyada|increase)\b/i, ['बढ़ाओ', 'बढ़ा', 'तेज', 'ज्यादा'])) action = 'up';
+    else if (hasAny(lower, /\b(down|low|kam|ghatao|dheema|dhima|decrease)\b/i, ['कम', 'घटाओ', 'धीमा'])) action = 'down';
+    if (action) return { kind: 'volume', action, pct };
+  }
+
+  if (hasAny(lower, /\b(brightness|light level|chamka)\b/i, ['ब्राइटनेस', 'स्क्रीन लाइट', 'रोशनी'])) {
+    const pct = extractNumber0to100(lower);
+    let action = null;
+    if (pct !== null) action = 'set';
+    else if (hasAny(lower, /\b(up|high|badhao|badha|tez|increase)\b/i, ['बढ़ाओ', 'तेज', 'ज्यादा'])) action = 'up';
+    else if (hasAny(lower, /\b(down|low|kam|ghatao|decrease)\b/i, ['कम', 'घटाओ'])) action = 'down';
+    if (action) return { kind: 'brightness', action, pct };
+  }
+
+  if (
+    hasAny(
+      lower,
+      /^(play|pause|resume|stop|next|previous|roko|band|chalu|chala|bajao|lagao|agla|pichla|gaana|gana|music|song|track|media)(\s+(song|music|gaana|gana|track|video|media|play|pause|next|previous|stop|roko|band|chalu|chala|bajao|lagao)){0,3}$/i,
+      ['गाना', 'अगला', 'पिछला', 'पॉज़', 'प्ले', 'रोको']
+    )
+  ) {
+    let mediaAct = 'play_pause';
+    if (hasAny(lower, /\b(next|agla)\b/i, ['अगला'])) mediaAct = 'next';
+    else if (hasAny(lower, /\b(prev|previous|pichla|peeche)\b/i, ['पिछला'])) mediaAct = 'previous';
+    else if (hasAny(lower, /\b(stop)\b/i, ['स्टॉप'])) mediaAct = 'stop';
+    return { kind: 'media', mediaAct };
+  }
+
+  if (/\b(dark mode|light mode|dark theme|light theme|theme toggle)\b/i.test(lower)) {
+    return { kind: 'theme', mode: lower.includes('light') ? 'light' : 'dark' };
+  }
+
+  const openMatch =
+    lower.match(/^(?:open|launch|start|chalu|kholo|chalao)\s+(?:ek\s+|mera\s+)?([a-z0-9\s._-]{2,24})$/i) ||
+    lower.match(/^([a-z0-9\s._-]{2,24})\s+(?:open|kholo|chalao|chala)$/i);
+  if (openMatch) {
+    const appTarget = openMatch[1].trim();
+    if (!/\b(setting|settings|file|folder|tab|url|gaana|gana|music|song|track|volume|brightness|awaz|mode|theme|wifi)\b/i.test(appTarget)) {
+      return { kind: 'open_app', appTarget };
+    }
+  }
+
+  return null;
+}
+
+async function executePlannedClause(plan, api, runFast, userLang) {
+  const reply = (en, hinglish, hi) =>
+    userLang === 'english' ? en : userLang === 'hindi' ? hi || hinglish : hinglish;
+
+  if (plan.kind === 'preset') {
+    if (plan.preset === 'coding') {
+      const pOut = await runFast('pc_power_tools', { action: 'power_plan', plan: 'high_performance' }, () => api.powerProfile('high_performance'));
+      const aOut = await runFast('open_application', { app_name: 'vscode' }, () => api.openApp('vscode', ''));
+      return {
+        replyText: pOut.ok && aOut.ok
+          ? reply('Coding mode activated with High Performance and VS Code', 'Coding mode on kar diya aur VS Code khol diya', 'कोडिंग मोड चालू कर दिया है')
+          : pOut.error || aOut.error,
+        tools: [
+          { name: 'pc_power_tools', status: pOut.ok ? 'done' : 'error', args: { action: 'power_plan', plan: 'high_performance' } },
+          { name: 'open_application', status: aOut.ok ? 'done' : 'error', args: { app_name: 'vscode' } },
+        ],
+      };
+    }
+    const tOut = await runFast('toggle_windows_theme', { mode: 'dark' }, () => api.theme('dark'));
+    const bOut = await runFast('brightness_control', { action: 'set', level: 35 }, () => api.brightness('set', 35));
+    return {
+      replyText: tOut.ok && bOut.ok
+        ? reply('Night focus mode enabled', 'Night focus mode on kar diya', 'नाइट फोकस मोड चालू कर दिया है')
+        : tOut.error || bOut.error,
+      tools: [
+        { name: 'toggle_windows_theme', status: tOut.ok ? 'done' : 'error', args: { mode: 'dark' } },
+        { name: 'brightness_control', status: bOut.ok ? 'done' : 'error', args: { action: 'set', level: 35 } },
+      ],
+    };
+  }
+
+  if (plan.kind === 'wifi') {
+    const out = await runFast('get_wifi_status', { action: plan.mode }, () => api.wifi(plan.mode));
+    return {
+      replyText: out.ok
+        ? plan.mode === 'status'
+          ? String(out.result || 'Wi-Fi checked')
+          : reply(`Wi-Fi turned ${plan.mode}`, `Wi-Fi ${plan.mode} kar diya`, `वाई-फाई ${plan.mode} कर दिया`)
+        : out.error,
+      tools: [{ name: 'get_wifi_status', status: out.ok ? 'done' : 'error', args: { action: plan.mode } }],
+    };
+  }
+
+  if (plan.kind === 'volume') {
+    const args = plan.action === 'set' ? { action: 'set', level: plan.pct } : { action: plan.action };
+    const out = await runFast('control_volume', args, () => api.volume(plan.action, plan.pct !== null ? plan.pct : 15));
+    return {
+      replyText: out.ok
+        ? plan.action === 'set'
+          ? reply(`volume set to ${plan.pct}%`, `volume ${plan.pct}% kar diya`, `वॉल्यूम ${plan.pct}% कर दिया`)
+          : reply(`volume ${plan.action}`, `volume ${plan.action} kar diya`, `वॉल्यूम बदल दिया`)
+        : out.error,
+      tools: [{ name: 'control_volume', status: out.ok ? 'done' : 'error', args }],
+    };
+  }
+
+  if (plan.kind === 'brightness') {
+    const args = plan.action === 'set' ? { action: 'set', level: plan.pct } : { action: plan.action };
+    const out = await runFast('brightness_control', args, () => api.brightness(plan.action, plan.pct !== null ? plan.pct : 15));
+    return {
+      replyText: out.ok
+        ? plan.action === 'set'
+          ? reply(`brightness set to ${plan.pct}%`, `brightness ${plan.pct}% kar di`, `ब्राइटनेस ${plan.pct}% कर दी`)
+          : reply(`brightness adjusted`, `brightness adjust kar di`, `ब्राइटनेस बदल दी`)
+        : out.error,
+      tools: [{ name: 'brightness_control', status: out.ok ? 'done' : 'error', args }],
+    };
+  }
+
+  if (plan.kind === 'media') {
+    const out = await runFast('media_control', { action: plan.mediaAct }, () => api.media(plan.mediaAct));
+    return {
+      replyText: out.ok ? reply('media updated', 'media update kar diya', 'मीडिया अपडेट कर दिया') : out.error,
+      tools: [{ name: 'media_control', status: out.ok ? 'done' : 'error', args: { action: plan.mediaAct } }],
+    };
+  }
+
+  if (plan.kind === 'theme') {
+    const out = await runFast('toggle_windows_theme', { mode: plan.mode }, () => api.theme(plan.mode));
+    return {
+      replyText: out.ok ? reply(`${plan.mode} mode enabled`, `${plan.mode} mode on kar diya`, `${plan.mode} मोड चालू कर दिया`) : out.error,
+      tools: [{ name: 'toggle_windows_theme', status: out.ok ? 'done' : 'error', args: { mode: plan.mode } }],
+    };
+  }
+
+  if (plan.kind === 'open_app') {
+    const out = await runFast('open_application', { app_name: plan.appTarget }, () => api.openApp(plan.appTarget, ''));
+    return {
+      replyText: out.ok ? reply(`opened ${plan.appTarget}`, `${plan.appTarget} khol diya`, `${plan.appTarget} खोल दिया`) : out.error,
+      tools: [{ name: 'open_application', status: out.ok ? 'done' : 'error', args: { app_name: plan.appTarget } }],
+    };
+  }
+
+  return { replyText: '', tools: [] };
+}
+
+async function trySingleFastVoiceAction(rawText, requestPermission = null) {
   const api = getSystemAPI();
   if (!api) return { handled: false };
 
@@ -254,16 +509,34 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   const lower = cleaned.toLowerCase();
   if (!lower) return { handled: false };
 
-  // Never intercept multi-clause, conversational questions, or complex winget/UIA tasks
-  // Allow Hindi "aur" when it means "more" (e.g. "volume thoda aur badhao", "brightness aur kam karo")
-  const isReadStatusCheck = /\b(top process|top processes|cpu status|ram status|pc health|system health|disk space|battery|clipboard history|active tab)\b/i.test(lower);
+  // Never intercept multi-clause, deictic context queries, or complex winget/UIA tasks
+  const isReadStatusCheck = /\b(top process|top processes|cpu status|ram status|pc health|system health|disk space|battery|clipboard history|active tab|wifi status)\b/i.test(lower);
   const isHindiMoreModifier = /\baur\s+(badhao|badha|kam|ghatao|tez|dheema|dhima|up|down|high|low)\b/i.test(lower);
   if (
-    (/\b(and|then|phir|kyun|why|what|how|kya|kaise|install|uninstall|explain|likho|write|pdf|search|google)\b/i.test(lower)) ||
+    (/\b(and|then|phir|kyun|why|what|how|kya|kaise|install|uninstall|explain|likho|write|pdf|search|google|isko|is\s+error|yahan)\b/i.test(lower)) ||
     (/\baur\b/i.test(lower) && !isHindiMoreModifier) ||
     (!isReadStatusCheck && /\bbatao\b/i.test(lower))
   ) {
     return { handled: false };
+  }
+
+  // 0. Presets & Wi-Fi single commands
+  if (/\b(coding mode|developer mode|work mode)\b/i.test(lower)) {
+    const res = await executePlannedClause({ kind: 'preset', preset: 'coding' }, api, runFast, userLang);
+    return { handled: true, ...res };
+  }
+  if (/\b(night mode|night focus|focus mode)\b/i.test(lower)) {
+    const res = await executePlannedClause({ kind: 'preset', preset: 'night' }, api, runFast, userLang);
+    return { handled: true, ...res };
+  }
+  if (/\b(wifi)\b/i.test(lower) && !/\b(password)\b/i.test(lower)) {
+    const mode = /\b(off|band|disable)\b/i.test(lower)
+      ? 'off'
+      : /\b(on|chalu|enable)\b/i.test(lower)
+        ? 'on'
+        : 'status';
+    const res = await executePlannedClause({ kind: 'wifi', mode }, api, runFast, userLang);
+    return { handled: true, ...res };
   }
 
   // 1. Volume controls

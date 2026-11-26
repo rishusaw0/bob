@@ -10,6 +10,8 @@ import {
   LuSettings,
   LuSmartphone,
   LuVolume2,
+  LuPhone,
+  LuPhoneOff,
 } from 'react-icons/lu';
 import CortanaOrb from './CortanaOrb';
 import { stopSpeech, VOICE_PROFILES } from '../services/speech';
@@ -42,10 +44,14 @@ export default function CortanaView({
     liveTranscript,
     setLiveTranscript,
     micLevel,
+    freqBands,
     wakeEnabled,
     toggleWake,
     speechState,
     toggleOrb,
+    liveActive,
+    liveState,
+    toggleLiveCall,
   } = sharedVoice || localVoice;
 
   const handleTextSubmit = (e) => {
@@ -57,16 +63,23 @@ export default function CortanaView({
     onSend(cmd, null, { fromVoice: true });
   };
 
-  const statusText =
-    orbState === 'listening'
-      ? 'Listening...'
-      : orbState === 'thinking'
-      ? 'Executing...'
-      : orbState === 'speaking'
-      ? `Speaking (${VOICE_PROFILES[speechState.detectedProfile]?.shortLabel || 'Auto'})...`
-      : wakeEnabled
-      ? `Say "Hey ${aiName}" or tap orb`
-      : 'Tap orb or press Alt+Space';
+  const statusText = liveActive
+    ? liveState === 'connecting'
+      ? 'Connecting Gemini Live Call...'
+      : liveState === 'speaking'
+      ? 'Gemini Live Speaking...'
+      : liveState === 'thinking'
+      ? 'Running PC Tool...'
+      : 'Gemini Live Connected — Speak freely'
+    : orbState === 'listening'
+    ? 'Listening...'
+    : orbState === 'thinking'
+    ? 'Executing...'
+    : orbState === 'speaking'
+    ? `Speaking (${VOICE_PROFILES[speechState.detectedProfile]?.shortLabel || 'Auto'})...`
+    : wakeEnabled
+    ? `Say "Hey ${aiName}" or tap orb`
+    : 'Tap orb or press Alt+Space';
 
   return (
     <div className="h-screen flex flex-col bg-obsidian-bg text-obsidian-text overflow-hidden select-none border border-obsidian-border">
@@ -82,6 +95,19 @@ export default function CortanaView({
         </div>
 
         <div className="flex items-center gap-1">
+          <button
+            onClick={toggleLiveCall}
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono transition-colors ${
+              liveActive
+                ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                : 'text-obsidian-muted hover:text-emerald-300 hover:bg-obsidian-elevated'
+            }`}
+            title="Toggle Real-Time Gemini Live Audio Call"
+          >
+            {liveActive ? <LuPhoneOff className="w-3 h-3" /> : <LuPhone className="w-3 h-3" />}
+            {liveActive ? 'End Live' : 'Live Call'}
+          </button>
+
           <button
             onClick={toggleWake}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono transition-colors ${
@@ -153,7 +179,13 @@ export default function CortanaView({
       {/* Center Interactive Voice Canvas */}
       <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col items-center justify-between">
         <div className="flex flex-col items-center text-center mt-2">
-          <CortanaOrb state={orbState} audioLevel={micLevel} onClick={toggleOrb} />
+          <CortanaOrb
+            state={orbState}
+            audioLevel={micLevel}
+            freqBands={freqBands}
+            liveActive={liveActive}
+            onClick={toggleOrb}
+          />
           <p className="text-xs font-mono text-obsidian-secondary mt-2">{statusText}</p>
         </div>
 

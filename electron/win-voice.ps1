@@ -57,10 +57,11 @@ $cmdChoices = New-Object System.Speech.Recognition.Choices
 $offlineCmds = @(
   "volume up", "volume down", "mute", "unmute",
   "brightness up", "brightness down",
+  "wifi on", "wifi off", "wifi status",
   "screenshot", "dark mode", "light mode", "minimize all",
   "battery status", "cpu status", "top processes", "clipboard history",
   "open chrome", "open notepad", "open vscode", "open calculator",
-  "coding mode", "play music", "pause music", "next track"
+  "coding mode", "night mode", "play music", "pause music", "next track", "stop"
 )
 foreach ($c in $offlineCmds) { $cmdChoices.Add($c) }
 

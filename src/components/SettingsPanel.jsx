@@ -10,9 +10,17 @@ import {
   LuShieldCheck,
   LuVolume2,
   LuRefreshCw,
+  LuMic,
 } from 'react-icons/lu';
 import { clearSessionPermissions, isUsingServerProxy, testGeminiConnection } from '../services/gemini';
 import { speakText } from '../services/speech';
+import { startVoiceCapture } from '../services/voiceCapture';
+import {
+  getVoiceprintStatus,
+  enrollVoiceprintSamples,
+  clearVoiceprint,
+  setVoiceprintGuardEnabled,
+} from '../services/speakerVerify';
 import {
   getAiName,
   setAiName,
@@ -78,6 +86,49 @@ export default function SettingsPanel({
     return savedRepo !== null ? savedRepo : 'rishusaw0/bob';
   });
   const [updaterState, setUpdaterState] = useState(null);
+  const [voiceprintStatus, setVoiceprintStatus] = useState(() => getVoiceprintStatus());
+  const [enrollingVoice, setEnrollingVoice] = useState(false);
+
+  const handleEnrollVoiceprint = async () => {
+    if (enrollingVoice) return;
+    setEnrollingVoice(true);
+    try {
+      const samples = [];
+      for (let i = 0; i < 2; i++) {
+        toast.info(`Voiceprint Sample ${i + 1}/2: Boliye "Hey ${assistantName || 'Jeeva'}, confirm my voice"`);
+        const pcm = await new Promise((resolve, reject) => {
+          let settled = false;
+          const cap = startVoiceCapture({
+            skipStt: true,
+            autoStopOnSilence: true,
+            silenceMs: 750,
+            onResult: (_, info) => {
+              if (settled) return;
+              settled = true;
+              resolve(info?.pcm16k || null);
+            },
+            onError: (e) => {
+              if (settled) return;
+              settled = true;
+              reject(new Error(e || 'Mic capture failed'));
+            },
+          });
+          setTimeout(() => {
+            if (!settled) cap.stop();
+          }, 3400);
+        });
+        if (pcm && pcm.length >= 2400) samples.push(pcm);
+      }
+      enrollVoiceprintSamples(samples);
+      setVoiceprintGuardEnabled(true);
+      setVoiceprintStatus(getVoiceprintStatus());
+      toast.success('Speaker voiceprint enrolled & protection enabled!');
+    } catch (err) {
+      toast.error(err?.message || 'Could not enroll voiceprint');
+    } finally {
+      setEnrollingVoice(false);
+    }
+  };
 
   useEffect(() => {
     if (isElectron) {
@@ -690,6 +741,69 @@ export default function SettingsPanel({
                   )}
                 </div>
               )}
+
+              {/* Lightweight Acoustic Voiceprint Security */}
+              <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-medium text-obsidian-text flex items-center gap-1.5">
+                      <LuMic className="w-3.5 h-3.5 text-emerald-400" />
+                      Speaker Voiceprint Guard (Beta)
+                    </p>
+                    <p className="text-[10px] text-obsidian-muted mt-0.5">
+                      {voiceprintStatus.enrolled
+                        ? `Enrolled (${voiceprintStatus.samples} samples · Pitch ~${voiceprintStatus.pitchHz || '?'} Hz) — blocks hands-free voice approval on high-risk actions from other voices`
+                        : 'Enroll your voice so sensitive voice confirmations require your voiceprint'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <button
+                      type="button"
+                      disabled={enrollingVoice}
+                      onClick={handleEnrollVoiceprint}
+                      className="px-2.5 py-1 rounded bg-obsidian-surface hover:bg-obsidian-elevated border border-obsidian-border text-[11px] font-medium text-obsidian-text disabled:opacity-50"
+                    >
+                      {enrollingVoice ? 'Listening...' : voiceprintStatus.enrolled ? 'Re-Enroll' : 'Enroll Voice'}
+                    </button>
+                    {voiceprintStatus.enrolled && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearVoiceprint();
+                          setVoiceprintStatus(getVoiceprintStatus());
+                          toast.info('Voiceprint removed');
+                        }}
+                        className="px-2 py-1 rounded text-[11px] text-red-400 hover:bg-red-950/30"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {voiceprintStatus.enrolled && (
+                  <div className="flex items-center justify-between pt-2 border-t border-obsidian-border/60">
+                    <span className="text-[11px] text-obsidian-secondary">Require voiceprint match for high-risk voice actions</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={voiceprintStatus.enabled}
+                      onClick={() => {
+                        setVoiceprintGuardEnabled(!voiceprintStatus.enabled);
+                        setVoiceprintStatus(getVoiceprintStatus());
+                      }}
+                      className={`w-9 h-4.5 rounded-full transition-colors p-0.5 ${
+                        voiceprintStatus.enabled ? 'bg-emerald-500' : 'bg-zinc-700'
+                      }`}
+                    >
+                      <div
+                        className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                          voiceprintStatus.enabled ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                )}
+              </div>
 
               <div>
                 <div className="flex items-center justify-between mb-2">

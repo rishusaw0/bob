@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { GoogleGenAI } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -341,6 +342,35 @@ const server = http.createServer(async (req, res) => {
       latestVersion: UPDATE_LATEST_VERSION,
       relayDevicesCount: countAgentsForOwner(ownerKey),
     });
+    return;
+  }
+
+  // Mint short-lived ephemeral Live API token for browser/cloud users without leaking GEMINI_API_KEY
+  if (req.method === 'POST' && reqPath === '/api/gemini-live-token') {
+    if (!GEMINI_API_KEY) {
+      sendJson(res, 500, { error: 'GEMINI_API_KEY is not configured on Render server.' });
+      return;
+    }
+    if (!isAuthorized(req)) {
+      sendJson(res, 401, { error: 'Owner Access PIN required to start Gemini Live session.' });
+      return;
+    }
+    const rate = checkGeminiRateLimit(req);
+    if (!rate.allowed) {
+      res.setHeader('Retry-After', String(rate.retryAfter));
+      sendJson(res, 429, { error: `Rate limit reached. Wait ${rate.retryAfter}s.` });
+      return;
+    }
+    try {
+      const tokenClient = new GoogleGenAI({ apiKey: GEMINI_API_KEY, httpOptions: { apiVersion: 'v1alpha' } });
+      const expireTime = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      const created = await tokenClient.authTokens.create({
+        config: { uses: 1, expireTime },
+      });
+      sendJson(res, 200, { ok: true, token: created?.name || '' });
+    } catch (err) {
+      sendJson(res, 500, { error: err?.message || 'Could not mint ephemeral Live API token' });
+    }
     return;
   }
 

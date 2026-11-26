@@ -40,12 +40,18 @@ let currentState = {
   voiceMode: selectedMode,
   detectedProfile: 'hinglish',
   engine: 'gemini',
+  audioLevel: 0,
+  freqBands: [0, 0, 0, 0, 0],
 };
 
 let listeners = new Set();
 let activeAudio = null;
+let activeGain = null;
+let activeAudioCtx = null;
+let activeMeterTimer = null;
 let stopRequested = false;
 let playbackToken = 0;
+let duckScale = 1;
 
 function notify() {
   const snapshot = { ...currentState };
@@ -113,8 +119,8 @@ function cleanTextForSpeech(text) {
     .trim();
 }
 
-// Split into ~420 char natural chunks for Gemini TTS (smoother prosody + fast prefetch)
-function splitIntoChunks(text, maxLen = 420) {
+// Split with quick ~150 char first sentence chunk for snappy first-word latency, ~360 chars thereafter
+function splitIntoChunks(text, maxLen = 360, firstChunkMax = 150) {
   const clean = cleanTextForSpeech(text);
   if (!clean) return [];
   const rawSentences = clean.match(/[^।.!?\n]+[।.!?\n]*/g) || [clean];
@@ -124,17 +130,18 @@ function splitIntoChunks(text, maxLen = 420) {
   for (const s of rawSentences) {
     const trimmed = s.trim();
     if (!trimmed) continue;
-    if ((buffer + ' ' + trimmed).length <= maxLen) {
+    const limit = chunks.length === 0 ? firstChunkMax : maxLen;
+    if ((buffer + ' ' + trimmed).length <= limit) {
       buffer = buffer ? `${buffer} ${trimmed}` : trimmed;
     } else {
       if (buffer) chunks.push(buffer);
-      if (trimmed.length <= maxLen) {
+      if (trimmed.length <= limit) {
         buffer = trimmed;
       } else {
         const words = trimmed.split(' ');
         let part = '';
         for (const w of words) {
-          if ((part + ' ' + w).length <= maxLen - 20) {
+          if ((part + ' ' + w).length <= limit - 16) {
             part = part ? `${part} ${w}` : w;
           } else {
             if (part) chunks.push(part);
@@ -189,22 +196,120 @@ function speakChunkNative(text, profile) {
   });
 }
 
+function clearTtsMeter() {
+  if (activeMeterTimer) {
+    clearInterval(activeMeterTimer);
+    activeMeterTimer = null;
+  }
+  activeGain = null;
+  if (activeAudioCtx) {
+    try {
+      if (activeAudioCtx.state !== 'closed') activeAudioCtx.close().catch(() => {});
+    } catch {}
+    activeAudioCtx = null;
+  }
+  currentState = { ...currentState, audioLevel: 0, freqBands: [0, 0, 0, 0, 0] };
+  notify();
+}
+
+export function duckSpeech(level = 0.16) {
+  duckScale = Math.max(0.05, Math.min(1, Number(level) || 0.16));
+  if (activeGain && activeAudioCtx) {
+    try {
+      activeGain.gain.setTargetAtTime(duckScale, activeAudioCtx.currentTime, 0.03);
+    } catch {}
+  } else if (activeAudio) {
+    activeAudio.volume = duckScale;
+  }
+}
+
+export function restoreSpeech() {
+  duckScale = 1;
+  if (activeGain && activeAudioCtx) {
+    try {
+      activeGain.gain.setTargetAtTime(1, activeAudioCtx.currentTime, 0.05);
+    } catch {}
+  } else if (activeAudio) {
+    activeAudio.volume = 1;
+  }
+}
+
+export async function fadeOutAndStopSpeech(durationMs = 130) {
+  duckScale = 1;
+  if (activeGain && activeAudioCtx) {
+    try {
+      activeGain.gain.setTargetAtTime(0.01, activeAudioCtx.currentTime, 0.03);
+      await new Promise((r) => setTimeout(r, durationMs));
+    } catch {}
+  } else if (activeAudio) {
+    activeAudio.volume = 0.05;
+    await new Promise((r) => setTimeout(r, Math.min(100, durationMs)));
+  }
+  stopSpeech();
+}
+
 function playAudioUrl(audioUrl) {
   return new Promise((resolve, reject) => {
     if (stopRequested) return resolve();
+    clearTtsMeter();
     const audio = new Audio(audioUrl);
     audio.playbackRate = currentState.rate;
+    audio.volume = 1;
     activeAudio = audio;
+
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        const ctx = new Ctx();
+        if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+        const src = ctx.createMediaElementSource(audio);
+        const gain = ctx.createGain();
+        gain.gain.value = duckScale;
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        src.connect(gain);
+        gain.connect(analyser);
+        analyser.connect(ctx.destination);
+        activeAudioCtx = ctx;
+        activeGain = gain;
+
+        const freqData = new Uint8Array(analyser.frequencyBinCount);
+        activeMeterTimer = setInterval(() => {
+          if (!activeAudio || activeAudio.paused) return;
+          analyser.getByteFrequencyData(freqData);
+          const step = Math.max(1, Math.floor(freqData.length / 5));
+          const bands = [];
+          let sumAll = 0;
+          for (let b = 0; b < 5; b++) {
+            let s = 0;
+            for (let k = 0; k < step; k++) s += freqData[b * step + k] || 0;
+            const norm = Math.min(1, s / (step * 170));
+            bands.push(norm);
+            sumAll += norm;
+          }
+          currentState = { ...currentState, audioLevel: Math.min(1, sumAll / 5), freqBands: bands };
+          notify();
+        }, 55);
+      }
+    } catch {
+      // Fall back safely to plain HTMLAudio playback if MediaElementSource fails
+      audio.volume = duckScale;
+    }
 
     audio.onended = () => {
       if (activeAudio === audio) activeAudio = null;
+      clearTtsMeter();
       resolve();
     };
     audio.onerror = () => {
       if (activeAudio === audio) activeAudio = null;
+      clearTtsMeter();
       reject(new Error('Audio playback failed'));
     };
-    audio.play().catch(reject);
+    audio.play().catch((err) => {
+      clearTtsMeter();
+      reject(err);
+    });
   });
 }
 
@@ -339,12 +444,14 @@ export function resumeSpeech() {
 
 export function stopSpeech() {
   stopRequested = true;
+  duckScale = 1;
   playbackToken++;
   if (activeAudio) {
     activeAudio.pause();
     activeAudio.src = '';
     activeAudio = null;
   }
+  clearTtsMeter();
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
@@ -356,6 +463,8 @@ export function stopSpeech() {
     currentChunk: 0,
     totalChunks: 0,
     label: '',
+    audioLevel: 0,
+    freqBands: [0, 0, 0, 0, 0],
   };
   notify();
 }

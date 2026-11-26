@@ -1,6 +1,7 @@
-// Master Voice Capture & Wake-Word Engine:
-// 1. 16 kHz Mono PCM Ring Buffer + Pre-Roll WAV Capture + Adaptive VAD (Electron & Universal fallback)
-// 2. Native Web Speech API for Chrome/Edge/Android browsers (zero API cost)
+// Master Voice Capture, Spectral Vocal-Band VAD, Adaptive Silence & Barge-In Engine:
+// 1. 16 kHz Mono PCM Pre-Roll Ring Buffer + Goertzel Vocal-Band Speech Scoring + WAV Capture
+// 2. Adaptive Utterance Silence Grace (snappy for short cmds, patient for multi-step sentences)
+// 3. Real-Time Barge-In Monitor during TTS / Audio Playback
 import { transcribeAudio } from './gemini.js';
 import { matchWakePhrase, getAiName } from './voiceRouter.js';
 
@@ -8,7 +9,6 @@ let speechApiBrokenInRuntime = false;
 
 export function isBrowserSpeechSupported() {
   if (typeof window === 'undefined') return false;
-  // Electron Chromium lacks Google's Chrome Speech API key and always fails with 'network'
   if (window.electronAPI) return false;
   return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition) && !speechApiBrokenInRuntime;
 }
@@ -71,13 +71,13 @@ export function encodeWavBase64(pcmSamples, sampleRate = 16000) {
   view.setUint32(4, 36 + dataLength, true);
   writeStr(8, 'WAVE');
   writeStr(12, 'fmt ');
-  view.setUint32(16, 16, true); // PCM chunk size
-  view.setUint16(20, 1, true); // PCM format
-  view.setUint16(22, 1, true); // Mono
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true); // Byte rate
-  view.setUint16(32, 2, true); // Block align
-  view.setUint16(34, 16, true); // Bits per sample
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
   writeStr(36, 'data');
   view.setUint32(40, dataLength, true);
 
@@ -88,6 +88,16 @@ export function encodeWavBase64(pcmSamples, sampleRate = 16000) {
     offset += 2;
   }
   return uint8ToBase64(new Uint8Array(buffer));
+}
+
+export function pcmFloat32ToInt16Base64(pcmSamples) {
+  const buf = new ArrayBuffer(pcmSamples.length * 2);
+  const view = new DataView(buf);
+  for (let i = 0; i < pcmSamples.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcmSamples[i]));
+    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return uint8ToBase64(new Uint8Array(buf));
 }
 
 export function cleanSttTranscript(raw) {
@@ -117,20 +127,69 @@ function concatFloat32(chunks) {
   return out;
 }
 
-function calcRmsLevel(samples, gainBoost = 3.6) {
-  if (!samples || !samples.length) return 0;
-  let sum = 0;
-  for (let i = 0; i < samples.length; i++) {
-    sum += samples[i] * samples[i];
+function goertzelPower(samples, freqHz, sampleRate = 16000) {
+  const n = samples.length;
+  if (!n) return 0;
+  const k = Math.round((n * freqHz) / sampleRate);
+  const w = (2 * Math.PI * k) / n;
+  const coeff = 2 * Math.cos(w);
+  let q1 = 0;
+  let q2 = 0;
+  for (let i = 0; i < n; i++) {
+    const q0 = coeff * q1 - q2 + samples[i];
+    q2 = q1;
+    q1 = q0;
   }
-  const rms = Math.sqrt(sum / samples.length);
-  return Math.min(1, rms * gainBoost);
+  return Math.max(0, q1 * q1 + q2 * q2 - coeff * q1 * q2) / (n * n);
 }
 
 /**
- * Opens a shared 16kHz PCM ring-buffer + processor session on the active microphone.
+ * Computes vocal-band probability (300-3200Hz voice concentration + ZCR) to filter thuds/fan hum.
  */
-async function createPcmStreamMonitor({ preRollSeconds = 0.75, gainBoost = 3.6, onFrame }) {
+export function computeVocalVadMetrics(samples, gainBoost = 3.6, sampleRate = 16000) {
+  if (!samples || !samples.length) {
+    return { level: 0, zcr: 0, vocalRatio: 0, bands: [0, 0, 0, 0, 0], isVocalFrame: false };
+  }
+  let sqSum = 0;
+  let crossings = 0;
+  for (let i = 0; i < samples.length; i++) {
+    sqSum += samples[i] * samples[i];
+    if (i > 0 && ((samples[i - 1] >= 0 && samples[i] < 0) || (samples[i - 1] < 0 && samples[i] >= 0))) {
+      crossings++;
+    }
+  }
+  const rms = Math.sqrt(sqSum / samples.length);
+  const level = Math.min(1, rms * gainBoost);
+  const zcr = crossings / samples.length;
+
+  const lowRumble = goertzelPower(samples, 95, sampleRate);
+  const bandFreqs = [340, 680, 1200, 1950, 2900];
+  let vocalSum = 0;
+  const bands = bandFreqs.map((f) => {
+    const p = goertzelPower(samples, f, sampleRate);
+    vocalSum += p;
+    return Math.min(1, Math.sqrt(p) * gainBoost * 1.4);
+  });
+
+  const vocalRatio = vocalSum / (vocalSum + lowRumble + 1e-8);
+  const isVocalFrame = vocalRatio > 0.34 && zcr >= 0.006 && zcr <= 0.45;
+
+  return { level, zcr, vocalRatio, bands, isVocalFrame };
+}
+
+/**
+ * Adapts trailing silence cutoff dynamically: fast ~700ms on crisp commands, up to ~1200ms on longer speech.
+ */
+export function computeAdaptiveSilenceMs(speechDurationMs, baseSilenceMs = 950) {
+  if (speechDurationMs <= 900) return Math.max(660, Math.min(820, baseSilenceMs - 220));
+  if (speechDurationMs <= 2200) return Math.max(850, baseSilenceMs);
+  return Math.min(1350, Math.max(1150, baseSilenceMs + 220));
+}
+
+/**
+ * Opens a shared 16kHz PCM ring-buffer + vocal-band analyser session on active microphone.
+ */
+export async function createPcmStreamMonitor({ preRollSeconds = 0.75, gainBoost = 3.6, onFrame }) {
   const stream = await navigator.mediaDevices.getUserMedia(AUDIO_CONSTRAINTS);
   const Ctx = window.AudioContext || window.webkitAudioContext;
   const ctx = new Ctx();
@@ -156,7 +215,7 @@ async function createPcmStreamMonitor({ preRollSeconds = 0.75, gainBoost = 3.6, 
     if (closed) return;
     const raw = ev.inputBuffer.getChannelData(0);
     const pcm16k = downsampleFloat32(raw, ctx.sampleRate, 16000);
-    const level = calcRmsLevel(pcm16k, gainBoost);
+    const metrics = computeVocalVadMetrics(pcm16k, gainBoost, 16000);
 
     preRollChunks.push(pcm16k);
     preRollTotal += pcm16k.length;
@@ -165,7 +224,7 @@ async function createPcmStreamMonitor({ preRollSeconds = 0.75, gainBoost = 3.6, 
       preRollTotal -= dropped.length;
     }
 
-    onFrame?.(pcm16k, level, () => preRollChunks.slice());
+    onFrame?.(pcm16k, metrics, () => preRollChunks.slice());
   };
 
   const close = () => {
@@ -190,12 +249,13 @@ async function createPcmStreamMonitor({ preRollSeconds = 0.75, gainBoost = 3.6, 
 }
 
 /**
- * Captures a single spoken command with pre-roll WAV capture + adaptive VAD end-pointing.
+ * Captures a single spoken command with pre-roll WAV capture + spectral vocal VAD + adaptive silence.
  */
 export function startVoiceCapture({
   lang = 'hi-IN',
   autoStopOnSilence = true,
-  silenceMs = 1150,
+  silenceMs = 950,
+  skipStt = false,
   onInterim = () => {},
   onLevel = () => {},
   onStatus = () => {},
@@ -212,6 +272,7 @@ export function startVoiceCapture({
   let hasCapturedSpeech = false;
   let recordedChunks = [];
   let speechStarted = false;
+  let speechStartAt = 0;
 
   const clearTimers = () => {
     clearTimeout(silenceTimer);
@@ -224,7 +285,7 @@ export function startVoiceCapture({
 
   const cleanup = () => {
     clearTimers();
-    onLevel(0);
+    onLevel(0, [0, 0, 0, 0, 0]);
     if (recognition) {
       try {
         recognition.onend = null;
@@ -245,13 +306,18 @@ export function startVoiceCapture({
     cleanup();
 
     if (!shouldTranscribe || !captured.length) {
-      onResult('');
+      onResult('', { pcm16k: null });
       return;
     }
 
     const pcm = concatFloat32(captured);
     if (pcm.length < 3200) {
-      onResult('');
+      onResult('', { pcm16k: null });
+      return;
+    }
+
+    if (skipStt) {
+      onResult('', { pcm16k: pcm });
       return;
     }
 
@@ -263,7 +329,7 @@ export function startVoiceCapture({
         aiName: getAiName(),
         mode: 'command',
       });
-      onResult(cleanSttTranscript(rawText));
+      onResult(cleanSttTranscript(rawText), { pcm16k: pcm });
     } catch (err) {
       onError(err?.message || 'Voice transcription failed');
     }
@@ -277,22 +343,23 @@ export function startVoiceCapture({
       let voicedFrames = 0;
 
       pcmSession = await createPcmStreamMonitor({
-        preRollSeconds: 0.6,
+        preRollSeconds: 0.65,
         gainBoost: 3.6,
-        onFrame: (pcm16k, lvl, getPreRoll) => {
+        onFrame: (pcm16k, metrics, getPreRoll) => {
           if (stopped) return;
-          onLevel(lvl);
+          const { level: lvl, bands, isVocalFrame } = metrics;
+          onLevel(lvl, bands);
 
           if (!speechStarted) {
-            // Update noise floor ONLY on quiet background frames so sudden speech doesn't inflate threshold
             if (lvl < Math.max(0.055, noiseFloor * 2.2)) {
               noiseFloor = noiseFloor * 0.88 + lvl * 0.12;
             }
-            const startThresh = Math.max(0.032, Math.min(0.14, noiseFloor * 2.0));
-            if (lvl > startThresh) {
+            const startThresh = Math.max(0.03, Math.min(0.14, noiseFloor * 1.95));
+            if (lvl > startThresh && (isVocalFrame || lvl > startThresh * 1.5)) {
               voicedFrames++;
               if (voicedFrames >= 2) {
                 speechStarted = true;
+                speechStartAt = Date.now();
                 clearTimeout(noSpeechTimer);
                 noSpeechTimer = null;
                 recordedChunks = getPreRoll();
@@ -306,21 +373,22 @@ export function startVoiceCapture({
 
           if (autoStopOnSilence && speechStarted) {
             const sustainThresh = Math.max(0.024, Math.min(0.11, noiseFloor * 1.6));
-            if (lvl > sustainThresh) {
+            const dynamicPause = computeAdaptiveSilenceMs(Date.now() - speechStartAt, silenceMs);
+            if (lvl > sustainThresh && isVocalFrame) {
               clearTimeout(silenceTimer);
               silenceTimer = setTimeout(() => {
                 if (!stopped) {
                   stopped = true;
                   finishPcmCapture(true);
                 }
-              }, silenceMs);
+              }, dynamicPause);
             } else if (!silenceTimer) {
               silenceTimer = setTimeout(() => {
                 if (!stopped) {
                   stopped = true;
                   finishPcmCapture(true);
                 }
-              }, silenceMs);
+              }, dynamicPause);
             }
           }
         },
@@ -332,7 +400,7 @@ export function startVoiceCapture({
             stopped = true;
             finishPcmCapture(false);
           }
-        }, 5500);
+        }, 5800);
       }
 
       maxCapTimer = setTimeout(() => {
@@ -340,14 +408,14 @@ export function startVoiceCapture({
           stopped = true;
           finishPcmCapture(speechStarted || recordedChunks.length > 0);
         }
-      }, 14000);
+      }, 15000);
     } catch (err) {
       cleanup();
       onError('Microphone access denied: ' + (err?.message || err));
     }
   };
 
-  if (isBrowserSpeechSupported()) {
+  if (!skipStt && isBrowserSpeechSupported()) {
     try {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       recognition = new SR();
@@ -375,7 +443,7 @@ export function startVoiceCapture({
               const out = (finalText || combined).trim();
               stopped = true;
               cleanup();
-              onResult(out);
+              onResult(out, { pcm16k: null });
             }, silenceMs);
           }
         }
@@ -386,7 +454,7 @@ export function startVoiceCapture({
         if (errCode === 'no-speech' || errCode === 'aborted') {
           stopped = true;
           cleanup();
-          onResult('');
+          onResult('', { pcm16k: null });
           return;
         }
         if (!hasCapturedSpeech && (errCode === 'network' || errCode === 'service-not-allowed' || errCode === 'not-allowed')) {
@@ -412,11 +480,11 @@ export function startVoiceCapture({
           stopped = true;
           const out = finalText.trim();
           cleanup();
-          onResult(out);
+          onResult(out, { pcm16k: null });
         } else if (!stopped) {
           stopped = true;
           cleanup();
-          onResult('');
+          onResult('', { pcm16k: null });
         }
       };
 
@@ -438,7 +506,7 @@ export function startVoiceCapture({
       }
       const out = finalText.trim();
       cleanup();
-      onResult(out);
+      onResult(out, { pcm16k: null });
     },
     cancel() {
       stopped = true;
@@ -449,9 +517,7 @@ export function startVoiceCapture({
 }
 
 /**
- * Passive Wake-Word Listener ("Hey <AiName>"):
- * - Chrome/Edge/Android: zero-cost native SpeechRecognition with deferred inline-command wait
- * - Electron Desktop: continuous 16kHz PCM circular Pre-Roll Ring Buffer (never clips "Hey"!) + WAV VAD
+ * Passive Wake-Word Listener ("Hey <AiName>") with spectral vocal-band VAD & Pre-Roll WAV.
  */
 export function startWakeWordListener({
   aiName,
@@ -513,7 +579,6 @@ export function startWakeWordListener({
 
         if (cancelled || !spokeEnough || !chunks.length) return;
         const pcm = concatFloat32(chunks);
-        // Require at least ~0.45s total audio (pre-roll + speech)
         if (pcm.length < 7200) return;
 
         inFlightCheck = true;
@@ -529,7 +594,7 @@ export function startWakeWordListener({
           const match = matchWakePhrase(cleaned, aiName);
           if (match.matched) {
             stopAll();
-            onWakeTriggered(match.command);
+            onWakeTriggered(match.command, { pcm16k: pcm });
           }
         } catch {
           // Silently resume passive listening
@@ -541,8 +606,9 @@ export function startWakeWordListener({
       pcmSession = await createPcmStreamMonitor({
         preRollSeconds: 0.75,
         gainBoost: 3.8,
-        onFrame: (pcm16k, lvl, getPreRoll) => {
+        onFrame: (pcm16k, metrics, getPreRoll) => {
           if (cancelled) return;
+          const { level: lvl, isVocalFrame } = metrics;
           warmFrames++;
           if (warmFrames < 10 && !isCapturing) {
             noiseFloor = noiseFloor * 0.8 + lvl * 0.2;
@@ -551,7 +617,7 @@ export function startWakeWordListener({
 
           const wakeThresh = Math.max(0.032, Math.min(0.14, noiseFloor * 1.9));
           if (!isCapturing) {
-            if (lvl > wakeThresh && !inFlightCheck) {
+            if (lvl > wakeThresh && isVocalFrame && !inFlightCheck) {
               voicedFrames++;
               if (voicedFrames >= 2) {
                 isCapturing = true;
@@ -569,7 +635,7 @@ export function startWakeWordListener({
             }
           } else {
             phraseChunks.push(pcm16k);
-            if (lvl > Math.max(0.024, noiseFloor * 1.6)) {
+            if (lvl > Math.max(0.024, noiseFloor * 1.6) && isVocalFrame) {
               activeVoicedAfterTrigger++;
               clearTimeout(vadSilenceTimer);
               vadSilenceTimer = setTimeout(() => finishWakeClip(), 680);
@@ -600,19 +666,18 @@ export function startWakeWordListener({
               clearTimeout(inlineWaitTimer);
               if (event.results[i].isFinal && match.command.length >= 2) {
                 stopAll();
-                onWakeTriggered(match.command);
+                onWakeTriggered(match.command, { pcm16k: null });
                 return;
               }
               if (event.results[i].isFinal) {
                 stopAll();
-                onWakeTriggered('');
+                onWakeTriggered('', { pcm16k: null });
                 return;
               }
-              // Defer briefly on interim "Hey Jeeva" so same-breath inline commands arrive intact
               inlineWaitTimer = setTimeout(() => {
                 if (!cancelled) {
                   stopAll();
-                  onWakeTriggered(match.command);
+                  onWakeTriggered(match.command, { pcm16k: null });
                 }
               }, 550);
             }
@@ -649,4 +714,133 @@ export function startWakeWordListener({
   }
 
   return { stop: stopAll };
+}
+
+const BARGE_STOP_REGEX = /\b(ruk|ruko|stop|wait|band|cancel|pause|chup|bas|sun|suno|hold on)\b|रुक|रुको|बंद|चुप/i;
+
+/**
+ * Lightweight Barge-In Listener while TTS is speaking:
+ * Ducks TTS immediately on clear vocal speech onset and verifies interrupt/command cleanly.
+ */
+export function startBargeInMonitor({
+  aiName = 'Jeeva',
+  onDuckSpeech = () => {},
+  onRestoreSpeech = () => {},
+  onBargeIn = () => {},
+}) {
+  let cancelled = false;
+  let pcmSession = null;
+  let isCapturing = false;
+  let inFlight = false;
+  let noiseFloor = 0.03;
+  let warmFrames = 0;
+  let vocalFrames = 0;
+  let chunks = [];
+  let silenceTimer = null;
+  let maxTimer = null;
+
+  const stop = () => {
+    cancelled = true;
+    clearTimeout(silenceTimer);
+    clearTimeout(maxTimer);
+    if (pcmSession) {
+      pcmSession.close();
+      pcmSession = null;
+    }
+  };
+
+  const evaluateInterrupt = async () => {
+    if (!isCapturing) return;
+    isCapturing = false;
+    clearTimeout(silenceTimer);
+    clearTimeout(maxTimer);
+    const clip = chunks;
+    chunks = [];
+
+    const pcm = concatFloat32(clip);
+    if (cancelled || pcm.length < 5600) {
+      onRestoreSpeech();
+      return;
+    }
+
+    inFlight = true;
+    try {
+      const wavB64 = encodeWavBase64(pcm, 16000);
+      const raw = await transcribeAudio(wavB64, 'audio/wav', { aiName, mode: 'wake' });
+      if (cancelled) return;
+      const cleaned = cleanSttTranscript(raw);
+      if (!cleaned) {
+        onRestoreSpeech();
+        return;
+      }
+
+      const wake = matchWakePhrase(cleaned, aiName);
+      if (BARGE_STOP_REGEX.test(cleaned)) {
+        stop();
+        onBargeIn({ stopOnly: true, command: '', pcm16k: pcm });
+        return;
+      }
+      if (wake.matched) {
+        stop();
+        onBargeIn({ stopOnly: false, command: wake.command, pcm16k: pcm });
+        return;
+      }
+      if (cleaned.split(/\s+/).length >= 2) {
+        stop();
+        onBargeIn({ stopOnly: false, command: cleaned, pcm16k: pcm });
+        return;
+      }
+      onRestoreSpeech();
+    } catch {
+      onRestoreSpeech();
+    } finally {
+      inFlight = false;
+    }
+  };
+
+  createPcmStreamMonitor({
+    preRollSeconds: 0.45,
+    gainBoost: 3.0,
+    onFrame: (pcm16k, metrics, getPreRoll) => {
+      if (cancelled || inFlight) return;
+      const { level: lvl, isVocalFrame, vocalRatio } = metrics;
+      warmFrames++;
+      if (warmFrames < 8) {
+        noiseFloor = noiseFloor * 0.8 + lvl * 0.2;
+        return;
+      }
+
+      // Higher threshold during playback so speaker echo never self-interrupts
+      const bargeThresh = Math.max(0.085, Math.min(0.24, noiseFloor * 2.35));
+      if (!isCapturing) {
+        if (lvl > bargeThresh && isVocalFrame && vocalRatio > 0.44) {
+          vocalFrames++;
+          if (vocalFrames >= 3) {
+            isCapturing = true;
+            vocalFrames = 0;
+            onDuckSpeech();
+            chunks = getPreRoll();
+            maxTimer = setTimeout(() => evaluateInterrupt(), 2200);
+            silenceTimer = setTimeout(() => evaluateInterrupt(), 550);
+          }
+        } else {
+          vocalFrames = Math.max(0, vocalFrames - 1);
+          if (lvl < bargeThresh * 0.8) noiseFloor = noiseFloor * 0.95 + lvl * 0.05;
+        }
+      } else {
+        chunks.push(pcm16k);
+        if (lvl > Math.max(0.04, noiseFloor * 1.5) && isVocalFrame) {
+          clearTimeout(silenceTimer);
+          silenceTimer = setTimeout(() => evaluateInterrupt(), 550);
+        }
+      }
+    },
+  })
+    .then((sess) => {
+      if (cancelled) sess.close();
+      else pcmSession = sess;
+    })
+    .catch(() => {});
+
+  return { stop };
 }

@@ -8,6 +8,7 @@ let preferredModel = 'gemini-3.5-flash-lite';
 let customInstructions = '';
 let assistantName = 'Jeeva';
 let usingServerProxy = false;
+let lastInitOptions = { apiKey: '', useServerProxy: false, proxyBaseUrl: '', appToken: '' };
 
 export const SMOKE_CANDIDATE_MODELS = [
   'gemini-3.5-flash-lite',
@@ -69,15 +70,26 @@ function createTempClient({ apiKey, useServerProxy, proxyBaseUrl, appToken } = {
 }
 
 export function initGemini(apiKey, options = {}) {
-  client = createTempClient({
-    apiKey,
+  lastInitOptions = {
+    apiKey: String(apiKey || '').trim(),
     useServerProxy: Boolean(options?.useServerProxy),
-    proxyBaseUrl: options?.proxyBaseUrl,
-    appToken: options?.appToken,
-  });
-  usingServerProxy = Boolean(options?.useServerProxy);
+    proxyBaseUrl: (options?.proxyBaseUrl || '').trim().replace(/\/+$/, ''),
+    appToken: options?.appToken || '',
+  };
+  client = createTempClient(lastInitOptions);
+  usingServerProxy = lastInitOptions.useServerProxy;
   previousInteractionId = null;
   return true;
+}
+
+export function getGeminiConnectionInfo() {
+  const origin =
+    lastInitOptions.proxyBaseUrl ||
+    (typeof window !== 'undefined' && window.location.protocol.startsWith('http') ? window.location.origin : '');
+  return {
+    ...lastInitOptions,
+    proxyBaseUrl: origin.replace(/\/+$/, ''),
+  };
 }
 
 /**
