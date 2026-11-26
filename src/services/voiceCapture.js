@@ -255,6 +255,7 @@ export function startVoiceCapture({
   lang = 'hi-IN',
   autoStopOnSilence = true,
   silenceMs = 950,
+  noSpeechTimeoutMs = 5800,
   skipStt = false,
   onInterim = () => {},
   onLevel = () => {},
@@ -343,7 +344,7 @@ export function startVoiceCapture({
       let voicedFrames = 0;
 
       pcmSession = await createPcmStreamMonitor({
-        preRollSeconds: 0.65,
+        preRollSeconds: 1.15,
         gainBoost: 3.6,
         onFrame: (pcm16k, metrics, getPreRoll) => {
           if (stopped) return;
@@ -400,7 +401,7 @@ export function startVoiceCapture({
             stopped = true;
             finishPcmCapture(false);
           }
-        }, 5800);
+        }, noSpeechTimeoutMs);
       }
 
       maxCapTimer = setTimeout(() => {
@@ -488,6 +489,15 @@ export function startVoiceCapture({
         }
       };
 
+      if (autoStopOnSilence) {
+        noSpeechTimer = setTimeout(() => {
+          if (!stopped && !hasCapturedSpeech) {
+            stopped = true;
+            cleanup();
+            onResult('', { pcm16k: null });
+          }
+        }, noSpeechTimeoutMs);
+      }
       recognition.start();
     } catch {
       startPcmCommandCapture();
@@ -604,7 +614,7 @@ export function startWakeWordListener({
       };
 
       pcmSession = await createPcmStreamMonitor({
-        preRollSeconds: 0.75,
+        preRollSeconds: 1.15,
         gainBoost: 3.8,
         onFrame: (pcm16k, metrics, getPreRoll) => {
           if (cancelled) return;

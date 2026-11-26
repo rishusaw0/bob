@@ -53,6 +53,9 @@ export function useVoiceEngine({
   const liveSessionRef = useRef(null);
   const phaseRef = useRef('idle');
   const offlineUnsupportedRef = useRef(false);
+  const voiceFollowUpPendingRef = useRef(false);
+  const prevSpeakingRef = useRef(false);
+  const followUpTimerRef = useRef(null);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -126,6 +129,8 @@ export function useVoiceEngine({
         setPhase('idle');
         return;
       }
+      clearTimeout(followUpTimerRef.current);
+      voiceFollowUpPendingRef.current = true;
       setLiveTranscript(cleaned);
       setPhase('thinking');
       playDoneChime();
@@ -149,47 +154,55 @@ export function useVoiceEngine({
     [onSend]
   );
 
-  const startCommandListening = useCallback(() => {
-    stopSpeech();
-    stopWakeListener();
-    stopBargeIn();
-    stopCommandCapture(false);
+  const startCommandListening = useCallback(
+    ({ isFollowUp = false, noSpeechTimeoutMs = 5800 } = {}) => {
+      clearTimeout(followUpTimerRef.current);
+      if (!isFollowUp) stopSpeech();
+      stopWakeListener();
+      stopBargeIn();
+      stopCommandCapture(false);
 
-    setLiveTranscript('');
-    setPhase('listening');
-    playWakeChime();
+      setLiveTranscript(isFollowUp ? 'Listening for follow-up...' : '');
+      setPhase('listening');
+      if (!isFollowUp) playWakeChime();
 
-    captureRef.current = startVoiceCapture({
-      lang: 'hi-IN',
-      autoStopOnSilence: true,
-      silenceMs: 950,
-      onInterim: (txt) => setLiveTranscript(txt),
-      onLevel: (lvl, bands) => {
-        setMicLevel(lvl);
-        if (bands) setMicBands(bands);
-      },
-      onResult: (finalCmd, info) => {
-        captureRef.current = null;
-        setMicLevel(0);
-        setMicBands([0, 0, 0, 0, 0]);
-        if (finalCmd && finalCmd.trim()) {
-          submitVoiceCommand(finalCmd, { pcm16k: info?.pcm16k || null });
-        } else {
+      captureRef.current = startVoiceCapture({
+        lang: 'hi-IN',
+        autoStopOnSilence: true,
+        silenceMs: 950,
+        noSpeechTimeoutMs,
+        onInterim: (txt) => setLiveTranscript(txt),
+        onLevel: (lvl, bands) => {
+          setMicLevel(lvl);
+          if (bands) setMicBands(bands);
+        },
+        onResult: (finalCmd, info) => {
+          captureRef.current = null;
+          setMicLevel(0);
+          setMicBands([0, 0, 0, 0, 0]);
+          if (finalCmd && finalCmd.trim()) {
+            submitVoiceCommand(finalCmd, { pcm16k: info?.pcm16k || null });
+          } else {
+            if (isFollowUp) setLiveTranscript('');
+            setPhase('idle');
+          }
+        },
+        onError: (errMsg) => {
+          captureRef.current = null;
+          setMicLevel(0);
+          setMicBands([0, 0, 0, 0, 0]);
+          setLiveTranscript(isFollowUp ? '' : errMsg || 'Could not hear audio');
           setPhase('idle');
-        }
-      },
-      onError: (errMsg) => {
-        captureRef.current = null;
-        setMicLevel(0);
-        setMicBands([0, 0, 0, 0, 0]);
-        setLiveTranscript(errMsg || 'Could not hear audio');
-        setPhase('idle');
-        setTimeout(() => {
-          setLiveTranscript((cur) => (cur === (errMsg || 'Could not hear audio') ? '' : cur));
-        }, 2800);
-      },
-    });
-  }, [stopWakeListener, stopBargeIn, stopCommandCapture, submitVoiceCommand]);
+          if (!isFollowUp) {
+            setTimeout(() => {
+              setLiveTranscript((cur) => (cur === (errMsg || 'Could not hear audio') ? '' : cur));
+            }, 2800);
+          }
+        },
+      });
+    },
+    [stopWakeListener, stopBargeIn, stopCommandCapture, submitVoiceCommand]
+  );
 
   const handleWakeActivation = useCallback(
     (inlineCmd, info = {}) => {
@@ -226,6 +239,7 @@ export function useVoiceEngine({
       onRestoreSpeech: () => restoreSpeech(),
       onBargeIn: async ({ stopOnly, command, pcm16k }) => {
         bargeInRef.current = null;
+        voiceFollowUpPendingRef.current = false;
         await fadeOutAndStopSpeech(110);
         if (stopOnly) {
           setLiveTranscript('Stopped.');
@@ -253,6 +267,37 @@ export function useVoiceEngine({
     submitVoiceCommand,
     startCommandListening,
   ]);
+
+  // 4.5-Second Warm Follow-Up Window right after TTS finishes speaking a voice reply
+  useEffect(() => {
+    const wasPlaying = prevSpeakingRef.current;
+    prevSpeakingRef.current = speechState.isPlaying;
+
+    if (
+      wasPlaying &&
+      !speechState.isPlaying &&
+      voiceFollowUpPendingRef.current &&
+      enabled &&
+      wakeEnabled &&
+      !liveActive &&
+      !externalMicBusy &&
+      !isLoading &&
+      phaseRef.current === 'idle'
+    ) {
+      voiceFollowUpPendingRef.current = false;
+      followUpTimerRef.current = setTimeout(() => {
+        if (!liveActive && !isLoading && phaseRef.current === 'idle') {
+          startCommandListening({ isFollowUp: true, noSpeechTimeoutMs: 4500 });
+        }
+      }, 280);
+    } else if (!speechState.isPlaying && !isLoading && phaseRef.current === 'idle') {
+      // Clear stale pending flag if voice turn produced no spoken output
+      const clearTimer = setTimeout(() => {
+        if (!speechState.isPlaying) voiceFollowUpPendingRef.current = false;
+      }, 1200);
+      return () => clearTimeout(clearTimer);
+    }
+  }, [speechState.isPlaying, enabled, wakeEnabled, liveActive, externalMicBusy, isLoading, startCommandListening]);
 
   // Persistent Always-On Wake Word Listener ("Hey <AiName>") across ALL window states
   useEffect(() => {
@@ -381,6 +426,7 @@ export function useVoiceEngine({
 
   useEffect(() => {
     return () => {
+      clearTimeout(followUpTimerRef.current);
       stopCommandCapture(false);
       stopWakeListener();
       stopBargeIn();
@@ -394,6 +440,7 @@ export function useVoiceEngine({
       return;
     }
     if (speechState.isPlaying) {
+      voiceFollowUpPendingRef.current = false;
       fadeOutAndStopSpeech(110);
       return;
     }
