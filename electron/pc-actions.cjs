@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { exec, execFile } = require('child_process');
 const { mapCoordsToPhysical } = require('./coord-mapper.cjs');
 const { createBrowserBridge } = require('./browser-bridge.cjs');
+const { checkPathSafety, checkCommandSafety, checkProcessKillSafety } = require('./security-guardrails.cjs');
 
 let prevCpuTotals = null;
 function sampleCpuUsagePct() {
@@ -59,6 +60,7 @@ function createPcActions({
   screen,
   resolveUnpackedPath,
   getScheduler,
+  getMemoryStore,
   emitRendererEvent,
   showClickReticle,
 } = {}) {
@@ -205,6 +207,8 @@ function createPcActions({
     },
 
     async runCommand(command) {
+      const check = checkCommandSafety(command);
+      if (!check.allowed) throw new Error(check.reason);
       return new Promise((resolve, reject) => {
         exec(command, { timeout: 30000 }, (error, stdout, stderr) => {
           if (error) reject(stderr || error.message);
@@ -214,10 +218,21 @@ function createPcActions({
     },
 
     async readFile(filePath) {
+      const check = checkPathSafety(filePath, 'read');
+      if (!check.allowed) throw new Error(check.reason);
+      try {
+        getMemoryStore?.()?.remember?.({
+          content: `Accessed file ${filePath}`,
+          category: 'folder',
+          tags: [path.dirname(filePath), path.basename(filePath)],
+        });
+      } catch {}
       return fs.readFileSync(filePath, 'utf-8');
     },
 
     async readBinaryFile(filePath) {
+      const check = checkPathSafety(filePath, 'read');
+      if (!check.allowed) throw new Error(check.reason);
       const stats = fs.statSync(filePath);
       if (stats.size > 15 * 1024 * 1024) {
         throw new Error('File 15 MB se badi hai. Chhoti PDF try karein.');
@@ -231,6 +246,8 @@ function createPcActions({
     },
 
     async writeFile(filePath, content) {
+      const check = checkPathSafety(filePath, 'write');
+      if (!check.allowed) throw new Error(check.reason);
       fs.writeFileSync(filePath, content, 'utf-8');
       return `File saved: ${filePath}`;
     },
@@ -271,6 +288,8 @@ function createPcActions({
     },
 
     async deleteFile(filePath) {
+      const check = checkPathSafety(filePath, 'delete');
+      if (!check.allowed) throw new Error(check.reason);
       await shell.trashItem(filePath);
       return `Moved to trash: ${filePath}`;
     },
@@ -297,25 +316,48 @@ function createPcActions({
       };
     },
 
-    async screenshot() {
+    async screenshot(opts = {}) {
+      const mode = opts?.mode || 'fast'; // 'fast' (1280px JPEG), 'active_window', or 'full' (1920px PNG)
       const primary = screen.getPrimaryDisplay();
       const scaleFactor = Number(primary?.scaleFactor || 1);
       const physW = Math.round((primary?.size?.width || 1920) * scaleFactor);
       const physH = Math.round((primary?.size?.height || 1080) * scaleFactor);
-      // Cap capture width at 1920 preserving exact physical aspect ratio for crisp coordinates
-      const capW = Math.min(physW, 1920);
+      const maxWidth = mode === 'full' ? 1920 : 1280;
+      const capW = Math.min(physW, maxWidth);
       const capH = Math.round((capW / Math.max(1, physW)) * physH);
 
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width: capW, height: capH },
-      });
-      if (sources.length > 0) {
-        const thumb = sources[0].thumbnail;
-        const size = thumb.getSize();
-        const screenshotBuf = thumb.toPNG();
-        const filePath = path.join(os.tmpdir(), `jeeva-screenshot-${Date.now()}.png`);
-        fs.writeFileSync(filePath, screenshotBuf);
+      let chosenThumb = null;
+      if (mode === 'active_window') {
+        try {
+          const dispRaw = await runPsScript('win-power.ps1', ['-Task', 'display-info'], 5000).catch(() => '');
+          const disp = dispRaw ? JSON.parse(dispRaw) : null;
+          const fg = String(disp?.foregroundWindow || '').trim().toLowerCase();
+          if (fg) {
+            const winSources = await desktopCapturer.getSources({
+              types: ['window'],
+              thumbnailSize: { width: capW, height: capH },
+            });
+            const match = winSources.find((w) => w.name && fg.includes(w.name.toLowerCase().slice(0, 12)));
+            if (match) chosenThumb = match.thumbnail;
+          }
+        } catch {}
+      }
+
+      if (!chosenThumb) {
+        const sources = await desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: { width: capW, height: capH },
+        });
+        if (sources.length > 0) chosenThumb = sources[0].thumbnail;
+      }
+
+      if (chosenThumb) {
+        const size = chosenThumb.getSize();
+        const useJpeg = mode !== 'full';
+        const imgBuf = useJpeg ? chosenThumb.toJPEG(78) : chosenThumb.toPNG();
+        const ext = useJpeg ? 'jpg' : 'png';
+        const filePath = path.join(os.tmpdir(), `jeeva-screenshot-${Date.now()}.${ext}`);
+        fs.writeFileSync(filePath, imgBuf);
 
         lastScreenshotMeta = {
           imageWidth: size.width,
@@ -325,12 +367,13 @@ function createPcActions({
           physicalWidth: physW,
           physicalHeight: physH,
           scaleFactor,
+          compressed: useJpeg,
           capturedAt: Date.now(),
         };
 
         return {
           path: filePath,
-          base64: thumb.toDataURL(),
+          base64: `data:image/${useJpeg ? 'jpeg' : 'png'};base64,${imgBuf.toString('base64')}`,
           meta: lastScreenshotMeta,
         };
       }
@@ -602,12 +645,40 @@ function createPcActions({
     async manageProcess(sub = 'top_processes', target = '') {
       const clean = String(sub || 'top_processes').toLowerCase();
       if (clean === 'kill_process') {
+        const check = checkProcessKillSafety(target);
+        if (!check.allowed) throw new Error(check.reason);
         return await runPsScript('win-power.ps1', ['-Task', 'kill-process', '-Arg1', String(target || '')], 12000);
       }
       return await runPsScript('win-power.ps1', ['-Task', 'top-processes', '-Num1', '15'], 12000);
     },
 
     async filePro(sub = 'organize_folder', source = '', dest = '') {
+      const actionSub = String(sub || '').toLowerCase();
+      if (actionSub === 'clean_temp') {
+        // Safely purge temporary JEEVA capture files & aged OS user temp files (> 24h)
+        const tmpDir = os.tmpdir();
+        let cleaned = 0;
+        const cutoff = Date.now() - 24 * 3600 * 1000;
+        try {
+          for (const ent of fs.readdirSync(tmpDir, { withFileTypes: true })) {
+            if (!ent.isFile()) continue;
+            const full = path.join(tmpDir, ent.name);
+            try {
+              const st = fs.statSync(full);
+              if (ent.name.startsWith('jeeva-screenshot-') || st.mtimeMs < cutoff) {
+                fs.unlinkSync(full);
+                cleaned++;
+              }
+            } catch {}
+          }
+        } catch {}
+        return JSON.stringify({ success: true, cleanedFiles: cleaned, tempDir: tmpDir });
+      }
+      const mode = ['move', 'rename', 'organize_folder'].includes(actionSub) ? 'delete' : 'write';
+      const check1 = checkPathSafety(source, mode);
+      if (!check1.allowed) throw new Error(check1.reason);
+      const check2 = checkPathSafety(dest, 'write');
+      if (!check2.allowed) throw new Error(check2.reason);
       return await runPsScript('win-power.ps1', [
         '-Task', 'file-pro',
         '-Arg1', String(sub || ''),
@@ -670,6 +741,22 @@ function createPcActions({
 
     async browserControl(sub = 'active_tab_info', value = '') {
       return await browserBridge.execute(sub, value);
+    },
+
+    async memoryRag(sub = 'recall', contentOrQuery = '', category = 'fact') {
+      const store = getMemoryStore?.();
+      if (!store) return { items: [], error: 'Memory store unavailable' };
+      const clean = String(sub || 'recall').toLowerCase();
+      if (clean === 'remember') {
+        return { success: true, item: store.remember({ content: contentOrQuery, category }) };
+      }
+      if (clean === 'forget') {
+        return { success: true, ...store.forget(contentOrQuery || 'all') };
+      }
+      if (clean === 'list') {
+        return { items: store.list(60) };
+      }
+      return { items: store.recall(contentOrQuery, { topK: 6, category: category || '' }) };
     },
   };
 

@@ -35,6 +35,7 @@ import {
 import { refreshRenderRelayDevices, setPairToken, getAuthHeaders } from './services/bridge';
 import { getAiName, getStrictVoiceMode, tryFastVoiceAction } from './services/voiceRouter';
 import { useVoiceEngine } from './services/useVoiceEngine';
+import { useWatchdogAndStats } from './hooks/useWatchdogAndMemory';
 import ToastContainer from './components/ToastContainer';
 import { toast } from './services/toast';
 
@@ -83,7 +84,6 @@ export default function App() {
   const [voiceMode, setVoiceMode] = useState(() => getVoiceMode());
   const [aiName, setAiNameState] = useState(() => getAiName());
   const [permissionRequest, setPermissionRequest] = useState(null);
-  const [liveStats, setLiveStats] = useState(null);
   const [serverConfig, setServerConfig] = useState({
     checked: Boolean(window.electronAPI),
     serverManagedKey: false,
@@ -348,14 +348,20 @@ export default function App() {
     setSpeechVoiceMode(voiceMode);
   }, [voiceMode]);
 
-  // Poll lightweight workstation stats in Electron
-  useEffect(() => {
-    if (!window.electronAPI?.liveStats) return;
-    const fetchStats = () => window.electronAPI.liveStats().then(setLiveStats).catch(() => {});
-    fetchStats();
-    const id = setInterval(fetchStats, 5000);
-    return () => clearInterval(id);
+  const openPcControlCenter = useCallback((tab = 'clipboard') => {
+    setPcControlTab(tab);
+    setShowPcControl(true);
   }, []);
+
+  const {
+    liveStats,
+    watchdogAlert,
+    dismissWatchdogAlert,
+    applyWatchdogFix,
+  } = useWatchdogAndStats({
+    isElectron: Boolean(window.electronAPI),
+    onOpenControlTab: openPcControlCenter,
+  });
 
   // Listen for Electron window mode changes, Alt+Space hotkey wake & tray PC Control triggers
   useEffect(() => {
@@ -383,11 +389,6 @@ export default function App() {
     if (mode === 'cortana') {
       setAutoListenSignal((n) => n + 1);
     }
-  }, []);
-
-  const openPcControlCenter = useCallback((tab = 'clipboard') => {
-    setPcControlTab(tab);
-    setShowPcControl(true);
   }, []);
 
   const handleNewChat = useCallback(() => {
@@ -1010,6 +1011,32 @@ export default function App() {
         )}
 
         <main className="flex-1 flex flex-col min-w-0 bg-obsidian-bg">
+          {watchdogAlert && (
+            <div className="mx-4 mt-2.5 px-3.5 py-2 rounded-xl bg-amber-950/35 border border-amber-500/40 flex items-center justify-between gap-3 text-xs animate-fade-in">
+              <div className="min-w-0">
+                <span className="font-semibold text-amber-300">{watchdogAlert.title}: </span>
+                <span className="text-obsidian-secondary">{watchdogAlert.message}</span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                {watchdogAlert.fixAction && (
+                  <button
+                    type="button"
+                    onClick={() => applyWatchdogFix(watchdogAlert)}
+                    className="px-2.5 py-1 rounded-md bg-amber-400 text-zinc-950 font-semibold hover:bg-amber-300"
+                  >
+                    {watchdogAlert.fixAction.label}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={dismissWatchdogAlert}
+                  className="text-obsidian-muted hover:text-obsidian-text px-1"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
           {messages.length === 0 && !isLoading ? (
             <WelcomeScreen
               onSuggestionClick={(p) => handleSend(p)}
@@ -1075,6 +1102,8 @@ export default function App() {
             initialTab={pcControlTab}
             onClose={() => setShowPcControl(false)}
             liveStats={liveStats}
+            watchdogAlert={watchdogAlert}
+            onApplyWatchdogFix={applyWatchdogFix}
           />
         )}
 

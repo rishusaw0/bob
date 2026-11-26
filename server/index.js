@@ -6,6 +6,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI } from '@google/genai';
+import { createServerStore } from './store.js';
+import { computeWebSocketAccept, encodeServerFrame, createFrameReader } from './ws-codec.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,8 +30,7 @@ const SESSION_SECRET =
 
 // Connected PC agents keyed by `${ownerKey}::${deviceId}` for strict multi-user isolation
 const relayAgents = new Map();
-const geminiRateBuckets = new Map();
-const shareTokens = new Map(); // sha256(token) -> { ownerKey, expiresAt, scope, createdAt }
+const store = await createServerStore();
 
 const READ_ONLY_ACTIONS = new Set([
   'liveStats',
@@ -71,12 +72,10 @@ function createTimedShareToken({ ownerKey, ttlMinutes = 60, scope = 'full' }) {
   const hash = hashPairToken(rawToken);
   const now = Date.now();
   const expiresAt = now + safeTtl * 60 * 1000;
-  if (shareTokens.size > 1000) {
-    for (const [k, v] of shareTokens.entries()) {
-      if (v.expiresAt <= now) shareTokens.delete(k);
-    }
+  if (store.getShareTokenSize() > 1000) {
+    store.pruneExpiredShareTokens(now);
   }
-  shareTokens.set(hash, { ownerKey, expiresAt, scope: safeScope, createdAt: now });
+  store.setShareToken(hash, { ownerKey, expiresAt, scope: safeScope, createdAt: now });
   return { shareToken: rawToken, expiresAt, expiresInMinutes: safeTtl, scope: safeScope };
 }
 
@@ -88,16 +87,16 @@ function getClientIp(req) {
 function checkGeminiRateLimit(req) {
   const ip = getClientIp(req);
   const now = Date.now();
-  const bucket = geminiRateBuckets.get(ip);
+  const bucket = store.getRateBucket(ip);
   if (!bucket || now - bucket.windowStart >= 60000) {
-    geminiRateBuckets.set(ip, { windowStart: now, count: 1 });
-    if (geminiRateBuckets.size > 2000) geminiRateBuckets.clear();
+    if (store.getRateBucketSize() > 2000) store.clearRateBuckets();
+    store.setRateBucket(ip, { windowStart: now, count: 1 });
     return { allowed: true, retryAfter: 0 };
   }
   if (bucket.count >= GEMINI_RPM_LIMIT) {
     return { allowed: false, retryAfter: Math.ceil((60000 - (now - bucket.windowStart)) / 1000) };
   }
-  bucket.count++;
+  store.setRateBucket(ip, { windowStart: bucket.windowStart, count: bucket.count + 1 });
   return { allowed: true, retryAfter: 0 };
 }
 
@@ -109,10 +108,11 @@ function getRelayAuthContext(req) {
   const pairToken = String(req.headers['x-pair-token'] || '').trim();
   if (pairToken.length >= 12) {
     if (pairToken.startsWith('JVA-TMP-')) {
-      const entry = shareTokens.get(hashPairToken(pairToken));
+      const hash = hashPairToken(pairToken);
+      const entry = store.getShareToken(hash);
       if (!entry) return { ownerKey: null, expired: true, scope: null, isTemporary: true };
       if (Date.now() > entry.expiresAt) {
-        shareTokens.delete(hashPairToken(pairToken));
+        store.deleteShareToken(hash);
         return { ownerKey: null, expired: true, scope: null, isTemporary: true };
       }
       return {
@@ -585,14 +585,17 @@ const server = http.createServer(async (req, res) => {
         }, 160000);
 
         agent.pendingCommands.set(cmdId, { resolve, reject, timer });
-        agent.resSSE.write(
-          `event: command\ndata: ${JSON.stringify({
-            cmdId,
-            action: body.action,
-            args: actionArgs,
-            source: auth.isTemporary ? `temp-${auth.scope}` : 'render-remote',
-          })}\n\n`
-        );
+        const payloadObj = {
+          cmdId,
+          action: body.action,
+          args: actionArgs,
+          source: auth.isTemporary ? `temp-${auth.scope}` : 'render-remote',
+        };
+        if (agent.sendCommand) {
+          agent.sendCommand(payloadObj);
+        } else {
+          agent.resSSE.write(`event: command\ndata: ${JSON.stringify(payloadObj)}\n\n`);
+        }
       });
 
       sendJson(res, 200, { ok: true, result });
@@ -614,6 +617,116 @@ const server = http.createServer(async (req, res) => {
   }
 
   sendJson(res, 404, { error: 'Not found' });
+});
+
+// Upgrade WebSocket Relay (`/api/relay/ws`) for bidirectional low-latency command dispatch & results
+server.on('upgrade', (req, socket, head) => {
+  try {
+    const urlObj = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    if (urlObj.pathname !== '/api/relay/ws') {
+      socket.destroy();
+      return;
+    }
+    const ownerKey = getRelayOwnerKey(req);
+    if (!ownerKey) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    const wsKey = req.headers['sec-websocket-key'];
+    if (!wsKey) {
+      socket.destroy();
+      return;
+    }
+
+    const deviceId = (urlObj.searchParams.get('deviceId') || 'default-pc').trim();
+    const hostname = (urlObj.searchParams.get('hostname') || 'Windows PC').trim();
+    const agentKey = `${ownerKey}::${deviceId}`;
+
+    const prev = relayAgents.get(agentKey);
+    if (prev) {
+      clearInterval(prev.heartbeat);
+      try { prev.resSSE?.end?.(); } catch {}
+      try { prev.wsSocket?.destroy?.(); } catch {}
+    }
+
+    const accept = computeWebSocketAccept(wsKey);
+    socket.write(
+      `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`
+    );
+
+    const agent = {
+      agentKey,
+      ownerKey,
+      deviceId,
+      hostname,
+      transport: 'websocket',
+      connectedAt: new Date().toISOString(),
+      lastSeen: Date.now(),
+      wsSocket: socket,
+      pendingCommands: new Map(),
+      sendCommand: (payloadObj) => {
+        if (!socket.destroyed) {
+          socket.write(encodeServerFrame(0x1, Buffer.from(JSON.stringify({ type: 'command', ...payloadObj }), 'utf8')));
+        }
+      },
+      heartbeat: setInterval(() => {
+        try {
+          if (!socket.destroyed) {
+            agent.lastSeen = Date.now();
+            socket.write(encodeServerFrame(0x9, Buffer.from('ping')));
+          }
+        } catch {}
+      }, 20000),
+    };
+    relayAgents.set(agentKey, agent);
+    socket.write(encodeServerFrame(0x1, Buffer.from(JSON.stringify({ type: 'connected', ok: true, deviceId, hostname }), 'utf8')));
+
+    const onFrame = createFrameReader((opcode, payload) => {
+      agent.lastSeen = Date.now();
+      if (opcode === 0x8) {
+        try { socket.end(encodeServerFrame(0x8)); } catch {}
+        return;
+      }
+      if (opcode === 0x9) {
+        try { socket.write(encodeServerFrame(0xa, payload)); } catch {}
+        return;
+      }
+      if (opcode === 0x1 || opcode === 0x2) {
+        try {
+          const msg = JSON.parse(payload.toString('utf8'));
+          if (msg.type === 'result' && msg.cmdId) {
+            const pending = agent.pendingCommands.get(msg.cmdId);
+            if (pending) {
+              clearTimeout(pending.timer);
+              agent.pendingCommands.delete(msg.cmdId);
+              if (msg.ok) pending.resolve(msg.result);
+              else pending.reject(new Error(msg.error || 'PC action failed'));
+            }
+          }
+        } catch {}
+      }
+    });
+
+    if (head && head.length) onFrame(head);
+    socket.on('data', onFrame);
+    socket.on('close', () => {
+      clearInterval(agent.heartbeat);
+      for (const [, pending] of agent.pendingCommands) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error('PC WebSocket Relay disconnected during command execution'));
+      }
+      agent.pendingCommands.clear();
+      if (relayAgents.get(agentKey)?.wsSocket === socket) {
+        relayAgents.delete(agentKey);
+      }
+    });
+    socket.on('error', () => {
+      try { socket.destroy(); } catch {}
+    });
+  } catch {
+    try { socket.destroy(); } catch {}
+  }
 });
 
 const isMainEntry = Boolean(process.argv[1] && path.resolve(process.argv[1]) === __filename);

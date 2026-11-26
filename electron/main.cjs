@@ -26,19 +26,38 @@ const { getLanIPs, startBridgeServer } = require('./bridge-server.cjs');
 const { createOfflineVoice } = require('./offline-voice.cjs');
 const { createUpdater } = require('./updater.cjs');
 const { createAutoLaunchManager, APP_MODEL_ID } = require('./auto-launch.cjs');
+const { createMemoryStore } = require('./memory-store.cjs');
+const { createSystemWatchdog } = require('./system-watchdog.cjs');
+const { createWindowManager } = require('./window-manager.cjs');
 
-let mainWindow;
-let reticleWindow = null;
-let bridgeServer;
-let tray = null;
-let trayRefreshTimer = null;
-let currentWindowMode = 'full';
+let bridgeServer = null;
 let permissionGuard = null;
 let cloudRelay = null;
 let pcScheduler = null;
 let offlineVoice = null;
 let appUpdater = null;
 let autoLaunchManager = null;
+let memoryStore = null;
+let systemWatchdog = null;
+let lastWatchdogAlert = null;
+let windowManager = null;
+
+function resolveUnpackedPath(...parts) {
+  const p = path.join(__dirname, ...parts);
+  if (p.includes('app.asar') && !p.includes('app.asar.unpacked')) {
+    return p.replace('app.asar', 'app.asar.unpacked');
+  }
+  return p;
+}
+
+function emitRendererEvent(channel, payload) {
+  try {
+    const win = windowManager?.getMainWindow?.();
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  } catch {}
+}
 
 function getAutoLaunchManager() {
   if (!autoLaunchManager) {
@@ -53,20 +72,11 @@ function getAutoLaunchManager() {
   return autoLaunchManager;
 }
 
-function resolveUnpackedPath(...parts) {
-  const p = path.join(__dirname, ...parts);
-  if (p.includes('app.asar') && !p.includes('app.asar.unpacked')) {
-    return p.replace('app.asar', 'app.asar.unpacked');
+function getMemoryStore() {
+  if (!memoryStore) {
+    memoryStore = createMemoryStore({ userDataDir: app.getPath('userData') });
   }
-  return p;
-}
-
-function emitRendererEvent(channel, payload) {
-  try {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(channel, payload);
-    }
-  } catch {}
+  return memoryStore;
 }
 
 function getOrCreateBridgePin() {
@@ -82,41 +92,6 @@ function getOrCreateBridgePin() {
     fs.writeFileSync(pinPath, pin, 'utf-8');
   } catch {}
   return pin;
-}
-
-// Brief click-through emerald crosshair reticle overlaid cleanly over click target
-async function showClickReticle(physX, physY, scaleFactor = 1) {
-  try {
-    const dipX = Math.round(physX / Math.max(0.5, scaleFactor)) - 22;
-    const dipY = Math.round(physY / Math.max(0.5, scaleFactor)) - 22;
-    if (reticleWindow && !reticleWindow.isDestroyed()) {
-      reticleWindow.close();
-      reticleWindow = null;
-    }
-    const win = new BrowserWindow({
-      width: 44,
-      height: 44,
-      x: dipX,
-      y: dipY,
-      frame: false,
-      transparent: true,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      focusable: false,
-      resizable: false,
-      hasShadow: false,
-      webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
-    });
-    win.setIgnoreMouseEvents(true);
-    reticleWindow = win;
-    const svgHtml = `<!doctype html><html><body style="margin:0;background:transparent;overflow:hidden;"><svg width="44" height="44" viewBox="0 0 44 44"><circle cx="22" cy="22" r="16" fill="rgba(16,185,129,0.16)" stroke="#10b981" stroke-width="2"/><circle cx="22" cy="22" r="4" fill="#34d399"/><line x1="22" y1="2" x2="22" y2="12" stroke="#10b981" stroke-width="2"/><line x1="22" y1="32" x2="22" y2="42" stroke="#10b981" stroke-width="2"/><line x1="2" y1="22" x2="12" y2="22" stroke="#10b981" stroke-width="2"/><line x1="32" y1="22" x2="42" y2="22" stroke="#10b981" stroke-width="2"/></svg></body></html>`;
-    win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(svgHtml));
-    await new Promise((r) => setTimeout(r, 170));
-    setTimeout(() => {
-      if (!win.isDestroyed()) win.close();
-      if (reticleWindow === win) reticleWindow = null;
-    }, 320);
-  } catch {}
 }
 
 let pcActionKit;
@@ -140,214 +115,25 @@ pcActionKit = createPcActions({
   screen,
   resolveUnpackedPath,
   getScheduler,
+  getMemoryStore,
   emitRendererEvent,
-  showClickReticle,
+  showClickReticle: (x, y, scale) => windowManager?.showClickReticle?.(x, y, scale),
 });
 const { actions } = pcActionKit;
 
-function createWindow() {
-  const startHidden = process.argv.includes('--hidden');
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 400,
-    minHeight: 600,
-    frame: false,
-    show: !startHidden,
-    transparent: false,
-    backgroundColor: '#09090b',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      backgroundThrottling: false,
-    },
-    icon: path.join(__dirname, '..', 'public', 'icon.png'),
-  });
-
-  mainWindow.on('close', (event) => {
-    const keepInTray = Boolean(cloudRelay?.getStatus?.().enabled || getAutoLaunchManager().isEnabled());
-    if (!app.isQuitting && keepInTray) {
-      event.preventDefault();
-      mainWindow.hide();
-    }
-  });
-
-  const editMenu = Menu.buildFromTemplate([
-    {
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
-      ],
-    },
-  ]);
-  Menu.setApplicationMenu(editMenu);
-
-  mainWindow.webContents.on('context-menu', (_, params) => {
-    const contextMenu = Menu.buildFromTemplate([
-      { role: 'cut', enabled: params.editFlags.canCut },
-      { role: 'copy', enabled: params.editFlags.canCopy || !!params.selectionText },
-      { role: 'paste', enabled: params.editFlags.canPaste },
-      { type: 'separator' },
-      { role: 'selectAll', enabled: params.editFlags.canSelectAll },
-    ]);
-    contextMenu.popup({ window: mainWindow });
-  });
-
-  const distFile = path.join(__dirname, '..', 'dist', 'index.html');
-  const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
-  if (isDev) {
-    mainWindow.loadURL('http://localhost:5173').catch(() => mainWindow.loadFile(distFile));
-    mainWindow.webContents.on('did-fail-load', () => mainWindow.loadFile(distFile));
-  } else {
-    mainWindow.loadFile(distFile);
-  }
-}
-
-function applyWindowMode(mode) {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  currentWindowMode = mode === 'speaker' ? 'speaker' : mode === 'cortana' ? 'cortana' : 'full';
-  const { workArea } = screen.getPrimaryDisplay();
-
-  if (currentWindowMode === 'speaker') {
-    const width = 332;
-    const height = 84;
-    if (mainWindow.isMaximized()) mainWindow.unmaximize();
-    mainWindow.setResizable(true);
-    mainWindow.setMinimumSize(290, 74);
-    mainWindow.setSize(width, height, true);
-    mainWindow.setPosition(
-      workArea.x + workArea.width - width - 16,
-      workArea.y + workArea.height - height - 16,
-      true
-    );
-    mainWindow.setResizable(false);
-    mainWindow.setAlwaysOnTop(true, 'floating');
-  } else if (currentWindowMode === 'cortana') {
-    const width = 400;
-    const height = 560;
-    if (mainWindow.isMaximized()) mainWindow.unmaximize();
-    mainWindow.setResizable(true);
-    mainWindow.setMinimumSize(340, 420);
-    mainWindow.setSize(width, height, true);
-    mainWindow.setPosition(workArea.x + 14, workArea.y + workArea.height - height - 12, true);
-    mainWindow.setAlwaysOnTop(true, 'floating');
-  } else {
-    mainWindow.setAlwaysOnTop(false);
-    mainWindow.setResizable(true);
-    mainWindow.setMinimumSize(400, 600);
-    mainWindow.setSize(1200, 800, true);
-    mainWindow.center();
-  }
-
-  mainWindow.show();
-  mainWindow.focus();
-  emitRendererEvent('window:modeChanged', currentWindowMode);
-}
-
-function wakeCortanaOverlay() {
-  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-  applyWindowMode('cortana');
-  setTimeout(() => emitRendererEvent('hotkey:wake'), 150);
-}
-
-async function buildTrayMenuTemplate() {
-  let statLine = 'PC Workstation Ready';
-  try {
-    const st = await actions.liveStats();
-    const cpuPart = st.cpuUsedPct !== null && st.cpuUsedPct !== undefined ? `CPU ${st.cpuUsedPct}% · ` : '';
-    statLine = `${cpuPart}RAM ${st.ramUsedPct}% · ${st.clipboardCount} clips · ${st.scheduledCount} timers`;
-  } catch {}
-
-  return Menu.buildFromTemplate([
-    { label: statLine, enabled: false },
-    { type: 'separator' },
-    { label: 'Open Full Chat', click: () => applyWindowMode('full') },
-    { label: 'Mini Speaker Mode (Floating Pill)', click: () => applyWindowMode('speaker') },
-    { label: 'Cortana Voice Panel (Alt+Space)', click: () => wakeCortanaOverlay() },
-    {
-      label: 'Open PC Control Center',
-      click: () => {
-        applyWindowMode('full');
-        setTimeout(() => emitRendererEvent('ui:openPcControl', 'clipboard'), 120);
-      },
-    },
-    { type: 'separator' },
-    {
-      label: 'Workstation Quick Presets',
-      submenu: [
-        {
-          label: 'Coding Mode (High Perf + VS Code)',
-          click: async () => {
-            await actions.powerProfile('high_performance').catch(() => {});
-            await actions.openApp('vscode').catch(() => {});
-          },
-        },
-        {
-          label: 'Night Focus (Dark Mode + Balanced)',
-          click: async () => {
-            await actions.theme('dark').catch(() => {});
-            await actions.powerProfile('balanced').catch(() => {});
-          },
-        },
-        {
-          label: 'Sort Downloads by File Type',
-          click: async () => {
-            await actions.filePro('organize_folder', 'downloads').catch(() => {});
-          },
-        },
-        {
-          label: 'Toggle Dark / Light Theme',
-          click: () => actions.theme('toggle').catch(() => {}),
-        },
-        {
-          label: 'Mute System Volume',
-          click: () => actions.volume('mute').catch(() => {}),
-        },
-      ],
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit JEEVA',
-      click: () => {
-        app.isQuitting = true;
-        app.quit();
-      },
-    },
-  ]);
-}
-
-function setupTray() {
-  const iconPath = resolveUnpackedPath('..', 'public', 'icon.png');
-  if (!fs.existsSync(iconPath)) return;
-  try {
-    tray = new Tray(iconPath);
-    tray.setToolTip('JEEVA — Personal AI (Alt+Space for Voice)');
-    const refreshTrayMenu = async () => {
-      if (!tray) return;
-      tray.setContextMenu(await buildTrayMenuTemplate());
-    };
-    refreshTrayMenu();
-    trayRefreshTimer = setInterval(refreshTrayMenu, 15000);
-    if (typeof trayRefreshTimer.unref === 'function') trayRefreshTimer.unref();
-
-    tray.on('click', () => {
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
-        mainWindow.focus();
-      } else {
-        applyWindowMode('full');
-      }
-    });
-  } catch (err) {
-    console.log('Tray setup skipped:', err.message);
-  }
-}
+windowManager = createWindowManager({
+  app,
+  BrowserWindow,
+  Menu,
+  Tray,
+  screen,
+  actions,
+  resolveUnpackedPath,
+  getCloudRelay: () => cloudRelay,
+  getAutoLaunchManager,
+  emitRendererEvent,
+  getWatchdogAlert: () => lastWatchdogAlert,
+});
 
 let pendingDeepLinkUrl = process.argv.find((a) => typeof a === 'string' && a.startsWith('jeeva://')) || null;
 
@@ -361,13 +147,42 @@ function handleDeepLink(rawUrl) {
       const validServer = /^https?:\/\/[^/\s]+/i.test(server) ? server.replace(/\/+$/, '') : '';
       if (validServer && pair.length >= 12 && cloudRelay) {
         const relayStat = cloudRelay.connect({ renderUrl: validServer, pairToken: pair });
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          applyWindowMode('full');
+        const win = windowManager.getMainWindow();
+        if (win && !win.isDestroyed()) {
+          windowManager.applyWindowMode('full');
           emitRendererEvent('relay:deepLinked', { renderUrl: validServer, pairToken: pair, status: relayStat });
         }
       }
     }
   } catch {}
+}
+
+async function executeMacroStep(step) {
+  if (!step || !step.type) return;
+  switch (step.type) {
+    case 'power_plan':
+      return await actions.powerProfile(step.plan || 'balanced');
+    case 'open_app':
+      return await actions.openApp(step.app || 'notepad', step.args || '');
+    case 'theme':
+      return await actions.theme(step.mode || 'dark');
+    case 'volume':
+      return await actions.volume('set', Number(step.level ?? 50));
+    case 'brightness':
+      return await actions.brightness('set', Number(step.level ?? 50));
+    case 'minimize_all':
+      return await actions.minimizeAll();
+    case 'file_pro':
+      return await actions.filePro(step.action || 'organize_folder', step.source || 'downloads');
+    case 'clean_temp':
+      return await actions.filePro('clean_temp', '');
+    case 'diagnostics':
+      return await actions.diagnostics(step.action || 'overview', '');
+    case 'run_command':
+      return await actions.runCommand(step.command || '');
+    default:
+      return null;
+  }
 }
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -378,8 +193,9 @@ if (!gotSingleInstanceLock) {
     const deepArg = argv.find((a) => typeof a === 'string' && a.startsWith('jeeva://'));
     if (deepArg) {
       handleDeepLink(deepArg);
-    } else if (mainWindow && !mainWindow.isDestroyed()) {
-      applyWindowMode('full');
+    } else {
+      const win = windowManager.getMainWindow();
+      if (win && !win.isDestroyed()) windowManager.applyWindowMode('full');
     }
   });
 }
@@ -389,7 +205,6 @@ if (process.platform === 'win32') {
 }
 
 app.whenReady().then(() => {
-  // Always permit microphone capture for JEEVA's trusted local renderer (required in Tray / packaged builds)
   const isTrustedRendererOrigin = (originUrl) => {
     const o = String(originUrl || '');
     return o.startsWith('file://') || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(o);
@@ -456,12 +271,12 @@ app.whenReady().then(() => {
     distDir: path.join(__dirname, '..', 'dist'),
   });
 
-  createWindow();
-  setupTray();
+  const mainWin = windowManager.createWindow();
+  windowManager.setupTray();
   cloudRelay.initAutoConnect();
 
-  if (pendingDeepLinkUrl && mainWindow) {
-    mainWindow.webContents.once('did-finish-load', () => {
+  if (pendingDeepLinkUrl && mainWin) {
+    mainWin.webContents.once('did-finish-load', () => {
       if (pendingDeepLinkUrl) {
         handleDeepLink(pendingDeepLinkUrl);
         pendingDeepLinkUrl = null;
@@ -471,12 +286,10 @@ app.whenReady().then(() => {
 
   for (const hk of ['Ctrl+Shift+Space', 'Alt+Shift+J', 'Alt+Space']) {
     try {
-      const ok = globalShortcut.register(hk, () => wakeCortanaOverlay());
-      if (!ok) console.log(`Shortcut ${hk} already claimed by OS/another app`);
+      globalShortcut.register(hk, () => windowManager.wakeCortanaOverlay());
     } catch {}
   }
 
-  // Encrypted OS-level key vault (safeStorage)
   const vaultPath = path.join(app.getPath('userData'), 'api-key.vault');
   ipcMain.handle('vault:saveKey', (_, key) => {
     if (!key) {
@@ -489,7 +302,6 @@ app.whenReady().then(() => {
     }
     return false;
   });
-
   ipcMain.handle('vault:getKey', () => {
     try {
       if (fs.existsSync(vaultPath) && safeStorage.isEncryptionAvailable()) {
@@ -499,13 +311,7 @@ app.whenReady().then(() => {
     return '';
   });
 
-  ipcMain.handle('bridge:info', () => ({
-    pin,
-    lanIPs: getLanIPs(),
-    port: app.isPackaged || process.env.NODE_ENV === 'production' ? 5174 : 5173,
-    standalonePort: 5174,
-    hostname: os.hostname(),
-  }));
+  ipcMain.handle('bridge:info', () => ({ port: 51823, pin, ips: getLanIPs() }));
 
   ipcMain.handle('permissions:sync', (_, rules) => permissionGuard.saveRules(rules));
   ipcMain.handle('permissions:get', () => permissionGuard.getRules());
@@ -534,13 +340,21 @@ app.whenReady().then(() => {
 
   pcActionKit.startClipboardWatcher();
   getScheduler();
+  getMemoryStore();
+  systemWatchdog = createSystemWatchdog({
+    actions,
+    NotificationClass: Notification,
+    onAlert: (alert) => {
+      lastWatchdogAlert = alert;
+      emitRendererEvent('watchdog:alert', alert);
+    },
+  });
+  systemWatchdog.start();
 });
 
 app.on('will-quit', () => {
-  if (trayRefreshTimer) {
-    clearInterval(trayRefreshTimer);
-    trayRefreshTimer = null;
-  }
+  windowManager?.disposeTray?.();
+  systemWatchdog?.stop?.();
   pcActionKit.stopClipboardWatcher();
   pcScheduler?.dispose?.();
   offlineVoice?.stop?.();
@@ -557,7 +371,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  if (BrowserWindow.getAllWindows().length === 0) windowManager.createWindow();
 });
 
 // System Action IPCs
@@ -576,7 +390,7 @@ ipcMain.handle('system:searchFiles', (_, q, d) => actions.searchFiles(q, d));
 ipcMain.handle('system:deleteFile', (_, p) => actions.deleteFile(p));
 ipcMain.handle('system:clipboard', (_, a, t) => actions.clipboard(a, t));
 ipcMain.handle('system:info', () => actions.systemInfo());
-ipcMain.handle('system:screenshot', () => actions.screenshot());
+ipcMain.handle('system:screenshot', (_, opts) => actions.screenshot(opts));
 ipcMain.handle('system:volume', (_, a, l) => actions.volume(a, l));
 ipcMain.handle('system:media', (_, a) => actions.media(a));
 ipcMain.handle('system:brightness', (_, a, l) => actions.brightness(a, l));
@@ -608,33 +422,37 @@ ipcMain.handle('system:emptyRecycleBin', () => actions.emptyRecycleBin());
 ipcMain.handle('system:browserControl', (_, sub, value) => actions.browserControl(sub, value));
 ipcMain.handle('clipboard:history', (_, sub, index) => actions.clipboardHistory(sub, index));
 ipcMain.handle('scheduler:manage', (_, sub, arg1, arg2, arg3) => actions.scheduler(sub, arg1, arg2, arg3));
-
-ipcMain.handle('window:minimize', () => mainWindow?.minimize());
-ipcMain.handle('window:maximize', () => {
-  if (mainWindow?.isMaximized()) mainWindow.unmaximize();
-  else mainWindow?.maximize();
-});
-ipcMain.handle('window:close', () => mainWindow?.close());
-ipcMain.handle('window:setMode', (_, mode) => {
-  applyWindowMode(mode);
-  return currentWindowMode;
-});
-ipcMain.handle('window:wakeRestore', (_, preferredMode = 'cortana') => {
-  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  const target = ['cortana', 'full', 'speaker'].includes(preferredMode) ? preferredMode : 'cortana';
-  applyWindowMode(target);
-  if (target === 'full') {
-    // Brief alwaysOnTop pulse forces Windows DWM to bring window in front of full-screen apps
-    mainWindow.setAlwaysOnTop(true);
-    mainWindow.show();
-    mainWindow.focus();
-    setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed() && currentWindowMode === 'full') {
-        mainWindow.setAlwaysOnTop(false);
-      }
-    }, 180);
+ipcMain.handle('memory:rag', (_, sub, contentOrQuery, category) => actions.memoryRag(sub, contentOrQuery, category));
+ipcMain.handle('macros:manage', async (_, sub, payload, stats) => {
+  const sched = getScheduler();
+  const clean = String(sub || 'list').toLowerCase();
+  if (clean === 'save') return { ok: true, macro: sched.saveMacro(payload) };
+  if (clean === 'delete') return sched.deleteMacro(String(payload || ''));
+  if (clean === 'dry_run') return sched.dryRunMacro(payload, stats || (await actions.liveStats().catch(() => ({}))));
+  if (clean === 'run') {
+    const macro = typeof payload === 'string'
+      ? sched.getAllMacros().find((m) => m.id === payload)
+      : payload;
+    if (!macro) throw new Error('Workflow not found');
+    const results = [];
+    for (const step of macro.steps || []) {
+      results.push(await executeMacroStep(step));
+    }
+    return { ok: true, ran: macro.name, results };
   }
-  return currentWindowMode;
+  return { macros: sched.getAllMacros() };
 });
-ipcMain.handle('window:hideToTray', () => mainWindow?.hide());
+
+ipcMain.handle('window:minimize', () => windowManager.getMainWindow()?.minimize());
+ipcMain.handle('window:maximize', () => {
+  const win = windowManager.getMainWindow();
+  if (win?.isMaximized()) win.unmaximize();
+  else win?.maximize();
+});
+ipcMain.handle('window:close', () => windowManager.getMainWindow()?.close());
+ipcMain.handle('window:setMode', (_, mode) => {
+  windowManager.applyWindowMode(mode);
+  return windowManager.getCurrentMode();
+});
+ipcMain.handle('window:wakeRestore', (_, preferredMode = 'cortana') => windowManager.wakeRestore(preferredMode));
+ipcMain.handle('window:hideToTray', () => windowManager.getMainWindow()?.hide());

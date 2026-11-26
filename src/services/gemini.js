@@ -1,6 +1,7 @@
 // Gemini API Service — Modular Client, Smoke Tester, Multimodal Chat, STT, Image & TTS
 import { GoogleGenAI } from '@google/genai';
 import { TOOLS, executeFunctionCall, clearToolSessionPermissions } from './tools.js';
+import { recallRelevantMemories } from './memoryRag.js';
 
 let client = null;
 let previousInteractionId = null;
@@ -189,7 +190,17 @@ export async function sendMessage(
       ]
     : text;
 
-  const fullSystemPrompt = buildSystemPrompt(Boolean(options?.fromVoice), options?.strictVoice !== false);
+  let memoryContext = '';
+  if (typeof text === 'string' && text.trim()) {
+    const recalled = await recallRelevantMemories(text, 4).catch(() => []);
+    if (recalled.length > 0) {
+      memoryContext =
+        '\n\nRECALLED USER MEMORY (Local RAG):\n' +
+        recalled.map((m) => `- [${m.category}] ${m.content}`).join('\n');
+    }
+  }
+
+  const fullSystemPrompt = buildSystemPrompt(Boolean(options?.fromVoice), options?.strictVoice !== false) + memoryContext;
 
   const requestConfig = {
     model: preferredModel,

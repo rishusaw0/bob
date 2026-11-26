@@ -52,9 +52,27 @@ function createScheduler({
   onListUpdate = null,
 } = {}) {
   const storePath = userDataDir ? path.join(userDataDir, 'pc-routines.json') : null;
+  const macroStorePath = userDataDir ? path.join(userDataDir, 'custom-macros.json') : null;
   const tasks = new Map(); // id -> task
   const timers = new Map(); // id -> Timeout
+  let customMacros = [];
   let initialized = false;
+
+  function loadMacros() {
+    if (!macroStorePath || !fs.existsSync(macroStorePath)) return;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(macroStorePath, 'utf8'));
+      if (Array.isArray(parsed)) customMacros = parsed;
+    } catch {}
+  }
+
+  function persistMacros() {
+    if (!macroStorePath) return;
+    try {
+      fs.mkdirSync(path.dirname(macroStorePath), { recursive: true });
+      fs.writeFileSync(macroStorePath, JSON.stringify(customMacros, null, 2), 'utf8');
+    } catch {}
+  }
 
   function persist() {
     if (!storePath) return;
@@ -263,12 +281,93 @@ function createScheduler({
     for (const key of Array.from(timers.keys())) clearTimer(key);
   }
 
+  function listAllMacros() {
+    init();
+    loadMacros();
+    return [...PC_MACROS, ...customMacros];
+  }
+
+  function saveMacro({ id = '', name, description = '', trigger = 'manual', condition = 'always', steps = [] } = {}) {
+    init();
+    loadMacros();
+    const cleanName = String(name || '').trim();
+    if (!cleanName) throw new Error('Workflow name is required');
+    if (!Array.isArray(steps) || steps.length === 0) throw new Error('Add at least one action step');
+
+    const macroId = id && String(id).startsWith('custom_') ? id : `custom_${crypto.randomBytes(4).toString('hex')}`;
+    const entry = {
+      id: macroId,
+      custom: true,
+      name: cleanName.slice(0, 60),
+      description: String(description || `${trigger} -> ${steps.length} step(s)`).slice(0, 180),
+      trigger: String(trigger || 'manual'),
+      condition: ['always', 'battery_low', 'ram_high', 'cpu_high'].includes(condition) ? condition : 'always',
+      steps: steps.slice(0, 10),
+      updatedAt: Date.now(),
+    };
+    const idx = customMacros.findIndex((m) => m.id === macroId);
+    if (idx !== -1) customMacros[idx] = entry;
+    else customMacros.unshift(entry);
+    persistMacros();
+    return entry;
+  }
+
+  function deleteMacro(id) {
+    init();
+    loadMacros();
+    const before = customMacros.length;
+    customMacros = customMacros.filter((m) => m.id !== id);
+    if (customMacros.length !== before) persistMacros();
+    return { deleted: before - customMacros.length };
+  }
+
+  function dryRunMacro(macroInput, stats = {}) {
+    const macro = typeof macroInput === 'string'
+      ? listAllMacros().find((m) => m.id === macroInput)
+      : macroInput;
+    if (!macro) throw new Error('Workflow not found');
+
+    const cond = macro.condition || 'always';
+    let conditionMet = true;
+    let conditionNote = 'Always runs';
+    if (cond === 'battery_low') {
+      conditionMet = Boolean(stats.batteryPct !== undefined && stats.batteryPct <= 25);
+      conditionNote = `Battery <= 25% (${stats.batteryPct ?? 'unknown'}%)`;
+    } else if (cond === 'ram_high') {
+      conditionMet = Boolean((stats.ramUsedPct || 0) >= 80);
+      conditionNote = `RAM >= 80% (${stats.ramUsedPct ?? 0}%)`;
+    } else if (cond === 'cpu_high') {
+      conditionMet = Boolean((stats.cpuUsedPct || 0) >= 80);
+      conditionNote = `CPU >= 80% (${stats.cpuUsedPct ?? 0}%)`;
+    }
+
+    const previewSteps = (macro.steps || []).map((st, idx) => ({
+      stepNumber: idx + 1,
+      type: st.type,
+      target: st.app || st.plan || st.mode || st.source || st.command || st.level || '',
+      risk: st.type === 'run_command' || st.type === 'kill_process' ? 'high' : 'low',
+    }));
+
+    return {
+      macroId: macro.id,
+      name: macro.name,
+      condition: cond,
+      conditionMet,
+      conditionNote,
+      previewSteps,
+    };
+  }
+
   return {
     init,
     scheduleReminder,
     scheduleDelayedCommand,
     listTasks,
     cancelTask,
+    saveMacro,
+    deleteMacro,
+    dryRunMacro,
+    getAllMacros: listAllMacros,
     dispose,
     macros: PC_MACROS,
   };

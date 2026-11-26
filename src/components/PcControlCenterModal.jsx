@@ -14,8 +14,14 @@ import {
   LuFolderOpen,
   LuVolumeX,
   LuMonitor,
+  LuShieldAlert,
+  LuDownload,
+  LuDatabase,
+  LuWorkflow,
 } from 'react-icons/lu';
 import { getSystemAPI } from '../services/bridge';
+import { getAuditLog } from '../services/permissions';
+import { rememberUserMemory, listAllMemories, forgetMemoryItem } from '../services/memoryRag';
 import { toast } from '../services/toast';
 
 function parseJsonSafe(val, fallback) {
@@ -30,7 +36,14 @@ function parseJsonSafe(val, fallback) {
   return fallback;
 }
 
-export default function PcControlCenterModal({ isOpen, initialTab = 'clipboard', onClose, liveStats }) {
+export default function PcControlCenterModal({
+  isOpen,
+  initialTab = 'clipboard',
+  onClose,
+  liveStats,
+  watchdogAlert = null,
+  onApplyWatchdogFix = null,
+}) {
   const [tab, setTab] = useState(initialTab);
   const [loading, setLoading] = useState(false);
 
@@ -53,6 +66,20 @@ export default function PcControlCenterModal({ isOpen, initialTab = 'clipboard',
   const [telemetry, setTelemetry] = useState(null);
   const [activePowerScheme, setActivePowerScheme] = useState('');
   const [confirmEmptyBin, setConfirmEmptyBin] = useState(false);
+
+  // Custom Macro / Workflow Builder state
+  const [macros, setMacros] = useState([]);
+  const [macroName, setMacroName] = useState('');
+  const [macroCondition, setMacroCondition] = useState('always');
+  const [macroSteps, setMacroSteps] = useState([{ type: 'power_plan', plan: 'high_performance' }]);
+  const [dryRunPreview, setDryRunPreview] = useState(null);
+
+  // Audit Log & Persistent Memory RAG state
+  const [auditItems, setAuditItems] = useState([]);
+  const [auditSearch, setAuditSearch] = useState('');
+  const [memories, setMemories] = useState([]);
+  const [memInput, setMemInput] = useState('');
+  const [memCategory, setMemCategory] = useState('preference');
 
   useEffect(() => {
     if (isOpen && initialTab) setTab(initialTab);
@@ -85,6 +112,21 @@ export default function PcControlCenterModal({ isOpen, initialTab = 'clipboard',
         ]);
         setTelemetry(parseJsonSafe(telRaw, null));
         setActivePowerScheme(String(pwr || ''));
+      } else if (targetTab === 'workflows') {
+        const res = await window.electronAPI?.macros?.('list').catch(() => ({ macros: [] }));
+        setMacros(Array.isArray(res?.macros) ? res.macros : []);
+      } else if (targetTab === 'audit') {
+        const [hostLogs, memList] = await Promise.all([
+          window.electronAPI?.getHostAuditLog?.().catch(() => []) || [],
+          listAllMemories().catch(() => []),
+        ]);
+        const localLogs = getAuditLog();
+        const combined = [
+          ...hostLogs.map((e) => ({ ...e, origin: 'PC Host' })),
+          ...localLogs.map((e) => ({ ...e, origin: 'Assistant' })),
+        ];
+        setAuditItems(combined);
+        setMemories(Array.isArray(memList) ? memList : []);
       }
     } catch (err) {
       toast.error(err?.message || 'Failed to read PC state');
@@ -213,12 +255,14 @@ export default function PcControlCenterModal({ isOpen, initialTab = 'clipboard',
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-1 px-5 pt-2.5 border-b border-obsidian-border bg-obsidian-bg/40">
+        <div className="flex items-center gap-1 px-5 pt-2.5 border-b border-obsidian-border bg-obsidian-bg/40 overflow-x-auto">
           {[
             { id: 'clipboard', label: `Clipboard (${clips.length || liveStats?.clipboardCount || 0})`, icon: LuClipboard },
             { id: 'processes', label: 'Processes & Ports', icon: LuActivity },
-            { id: 'scheduler', label: `Timers & Presets (${tasks.length || liveStats?.scheduledCount || 0})`, icon: LuClock },
-            { id: 'system', label: 'Hardware & Power', icon: LuCpu },
+            { id: 'scheduler', label: `Timers (${tasks.length || liveStats?.scheduledCount || 0})`, icon: LuClock },
+            { id: 'workflows', label: 'Workflows', icon: LuWorkflow },
+            { id: 'system', label: 'Hardware', icon: LuCpu },
+            { id: 'audit', label: 'Audit & Memory', icon: LuDatabase },
           ].map((item) => {
             const Icon = item.icon;
             return (
@@ -241,6 +285,26 @@ export default function PcControlCenterModal({ isOpen, initialTab = 'clipboard',
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {watchdogAlert && (
+            <div className="p-3 rounded-xl bg-amber-950/35 border border-amber-500/40 flex items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 min-w-0">
+                <LuShieldAlert className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-semibold text-amber-300 truncate">{watchdogAlert.title}</p>
+                  <p className="text-[11px] text-obsidian-secondary truncate">{watchdogAlert.message}</p>
+                </div>
+              </div>
+              {watchdogAlert.fixAction && onApplyWatchdogFix && (
+                <button
+                  type="button"
+                  onClick={() => onApplyWatchdogFix(watchdogAlert)}
+                  className="px-2.5 py-1 rounded bg-amber-400 text-zinc-950 font-semibold flex-shrink-0"
+                >
+                  {watchdogAlert.fixAction.label}
+                </button>
+              )}
+            </div>
+          )}
           {!api ? (
             <div className="text-center py-10 text-xs text-obsidian-muted border border-dashed border-obsidian-border rounded-xl">
               Connect your PC (Desktop App or Pair Key) to manage workstation resources directly.
@@ -589,6 +653,338 @@ export default function PcControlCenterModal({ isOpen, initialTab = 'clipboard',
                   <LuTrash2 className="w-3.5 h-3.5" />
                   {confirmEmptyBin ? 'Click Again to Permanently Empty Recycle Bin' : 'Empty Recycle Bin'}
                 </button>
+              </div>
+            </div>
+          )}
+
+          {api && tab === 'workflows' && (
+            <div className="space-y-4">
+              <div className="p-3.5 rounded-xl bg-obsidian-bg border border-obsidian-border space-y-2.5">
+                <p className="text-[11px] font-mono uppercase tracking-wider text-emerald-400">
+                  Custom Workflow Builder (Trigger -&gt; Condition -&gt; Actions)
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={macroName}
+                    onChange={(e) => setMacroName(e.target.value)}
+                    placeholder="Workflow name (e.g. Deep Focus Sprint)"
+                    className="flex-1 bg-obsidian-surface border border-obsidian-border rounded-lg px-3 py-1.5 text-xs text-obsidian-text"
+                  />
+                  <select
+                    value={macroCondition}
+                    onChange={(e) => setMacroCondition(e.target.value)}
+                    className="bg-obsidian-surface border border-obsidian-border rounded-lg px-2.5 py-1.5 text-xs text-obsidian-text"
+                  >
+                    <option value="always">Condition: Always</option>
+                    <option value="battery_low">Condition: Battery &lt;= 25%</option>
+                    <option value="ram_high">Condition: RAM &gt;= 80%</option>
+                    <option value="cpu_high">Condition: CPU &gt;= 80%</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  {macroSteps.map((st, idx) => (
+                    <div key={idx} className="flex items-center gap-2 text-xs">
+                      <span className="font-mono text-[10px] text-obsidian-muted w-4">{idx + 1}.</span>
+                      <select
+                        value={st.type}
+                        onChange={(e) => {
+                          const t = e.target.value;
+                          const next = [...macroSteps];
+                          next[idx] =
+                            t === 'power_plan'
+                              ? { type: 'power_plan', plan: 'high_performance' }
+                              : t === 'open_app'
+                                ? { type: 'open_app', app: 'vscode' }
+                                : t === 'theme'
+                                  ? { type: 'theme', mode: 'dark' }
+                                  : t === 'volume'
+                                    ? { type: 'volume', level: 50 }
+                                    : t === 'brightness'
+                                      ? { type: 'brightness', level: 60 }
+                                      : { type: t };
+                          setMacroSteps(next);
+                        }}
+                        className="bg-obsidian-surface border border-obsidian-border rounded px-2 py-1 text-xs text-obsidian-text"
+                      >
+                        <option value="power_plan">Power Plan</option>
+                        <option value="open_app">Open App</option>
+                        <option value="theme">Theme (Dark/Light)</option>
+                        <option value="volume">Set Volume %</option>
+                        <option value="brightness">Set Brightness %</option>
+                        <option value="minimize_all">Minimize All</option>
+                        <option value="clean_temp">Clean Temp Files</option>
+                      </select>
+
+                      {(st.type === 'open_app' || st.type === 'power_plan' || st.type === 'theme') && (
+                        <input
+                          type="text"
+                          value={st.app || st.plan || st.mode || ''}
+                          onChange={(e) => {
+                            const next = [...macroSteps];
+                            const v = e.target.value;
+                            if (st.type === 'open_app') next[idx] = { ...st, app: v };
+                            else if (st.type === 'power_plan') next[idx] = { ...st, plan: v };
+                            else next[idx] = { ...st, mode: v };
+                            setMacroSteps(next);
+                          }}
+                          className="flex-1 bg-obsidian-surface border border-obsidian-border rounded px-2 py-1 text-xs text-obsidian-text"
+                        />
+                      )}
+
+                      {(st.type === 'volume' || st.type === 'brightness') && (
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={st.level ?? 50}
+                          onChange={(e) => {
+                            const next = [...macroSteps];
+                            next[idx] = { ...st, level: Number(e.target.value) };
+                            setMacroSteps(next);
+                          }}
+                          className="w-20 bg-obsidian-surface border border-obsidian-border rounded px-2 py-1 text-xs text-obsidian-text"
+                        />
+                      )}
+
+                      {macroSteps.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setMacroSteps(macroSteps.filter((_, j) => j !== idx))}
+                          className="text-red-400 text-[11px] px-1.5"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 pt-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setMacroSteps([...macroSteps, { type: 'open_app', app: 'chrome' }])}
+                    className="px-2.5 py-1 rounded bg-obsidian-surface border border-obsidian-border text-[11px] text-obsidian-text"
+                  >
+                    + Add Step
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const prev = await window.electronAPI?.macros?.('dry_run', {
+                        name: macroName || 'Preview Workflow',
+                        condition: macroCondition,
+                        steps: macroSteps,
+                      });
+                      setDryRunPreview(prev);
+                    }}
+                    className="px-2.5 py-1 rounded bg-sky-500/15 border border-sky-500/30 text-[11px] text-sky-300"
+                  >
+                    Dry-Run Preview
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!macroName.trim()}
+                    onClick={async () => {
+                      await window.electronAPI?.macros?.('save', {
+                        name: macroName.trim(),
+                        condition: macroCondition,
+                        steps: macroSteps,
+                      });
+                      setMacroName('');
+                      setDryRunPreview(null);
+                      toast.success('Workflow saved');
+                      loadTab('workflows');
+                    }}
+                    className="px-3 py-1 rounded bg-zinc-100 text-zinc-950 text-[11px] font-semibold disabled:opacity-40"
+                  >
+                    Save Workflow
+                  </button>
+                </div>
+
+                {dryRunPreview && (
+                  <div className="mt-2 p-2.5 rounded-lg bg-obsidian-surface border border-sky-500/30 text-[11px] space-y-1">
+                    <p className="font-semibold text-sky-300">
+                      Dry-Run: {dryRunPreview.name} · Condition {dryRunPreview.conditionMet ? 'MET' : 'NOT MET'} ({dryRunPreview.conditionNote})
+                    </p>
+                    {dryRunPreview.previewSteps?.map((s) => (
+                      <p key={s.stepNumber} className="font-mono text-obsidian-secondary">
+                        #{s.stepNumber}: {s.type} {s.target ? `-> ${s.target}` : ''} ({s.risk} risk)
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                {macros.map((m) => (
+                  <div key={m.id} className="p-3 rounded-xl bg-obsidian-bg border border-obsidian-border flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-obsidian-text">
+                        {m.name} {m.custom && <span className="text-[10px] font-mono text-emerald-400">· custom</span>}
+                      </p>
+                      <p className="text-[10px] text-obsidian-muted truncate">{m.description}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => runDirectPreset(m.name, () => window.electronAPI?.macros?.('run', m.id))}
+                        className="px-2.5 py-1 rounded bg-emerald-500/15 border border-emerald-500/30 text-[11px] text-emerald-300"
+                      >
+                        Run
+                      </button>
+                      {m.custom && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await window.electronAPI?.macros?.('delete', m.id);
+                            loadTab('workflows');
+                          }}
+                          className="px-2 py-1 rounded text-[11px] text-red-400 hover:bg-red-950/30"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {api && tab === 'audit' && (
+            <div className="space-y-4">
+              {/* Persistent Local Memory RAG Panel */}
+              <div className="p-3.5 rounded-xl bg-obsidian-bg border border-obsidian-border space-y-2.5">
+                <p className="text-[11px] font-mono uppercase tracking-wider text-emerald-400">
+                  Persistent Local Memory RAG ({memories.length} items)
+                </p>
+                <div className="flex gap-2">
+                  <select
+                    value={memCategory}
+                    onChange={(e) => setMemCategory(e.target.value)}
+                    className="bg-obsidian-surface border border-obsidian-border rounded-lg px-2 py-1.5 text-xs text-obsidian-text"
+                  >
+                    <option value="preference">Preference</option>
+                    <option value="project">Project Path</option>
+                    <option value="folder">Frequent Folder</option>
+                    <option value="fact">Fact</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={memInput}
+                    onChange={(e) => setMemInput(e.target.value)}
+                    placeholder="Remember preference or project path (e.g. D:\\Work\\MyApp)..."
+                    className="flex-1 bg-obsidian-surface border border-obsidian-border rounded-lg px-3 py-1.5 text-xs text-obsidian-text"
+                  />
+                  <button
+                    type="button"
+                    disabled={!memInput.trim()}
+                    onClick={async () => {
+                      await rememberUserMemory(memInput.trim(), memCategory);
+                      setMemInput('');
+                      loadTab('audit');
+                      toast.success('Saved to Persistent Memory');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-950 text-xs font-semibold disabled:opacity-40"
+                  >
+                    Save
+                  </button>
+                </div>
+                {memories.length > 0 && (
+                  <div className="max-h-32 overflow-y-auto space-y-1">
+                    {memories.slice(0, 12).map((m) => (
+                      <div key={m.id} className="flex items-center justify-between px-2.5 py-1.5 rounded bg-obsidian-surface border border-obsidian-border text-[11px]">
+                        <span className="truncate text-obsidian-text">
+                          <span className="font-mono text-emerald-400 mr-1.5">[{m.category}]</span>
+                          {m.content}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await forgetMemoryItem(m.id);
+                            loadTab('audit');
+                          }}
+                          className="text-red-400 hover:underline ml-2 flex-shrink-0"
+                        >
+                          Forget
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Searchable Exportable Audit Log */}
+              <div className="space-y-2.5">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <input
+                    type="text"
+                    value={auditSearch}
+                    onChange={(e) => setAuditSearch(e.target.value)}
+                    placeholder="Search audit log by tool, action, source, decision..."
+                    className="flex-1 min-w-[180px] bg-obsidian-bg border border-obsidian-border rounded-lg px-3 py-1.5 text-xs text-obsidian-text"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const blob = new Blob([JSON.stringify(auditItems, null, 2)], { type: 'application/json' });
+                      const a = document.createElement('a');
+                      a.href = URL.createObjectURL(blob);
+                      a.download = `jeeva-audit-${Date.now()}.json`;
+                      a.click();
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-obsidian-bg border border-obsidian-border text-xs text-obsidian-text"
+                  >
+                    <LuDownload className="w-3.5 h-3.5" />
+                    Export JSON
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const csv = [
+                        'timestamp,origin,source,category,tool_or_action,decision,summary',
+                        ...auditItems.map((e) =>
+                          [e.timestamp, e.origin, e.source, e.category, e.tool || e.action, e.decision, e.summary]
+                            .map((v) => `"${String(v || '').replace(/"/g, '""')}"`)
+                            .join(',')
+                        ),
+                      ].join('\n');
+                      const blob = new Blob([csv], { type: 'text/csv' });
+                      const a = document.createElement('a');
+                      a.href = URL.createObjectURL(blob);
+                      a.download = `jeeva-audit-${Date.now()}.csv`;
+                      a.click();
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-obsidian-bg border border-obsidian-border text-xs text-obsidian-text"
+                  >
+                    <LuDownload className="w-3.5 h-3.5" />
+                    Export CSV
+                  </button>
+                </div>
+
+                <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                  {auditItems
+                    .filter((e) =>
+                      `${e.origin} ${e.source} ${e.category} ${e.tool || e.action} ${e.summary} ${e.decision}`
+                        .toLowerCase()
+                        .includes(auditSearch.toLowerCase())
+                    )
+                    .slice(0, 80)
+                    .map((e, i) => (
+                      <div key={e.id || i} className="p-2.5 rounded-lg bg-obsidian-bg border border-obsidian-border text-[11px]">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-obsidian-secondary">
+                            [{e.origin}] {e.source || 'local'} · {e.tool || e.action}
+                          </span>
+                          <span className="font-mono text-[10px] text-emerald-300">{e.decision}</span>
+                        </div>
+                        <p className="text-obsidian-text truncate mt-0.5">{e.summary}</p>
+                        <p className="text-[10px] text-obsidian-muted">{e.timestamp}</p>
+                      </div>
+                    ))}
+                </div>
               </div>
             </div>
           )}

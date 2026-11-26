@@ -74,6 +74,7 @@ function getActionCategory(action, args = []) {
     case 'filePro':
     case 'saveDesktopFile':
     case 'saveImage':
+    case 'memoryRag':
       return 'files_storage';
 
     case 'screenshot':
@@ -172,6 +173,21 @@ function summarizeAction(action, args = []) {
   }
 }
 
+function getTargetScope(action, args = []) {
+  const cleanFirst = String(args[0] || '').trim().toLowerCase();
+  if (action === 'openApp' || action === 'closeApp' || action === 'windowControl') {
+    const appName = action === 'windowControl' ? String(args[1] || '').trim().toLowerCase() : cleanFirst;
+    return appName ? `app:${appName.replace(/\.exe$/i, '')}` : '';
+  }
+  if (['readFile', 'readBinaryFile', 'writeFile', 'deleteFile', 'listFiles'].includes(action)) {
+    return args[0] ? `path:${path.dirname(String(args[0])).toLowerCase()}` : '';
+  }
+  if (action === 'filePro' && args[1]) {
+    return `path:${String(args[1]).trim().toLowerCase()}`;
+  }
+  return '';
+}
+
 function createPermissionGuard({ userDataPath, BrowserWindow }) {
   const policyPath = path.join(userDataPath, 'permission-policy.json');
   const auditPath = path.join(userDataPath, 'host-audit.json');
@@ -182,14 +198,20 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
     try {
       if (fs.existsSync(policyPath)) {
         const parsed = JSON.parse(fs.readFileSync(policyPath, 'utf-8'));
-        return { ...DEFAULT_HOST_RULES, ...parsed };
+        return { ...DEFAULT_HOST_RULES, ...parsed, allowedTargets: Array.isArray(parsed.allowedTargets) ? parsed.allowedTargets : [] };
       }
     } catch {}
-    return { ...DEFAULT_HOST_RULES };
+    return { ...DEFAULT_HOST_RULES, allowedTargets: [] };
   }
 
   function saveRules(rules) {
-    const merged = { ...DEFAULT_HOST_RULES, ...rules };
+    const prev = getRules();
+    const merged = {
+      ...DEFAULT_HOST_RULES,
+      ...prev,
+      ...rules,
+      allowedTargets: Array.isArray(rules?.allowedTargets) ? rules.allowedTargets : prev.allowedTargets || [],
+    };
     try {
       fs.writeFileSync(policyPath, JSON.stringify(merged, null, 2), 'utf-8');
     } catch {}
@@ -234,7 +256,7 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
     return [];
   }
 
-  function showPCPermissionWindow({ sourceLabel, category, summary, highRisk }) {
+  function showPCPermissionWindow({ sourceLabel, category, summary, highRisk, targetScope }) {
     return new Promise((resolve) => {
       let settled = false;
       const win = new BrowserWindow({
@@ -280,7 +302,7 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
       const badgeLabel = highRisk ? 'HIGH RISK' : 'CONFIRM ACTION';
       const alwaysBtn = highRisk
         ? ''
-        : `<button onclick="decide('always')" style="background:#064e3b;color:#6ee7b7;border:1px solid #047857;padding:7px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">Always Category</button>`;
+        : `${targetScope ? `<button onclick="decide('always_target')" style="background:#0c4a6e;color:#7dd3fc;border:1px solid #0369a1;padding:7px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">Always: ${escapeHtml(targetScope)}</button>` : ''}<button onclick="decide('always')" style="background:#064e3b;color:#6ee7b7;border:1px solid #047857;padding:7px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">Always Category</button>`;
 
       const html = `<!doctype html>
 <html>
@@ -327,6 +349,7 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
     const policy = rules[category] || 'ask';
     const summary = summarizeAction(action, args);
     const highRisk = isActionHighRisk(action, args);
+    const targetScope = getTargetScope(action, args);
 
     if (policy === 'block') {
       appendAudit({ source: sourceLabel, category, action, summary, decision: 'blocked' });
@@ -334,14 +357,15 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
     }
 
     const tempUntil = sessionPassUntil.get(category) || 0;
-    if (policy === 'always' || Date.now() < tempUntil) {
-      appendAudit({ source: sourceLabel, category, action, summary, decision: 'allowed-policy' });
+    const isTargetAllowlisted = Boolean(targetScope && !highRisk && (rules.allowedTargets || []).includes(targetScope));
+    if (policy === 'always' || isTargetAllowlisted || Date.now() < tempUntil) {
+      appendAudit({ source: sourceLabel, category, action, summary, decision: isTargetAllowlisted ? `allowed-target (${targetScope})` : 'allowed-policy' });
       return Promise.resolve(true);
     }
 
     // Queue interactive confirmation dialogs so simultaneous commands don't overlap
     const runPrompt = async () => {
-      const choice = await showPCPermissionWindow({ sourceLabel, category, summary, highRisk });
+      const choice = await showPCPermissionWindow({ sourceLabel, category, summary, highRisk, targetScope });
       if (choice === 'once') {
         appendAudit({ source: sourceLabel, category, action, summary, decision: 'allowed-once' });
         return true;
@@ -349,6 +373,13 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
       if (choice === 'session15') {
         sessionPassUntil.set(category, Date.now() + 15 * 60 * 1000);
         appendAudit({ source: sourceLabel, category, action, summary, decision: 'allowed-15m' });
+        return true;
+      }
+      if (choice === 'always_target' && targetScope && !highRisk) {
+        const cur = getRules();
+        const nextTargets = Array.from(new Set([...(cur.allowedTargets || []), targetScope]));
+        saveRules({ ...cur, allowedTargets: nextTargets });
+        appendAudit({ source: sourceLabel, category, action, summary, decision: `allowed-target (${targetScope})` });
         return true;
       }
       if (choice === 'always' && !highRisk) {

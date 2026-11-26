@@ -3,6 +3,7 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const { connectRelayWebSocket } = require('./ws-client.cjs');
 
 function generatePairToken() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -147,10 +148,75 @@ function createCloudRelay({ userDataPath, safeStorage, osHostname, onExecuteComm
   function startStream(renderUrl, pin, pairToken, deviceId) {
     if (!renderUrl) return;
     if (activeReq) {
-      try { activeReq.destroy(); } catch {}
+      try { activeReq.close?.(); } catch {}
+      try { activeReq.destroy?.(); } catch {}
       activeReq = null;
     }
 
+    let wsUrl;
+    try {
+      wsUrl = `${renderUrl}/api/relay/ws?deviceId=${encodeURIComponent(deviceId)}&hostname=${encodeURIComponent(osHostname)}`;
+    } catch {
+      emitStatus({ connected: false, connecting: false, lastError: 'Invalid Render URL' });
+      return;
+    }
+
+    emitStatus({ connecting: true, enabled: true, renderUrl, deviceId, pairToken, lastError: '' });
+
+    let fellBackToSse = false;
+    const wsHandle = connectRelayWebSocket({
+      urlStr: wsUrl,
+      headers: buildAuthHeaders(pin, pairToken),
+      onOpen: () => {
+        backoffMs = 3000;
+        emitStatus({ connected: true, connecting: false, transport: 'websocket', lastError: '', lastPingAt: Date.now() });
+      },
+      onMessage: (raw) => {
+        emitStatus({ lastPingAt: Date.now() });
+        try {
+          const msg = JSON.parse(raw);
+          if (msg.type === 'command' && msg.cmdId) {
+            Promise.resolve()
+              .then(() => onExecuteCommand(msg))
+              .then((result) => {
+                const sent = wsHandle.sendJson({ type: 'result', deviceId, cmdId: msg.cmdId, ok: true, result });
+                if (!sent) postResult(renderUrl, pin, pairToken, { deviceId, cmdId: msg.cmdId, ok: true, result });
+              })
+              .catch((err) => {
+                const errMsg = err?.message || String(err);
+                const sent = wsHandle.sendJson({ type: 'result', deviceId, cmdId: msg.cmdId, ok: false, error: errMsg });
+                if (!sent) postResult(renderUrl, pin, pairToken, { deviceId, cmdId: msg.cmdId, ok: false, error: errMsg });
+              });
+          }
+        } catch {}
+      },
+      onAuthError: () => {
+        manualStop = true;
+        emitStatus({ connected: false, connecting: false, lastError: 'Unauthorized Relay (check Pair Key or Render PIN)' });
+      },
+      onClose: (code) => {
+        if (manualStop) return;
+        // Fall back seamlessly to SSE stream if an intermediate proxy rejects WebSocket upgrade
+        if (!fellBackToSse && (code === 404 || code === 426 || code === 501 || code === 200)) {
+          fellBackToSse = true;
+          startSseFallback(renderUrl, pin, pairToken, deviceId);
+          return;
+        }
+        emitStatus({ connected: false, connecting: false });
+        scheduleReconnect(renderUrl, pin, pairToken, deviceId);
+      },
+      onError: () => {
+        if (!manualStop && !fellBackToSse) {
+          fellBackToSse = true;
+          startSseFallback(renderUrl, pin, pairToken, deviceId);
+        }
+      },
+    });
+    activeReq = wsHandle;
+  }
+
+  function startSseFallback(renderUrl, pin, pairToken, deviceId) {
+    if (!renderUrl || manualStop) return;
     let u;
     try {
       u = new URL(
@@ -161,7 +227,6 @@ function createCloudRelay({ userDataPath, safeStorage, osHostname, onExecuteComm
       return;
     }
 
-    emitStatus({ connecting: true, enabled: true, renderUrl, deviceId, pairToken, lastError: '' });
     const lib = u.protocol === 'https:' ? https : http;
     const req = lib.request(
       u,
@@ -301,7 +366,8 @@ function createCloudRelay({ userDataPath, safeStorage, osHostname, onExecuteComm
       reconnectTimer = null;
     }
     if (activeReq) {
-      try { activeReq.destroy(); } catch {}
+      try { activeReq.close?.(); } catch {}
+      try { activeReq.destroy?.(); } catch {}
       activeReq = null;
     }
   }

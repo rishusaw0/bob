@@ -4,6 +4,9 @@ import {
   getToolCategory,
   getToolRiskLevel,
   isSensitiveVoiceAction,
+  getTargetScope,
+  isTargetAllowed,
+  allowTargetPermanently,
   formatToolSummary,
   getCategoryPolicy,
   allowCategoryForSession,
@@ -482,6 +485,21 @@ export const TOOLS = [
   },
   {
     type: 'function',
+    name: 'memory_rag',
+    description:
+      'Saves or recalls persistent long-term user facts, preferences, frequent project paths, and past workflows locally.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['remember', 'recall', 'list', 'forget'] },
+        text: { type: 'string', description: 'Fact/folder/preference to remember, search query to recall, or memory ID to forget' },
+        category: { type: 'string', enum: ['preference', 'project', 'folder', 'command', 'fact'] },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    type: 'function',
     name: 'generate_image_tool',
     description: 'Generates an image from a text prompt when the user asks to create/draw/generate a picture, logo, or wallpaper.',
     parameters: {
@@ -528,6 +546,7 @@ export async function executeFunctionCall(
   const policy = getCategoryPolicy(category);
   const riskLevel = getToolRiskLevel(name, args);
   const summary = formatToolSummary(name, args);
+  const targetScope = getTargetScope(name, args);
 
   if (policy === 'block') {
     appendAuditLog({ tool: name, category, summary, decision: 'blocked' });
@@ -536,8 +555,10 @@ export async function executeFunctionCall(
 
   const alwaysAskHigh = riskLevel === 'high';
   const sensitiveVoicePrompt = Boolean(fromVoice && isSensitiveVoiceAction(name, args));
+  const targetBypass = Boolean(!alwaysAskHigh && targetScope && isTargetAllowed(targetScope));
   const needsPrompt =
     !sessionAllowedTools.has(name) &&
+    !targetBypass &&
     (alwaysAskHigh || sensitiveVoicePrompt || policy === 'ask');
 
   if (needsPrompt && requestPermission) {
@@ -548,6 +569,7 @@ export async function executeFunctionCall(
       category,
       categoryLabel: catMeta?.label || category,
       summary,
+      targetScope,
       isRemote: isRemoteEnvironment(),
       fromVoice: Boolean(fromVoice),
       userPrompt,
@@ -558,7 +580,9 @@ export async function executeFunctionCall(
       return { error: 'User denied permission for this action.' };
     }
 
-    if (decision === 'session_category' && riskLevel !== 'high') {
+    if (decision === 'always_target' && targetScope && riskLevel !== 'high') {
+      allowTargetPermanently(targetScope);
+    } else if (decision === 'session_category' && riskLevel !== 'high') {
       allowCategoryForSession(category);
     } else if (decision === 'always_category' && riskLevel !== 'high') {
       savePermissionRules({ ...getPermissionRules(), [category]: 'always' });
@@ -568,7 +592,7 @@ export async function executeFunctionCall(
 
     appendAuditLog({ tool: name, category, summary, decision: `allowed (${decision})` });
   } else {
-    appendAuditLog({ tool: name, category, summary, decision: `allowed (${policy})` });
+    appendAuditLog({ tool: name, category, summary, decision: `allowed (${targetBypass ? targetScope : policy})` });
   }
 
   if (isMobileBrowser) {
@@ -755,6 +779,10 @@ export async function executeFunctionCall(
         if (act === 'power_plan') return { result: await api.powerProfile(args.plan || 'get') };
         if (act === 'empty_recycle_bin') return { result: await api.emptyRecycleBin() };
         return { result: await api.diagnostics('display_info') };
+      }
+      case 'memory_rag': {
+        const res = await api.memoryRag(args.action || 'recall', args.text || '', args.category || 'fact');
+        return { result: JSON.stringify(res) };
       }
       default:
         return { error: `Unknown function: ${name}` };

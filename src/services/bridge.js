@@ -251,6 +251,8 @@ export function getSystemAPI() {
     emptyRecycleBin: () => callRemoteAction('emptyRecycleBin', []),
     clipboardHistory: (sub, index) => callRemoteAction('clipboardHistory', [sub, index]),
     scheduler: (sub, arg1, arg2, arg3) => callRemoteAction('scheduler', [sub, arg1, arg2, arg3]),
+    memoryRag: (sub, contentOrQuery, category) =>
+      callRemoteAction('memoryRag', [sub, contentOrQuery, category]),
   };
 }
 

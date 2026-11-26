@@ -66,8 +66,49 @@ const DEFAULT_REMOTE_RULES = {
 };
 
 const RULES_STORAGE_KEY = 'jeeva_permission_rules';
+const TARGETS_STORAGE_KEY = 'jeeva_allowed_targets';
 const AUDIT_STORAGE_KEY = 'jeeva_audit_log';
 const sessionAllowedCategories = new Set();
+
+export function getTargetScope(name, args = {}) {
+  if (name === 'open_application' || name === 'close_application' || name === 'control_app_window') {
+    const app = String(args.app_name || '').trim().toLowerCase().replace(/\.exe$/i, '');
+    return app ? `app:${app}` : '';
+  }
+  if (name === 'file_operation' && args.path) {
+    const p = String(args.path).trim();
+    const dir = p.includes('\\') || p.includes('/') ? p.replace(/[\\/][^\\/]+$/, '') : p;
+    return dir ? `path:${dir.toLowerCase()}` : '';
+  }
+  if (name === 'file_manager_pro' && args.source) {
+    return `path:${String(args.source).trim().toLowerCase()}`;
+  }
+  return '';
+}
+
+export function getAllowedTargets() {
+  try {
+    const raw = localStorage.getItem(TARGETS_STORAGE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+export function allowTargetPermanently(targetScope) {
+  if (!targetScope) return [];
+  const next = Array.from(new Set([...getAllowedTargets(), targetScope]));
+  try {
+    localStorage.setItem(TARGETS_STORAGE_KEY, JSON.stringify(next));
+  } catch {}
+  return next;
+}
+
+export function isTargetAllowed(targetScope) {
+  if (!targetScope) return false;
+  return getAllowedTargets().includes(targetScope);
+}
 
 export function getToolCategory(name, args = {}) {
   switch (name) {
@@ -122,6 +163,7 @@ export function getToolCategory(name, args = {}) {
     case 'manage_clipboard':
     case 'file_manager_pro':
     case 'clipboard_history':
+    case 'memory_rag':
       return 'files_storage';
 
     case 'take_screenshot':

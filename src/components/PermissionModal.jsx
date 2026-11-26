@@ -3,7 +3,7 @@ import { LuShieldAlert, LuShieldCheck, LuCheck, LuX, LuGlobe, LuMic, LuVolume2 }
 export default function PermissionModal({ request, onDecision }) {
   if (!request) return null;
 
-  const { name, args, riskLevel, categoryLabel, summary, isRemote, questionText, fromVoice, voiceStatus, heardText } = request;
+  const { name, args, riskLevel, categoryLabel, summary, isRemote, questionText, fromVoice, voiceStatus, heardText, targetScope } = request;
   const isHigh = riskLevel === 'high';
 
   return (
@@ -111,13 +111,21 @@ export default function PermissionModal({ request, onDecision }) {
                 onClick={() => onDecision('session_category')}
                 className="px-3 py-1.5 rounded-lg bg-sky-600/20 border border-sky-500/40 text-xs font-medium text-sky-300 hover:bg-sky-600 hover:text-white transition-colors"
               >
-                Allow Category (Session)
+                Allow Session
               </button>
+              {targetScope && (
+                <button
+                  onClick={() => onDecision('always_target')}
+                  className="px-3 py-1.5 rounded-lg bg-cyan-600/20 border border-cyan-500/40 text-xs font-medium text-cyan-300 hover:bg-cyan-600 hover:text-white transition-colors"
+                >
+                  Always: {targetScope}
+                </button>
+              )}
               <button
                 onClick={() => onDecision('always_category')}
                 className="px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/40 text-xs font-medium text-emerald-300 hover:bg-emerald-600 hover:text-white transition-colors"
               >
-                Always Allow
+                Always Category
               </button>
             </>
           )}

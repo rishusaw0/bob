@@ -50,6 +50,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   emptyRecycleBin: () => ipcRenderer.invoke('system:emptyRecycleBin'),
   clipboardHistory: (sub, index) => ipcRenderer.invoke('clipboard:history', sub, index),
   scheduler: (sub, arg1, arg2, arg3) => ipcRenderer.invoke('scheduler:manage', sub, arg1, arg2, arg3),
+  memoryRag: (sub, contentOrQuery, category) => ipcRenderer.invoke('memory:rag', sub, contentOrQuery, category),
+  macros: (sub, payload, stats) => ipcRenderer.invoke('macros:manage', sub, payload, stats),
+  onWatchdogAlert: (cb) => {
+    const listener = (_, alert) => cb(alert);
+    ipcRenderer.on('watchdog:alert', listener);
+    return () => ipcRenderer.removeListener('watchdog:alert', listener);
+  },
   browserControl: (sub, value) => ipcRenderer.invoke('system:browserControl', sub, value),
 
   // Offline SAPI Voice Engine & Auto-Updater

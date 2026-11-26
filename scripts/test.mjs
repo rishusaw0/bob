@@ -90,13 +90,15 @@ for (const act of actionKeys) {
 }
 console.log(`   Verified ${declaredTools.length} tools, ${preloadInvokes.length} IPC handlers, ${actionKeys.length} actions.`);
 
-// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard, auto-launch
-console.log('[3/6] Testing coord-mapper, updater, scheduler, permission guard & auto-launch...');
+// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard, security guardrails, memory RAG, server store & WS codec
+console.log('[3/6] Testing coord-mapper, updater, scheduler, guardrails, memory RAG & auto-launch...');
 const { mapCoordsToPhysical } = require(path.join(ROOT, 'electron/coord-mapper.cjs'));
 const { compareSemver } = require(path.join(ROOT, 'electron/updater.cjs'));
 const { createScheduler } = require(path.join(ROOT, 'electron/pc-scheduler.cjs'));
 const { getActionCategory, isActionHighRisk } = require(path.join(ROOT, 'electron/permission-guard.cjs'));
 const { createAutoLaunchManager } = require(path.join(ROOT, 'electron/auto-launch.cjs'));
+const { checkPathSafety, checkCommandSafety, checkProcessKillSafety } = require(path.join(ROOT, 'electron/security-guardrails.cjs'));
+const { createMemoryStore } = require(path.join(ROOT, 'electron/memory-store.cjs'));
 
 const mapped150 = mapCoordsToPhysical({
   x: 960,
@@ -134,8 +136,31 @@ const cmd = sched.scheduleDelayedCommand({ delayMinutes: 5, command: 'echo no' }
 assert.equal(sched.cancelTask(cmd.id).cancelled, 1);
 await new Promise((r) => setTimeout(r, 320));
 assert.equal(fired, true);
+sched.saveMacro({
+  name: 'Unit Macro',
+  condition: 'battery_low',
+  steps: [{ type: 'power_plan', plan: 'power_saver' }],
+});
+const dry = sched.dryRunMacro('custom_' + sched.getAllMacros().find((m) => m.name === 'Unit Macro').id.replace('custom_', ''), { batteryPct: 18 });
+assert.equal(dry.conditionMet, true);
 sched.dispose();
 fs.rmSync(tmpSchedDir, { recursive: true, force: true });
+
+// Security guardrails & Local Memory RAG tests
+assert.equal(checkPathSafety('C:\\Windows\\System32\\cmd.exe', 'delete').allowed, false);
+assert.equal(checkPathSafety('C:\\Users\\Test\\.env', 'read').allowed, false);
+assert.equal(checkPathSafety('C:\\Users\\Test\\AppData\\Local\\Google\\Chrome\\User Data\\Default\\Login Data', 'read').allowed, false);
+assert.equal(checkPathSafety('C:\\Users\\Test\\Downloads\\report.pdf', 'read').allowed, true);
+assert.equal(checkCommandSafety('reg delete HKLM\\SYSTEM\\CurrentControlSet').allowed, false);
+assert.equal(checkCommandSafety('echo safe').allowed, true);
+assert.equal(checkProcessKillSafety('lsass.exe').allowed, false);
+
+const tmpMemDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-test-mem-'));
+const ragMemStore = createMemoryStore({ userDataDir: tmpMemDir });
+ragMemStore.remember({ content: 'My main Python project lives in D:\\Projects\\JarvisBot', category: 'project', tags: ['python'] });
+const hits = ragMemStore.recall('Where is my python project folder?');
+assert.ok(hits.length >= 1 && hits[0].content.includes('JarvisBot'));
+fs.rmSync(tmpMemDir, { recursive: true, force: true });
 
 // Auto-launch registry + Windows Startup shortcut fallback tests
 const tmpAutoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-test-auto-'));
@@ -371,6 +396,28 @@ assert.equal(isActionAllowedForReadOnly('diagnostics', ['overview']), true);
 const fakeTmpCtx = getRelayAuthContext({ headers: { 'x-pair-token': 'JVA-TMP-DOESNOTEXIST' } });
 assert.equal(fakeTmpCtx.ownerKey, null);
 assert.equal(fakeTmpCtx.expired, true);
+
+// WebSocket codec & Server Store persistence tests
+const wsUrl = pathToFileURL(path.join(ROOT, 'server/ws-codec.js')).href;
+const storeUrl = pathToFileURL(path.join(ROOT, 'server/store.js')).href;
+const { computeWebSocketAccept, encodeServerFrame, createFrameReader } = await import(wsUrl);
+const { createServerStore } = await import(storeUrl);
+assert.equal(computeWebSocketAccept('dGhlIHNhbXBsZSBub25jZQ=='), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=');
+let decodedWs = '';
+const reader = createFrameReader((op, pay) => {
+  if (op === 1) decodedWs = pay.toString('utf8');
+});
+reader(encodeServerFrame(1, Buffer.from('hello-ws', 'utf8')));
+assert.equal(decodedWs, 'hello-ws');
+
+const tmpStoreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-test-store-'));
+const st1 = await createServerStore(tmpStoreDir);
+st1.setShareToken('hash123', { ownerKey: 'owner:test', scope: 'read_only', expiresAt: Date.now() + 60000, createdAt: Date.now() });
+st1.close();
+const st2 = await createServerStore(tmpStoreDir);
+assert.equal(st2.getShareToken('hash123')?.scope, 'read_only');
+st2.close();
+fs.rmSync(tmpStoreDir, { recursive: true, force: true });
 
 // 6. PowerShell AST validation on ALL .ps1 scripts
 console.log('[6/6] Checking PowerShell AST across all electron/*.ps1...');

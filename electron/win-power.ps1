@@ -464,6 +464,12 @@ switch ($Task) {
     $sub = $Arg1.Trim().ToLower()
     $src = Resolve-UserFolderShortcut $Arg2
     $dst = Resolve-UserFolderShortcut $Arg3
+    foreach ($p in @($src, $dst)) {
+      if ($p -and ($p -imatch '^[a-z]:\\windows(\\|$)|\\\.env(\.[a-z0-9_-]+)?$|\\google\\chrome\\user data|\\microsoft\\edge\\user data|\.vault$')) {
+        Write-Error "Blocked by PowerShell Security Guardrails: protected path $p"
+        exit 1
+      }
+    }
 
     switch ($sub) {
       "mkdir" {
