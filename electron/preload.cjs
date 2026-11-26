@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   offlineVoiceStop: () => ipcRenderer.invoke('voice:offlineStop'),
   offlineVoiceSetName: (aiName) => ipcRenderer.invoke('voice:offlineSetName', aiName),
   offlineVoiceStatus: () => ipcRenderer.invoke('voice:offlineStatus'),
+  offlineVoiceDictate: (timeoutSec) => ipcRenderer.invoke('voice:offlineDictate', timeoutSec),
   onOfflineVoiceEvent: (cb) => {
     const listener = (_, ev) => cb(ev);
     ipcRenderer.on('voice:offlineEvent', listener);

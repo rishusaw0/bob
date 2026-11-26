@@ -519,6 +519,20 @@ assert.ok(summarizeTextLocally('First clear sentence about JEEVA offline AI. Sec
 assert.equal(assessQueryRouting('Screen par kya likha hai padh kar sunao', null, 'auto').shouldTryLocalFirst, true);
 assert.ok(pickTopToolsForQuery('read active screen and click submit button', 4).includes('screen_reader'));
 
+// Advanced Voice Detection DSP, AGC Normalization, Phonetic Repair & VAD Sensitivity checks
+const { applyHighPassRumbleFilter, normalizePcmForStt, getVadSensitivity } = await import(pathToFileURL(path.join(ROOT, 'src/services/voiceCapture.js')).href);
+const { repairVoiceTranscript } = await import(pathToFileURL(path.join(ROOT, 'src/services/voiceRouter.js')).href);
+assert.equal(getVadSensitivity(), 'balanced');
+const dcRumble = new Float32Array(320).fill(0.4);
+const hpOut = applyHighPassRumbleFilter(dcRumble);
+assert.ok(Math.abs(hpOut[hpOut.length - 1]) < 0.02); // High-pass cancels steady DC/hum
+const quietSpeech = new Float32Array(640);
+for (let i = 160; i < 480; i++) quietSpeech[i] = Math.sin(i * 0.25) * 0.08;
+const normOut = normalizePcmForStt(quietSpeech, 16000);
+assert.ok(Math.max(...Array.from(normOut, Math.abs)) >= 0.55); // Boosted toward crisp 0.70 target
+const repaired = repairVoiceTranscript('Hey Jeeva wollum 50 karo aur crome kholo');
+assert.ok(repaired.toLowerCase().includes('volume 50') && repaired.toLowerCase().includes('chrome'));
+
 // 6. PowerShell AST validation on ALL .ps1 scripts
 console.log('[6/6] Checking PowerShell AST across all electron/*.ps1...');
 const psFiles = fs.readdirSync(path.join(ROOT, 'electron')).filter((f) => f.endsWith('.ps1'));

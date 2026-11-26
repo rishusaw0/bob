@@ -25,7 +25,7 @@ import {
   getSpeechSpeedMode,
   setSpeechSpeedMode,
 } from '../services/speech';
-import { startVoiceCapture } from '../services/voiceCapture';
+import { startVoiceCapture, getVadSensitivity, setVadSensitivity } from '../services/voiceCapture';
 import {
   getVoiceprintStatus,
   enrollVoiceprintSamples,
@@ -108,6 +108,7 @@ export default function SettingsPanel({
   const [nativeVoice, setNativeVoiceState] = useState(() => getPreferredNativeVoice());
   const [availableVoices, setAvailableVoices] = useState(() => getAvailableSpeechVoices());
   const [speechSpeedMode, setSpeechSpeedModeState] = useState(() => getSpeechSpeedMode());
+  const [vadSensitivity, setVadSensitivityState] = useState(() => getVadSensitivity());
 
   useEffect(() => {
     const refresh = () => setAvailableVoices(getAvailableSpeechVoices());
@@ -976,6 +977,23 @@ export default function SettingsPanel({
                         {v.name} ({v.lang})
                       </option>
                     ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 pt-1 border-t border-obsidian-border/50">
+                  <span className="text-[10px] text-obsidian-muted">Mic Noise &amp; VAD Sensitivity:</span>
+                  <select
+                    value={vadSensitivity}
+                    onChange={(e) => {
+                      const next = setVadSensitivity(e.target.value);
+                      setVadSensitivityState(next);
+                      toast.success(`Mic VAD Sensitivity: ${next}`);
+                    }}
+                    className="bg-obsidian-surface border border-obsidian-border rounded px-2 py-1 text-[10px] font-mono text-obsidian-text"
+                  >
+                    <option value="balanced">Balanced (Default · High-Pass + SNR)</option>
+                    <option value="high">High Sensitivity (Quiet / Distant Mic)</option>
+                    <option value="noisy_room">Strict Noisy Room (Rejects Fan/Crowd)</option>
                   </select>
                 </div>
               </div>

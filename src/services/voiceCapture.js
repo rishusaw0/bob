@@ -7,6 +7,88 @@ import { matchWakePhrase, getAiName } from './voiceRouter.js';
 
 let speechApiBrokenInRuntime = false;
 
+const VAD_SENSITIVITY_KEY = 'jeeva_vad_sensitivity';
+
+export function getVadSensitivity() {
+  try {
+    const v = (typeof localStorage !== 'undefined' ? localStorage.getItem(VAD_SENSITIVITY_KEY) : null) || 'balanced';
+    return ['high', 'balanced', 'noisy_room'].includes(v) ? v : 'balanced';
+  } catch {
+    return 'balanced';
+  }
+}
+
+export function setVadSensitivity(mode) {
+  const clean = ['high', 'balanced', 'noisy_room'].includes(mode) ? mode : 'balanced';
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(VAD_SENSITIVITY_KEY, clean);
+  } catch {}
+  return clean;
+}
+
+function getVadThresholdConfig() {
+  const mode = getVadSensitivity();
+  if (mode === 'high') {
+    return { minStart: 0.02, snrMult: 1.65, wakeMin: 0.024, wakeSnr: 1.65, minVocalRatio: 0.28 };
+  }
+  if (mode === 'noisy_room') {
+    return { minStart: 0.052, snrMult: 2.45, wakeMin: 0.056, wakeSnr: 2.35, minVocalRatio: 0.42 };
+  }
+  return { minStart: 0.03, snrMult: 1.95, wakeMin: 0.032, wakeSnr: 1.9, minVocalRatio: 0.34 };
+}
+
+/**
+ * 1st-order IIR high-pass filter (fc ~180Hz at 16kHz) removes fan hum, AC drone & desk thuds.
+ */
+export function applyHighPassRumbleFilter(samples, alpha = 0.93) {
+  if (!samples || !samples.length) return new Float32Array(0);
+  const out = new Float32Array(samples.length);
+  let prevIn = samples[0];
+  let prevOut = 0;
+  for (let i = 0; i < samples.length; i++) {
+    const cur = samples[i];
+    const hp = alpha * (prevOut + cur - prevIn);
+    out[i] = hp;
+    prevIn = cur;
+    prevOut = hp;
+  }
+  return out;
+}
+
+/**
+ * Trims dead leading/trailing silence (preserving 120ms padding) and applies smooth AGC gain
+ * up to ~0.70 peak so quiet/far laptop microphones transcribe clearly without clipping.
+ */
+export function normalizePcmForStt(pcm16k, sampleRate = 16000) {
+  if (!pcm16k || !pcm16k.length) return new Float32Array(0);
+  let peak = 0;
+  for (let i = 0; i < pcm16k.length; i++) {
+    const a = Math.abs(pcm16k[i]);
+    if (a > peak) peak = a;
+  }
+  if (peak < 1e-4) return pcm16k;
+
+  const trimGate = Math.max(0.008, peak * 0.08);
+  let first = 0;
+  let last = pcm16k.length - 1;
+  while (first < last && Math.abs(pcm16k[first]) < trimGate) first++;
+  while (last > first && Math.abs(pcm16k[last]) < trimGate) last--;
+
+  const pad = Math.round(sampleRate * 0.12);
+  const start = Math.max(0, first - pad);
+  const end = Math.min(pcm16k.length, last + pad + 1);
+  const slice = pcm16k.subarray(start, end);
+
+  const gain = peak < 0.65 ? Math.min(10, 0.7 / peak) : 1;
+  const out = new Float32Array(slice.length);
+  for (let i = 0; i < slice.length; i++) {
+    const v = slice[i] * gain;
+    // Soft knee saturation past 0.85 prevents digital harshness
+    out[i] = Math.abs(v) > 0.85 ? Math.tanh(v) : v;
+  }
+  return out;
+}
+
 export function isBrowserSpeechSupported() {
   if (typeof window === 'undefined') return false;
   if (window.electronAPI) return false;
@@ -214,7 +296,8 @@ export async function createPcmStreamMonitor({ preRollSeconds = 0.75, gainBoost 
   processor.onaudioprocess = (ev) => {
     if (closed) return;
     const raw = ev.inputBuffer.getChannelData(0);
-    const pcm16k = downsampleFloat32(raw, ctx.sampleRate, 16000);
+    const down = downsampleFloat32(raw, ctx.sampleRate, 16000);
+    const pcm16k = applyHighPassRumbleFilter(down);
     const metrics = computeVocalVadMetrics(pcm16k, gainBoost, 16000);
 
     preRollChunks.push(pcm16k);
@@ -325,12 +408,34 @@ export function startVoiceCapture({
     try {
       onStatus('transcribing');
       onInterim('Understanding command...');
-      const wavBase64 = encodeWavBase64(pcm, 16000);
-      const rawText = await transcribeAudio(wavBase64, 'audio/wav', {
-        aiName: getAiName(),
-        mode: 'command',
-      });
-      onResult(cleanSttTranscript(rawText), { pcm16k: pcm });
+      const cleanPcm = normalizePcmForStt(pcm, 16000);
+      const wavBase64 = encodeWavBase64(cleanPcm.length >= 1600 ? cleanPcm : pcm, 16000);
+      try {
+        const rawText = await transcribeAudio(wavBase64, 'audio/wav', {
+          aiName: getAiName(),
+          mode: 'command',
+        });
+        const cleaned = cleanSttTranscript(rawText);
+        if (cleaned) {
+          onResult(cleaned, { pcm16k: cleanPcm });
+          return;
+        }
+      } catch (sttErr) {
+        // Automatic offline Windows SAPI dictation fallback if Gemini STT unavailable/offline
+        const api = typeof window !== 'undefined' ? window.electronAPI : null;
+        if (api?.offlineVoiceDictate) {
+          onStatus('offline-dictating');
+          onInterim('Trying offline speech engine...');
+          const dict = await api.offlineVoiceDictate(6).catch(() => null);
+          const offText = cleanSttTranscript(dict?.text || '');
+          if (offText) {
+            onResult(offText, { pcm16k: cleanPcm });
+            return;
+          }
+        }
+        throw sttErr;
+      }
+      onResult('', { pcm16k: cleanPcm });
     } catch (err) {
       onError(err?.message || 'Voice transcription failed');
     }
@@ -355,8 +460,9 @@ export function startVoiceCapture({
             if (lvl < Math.max(0.055, noiseFloor * 2.2)) {
               noiseFloor = noiseFloor * 0.88 + lvl * 0.12;
             }
-            const startThresh = Math.max(0.03, Math.min(0.14, noiseFloor * 1.95));
-            if (lvl > startThresh && (isVocalFrame || lvl > startThresh * 1.5)) {
+            const vadCfg = getVadThresholdConfig();
+            const startThresh = Math.max(vadCfg.minStart, Math.min(0.16, noiseFloor * vadCfg.snrMult));
+            if (lvl > startThresh && ((isVocalFrame && metrics.vocalRatio >= vadCfg.minVocalRatio) || lvl > startThresh * 1.5)) {
               voicedFrames++;
               if (voicedFrames >= 2) {
                 speechStarted = true;
@@ -593,7 +699,8 @@ export function startWakeWordListener({
 
         inFlightCheck = true;
         try {
-          const wavBase64 = encodeWavBase64(pcm, 16000);
+          const cleanPcm = normalizePcmForStt(pcm, 16000);
+          const wavBase64 = encodeWavBase64(cleanPcm.length >= 2400 ? cleanPcm : pcm, 16000);
           if (cancelled) return;
           const rawTranscript = await transcribeAudio(wavBase64, 'audio/wav', {
             aiName,
@@ -625,9 +732,10 @@ export function startWakeWordListener({
             return;
           }
 
-          const wakeThresh = Math.max(0.032, Math.min(0.14, noiseFloor * 1.9));
+          const vadCfg = getVadThresholdConfig();
+          const wakeThresh = Math.max(vadCfg.wakeMin, Math.min(0.16, noiseFloor * vadCfg.wakeSnr));
           if (!isCapturing) {
-            if (lvl > wakeThresh && isVocalFrame && !inFlightCheck) {
+            if (lvl > wakeThresh && isVocalFrame && metrics.vocalRatio >= vadCfg.minVocalRatio && !inFlightCheck) {
               voicedFrames++;
               if (voicedFrames >= 2) {
                 isCapturing = true;

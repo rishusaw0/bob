@@ -1,5 +1,5 @@
 // Zero-API Tier-0 + Tier-1 Local Quick Brain (Unified for Chat + Voice)
-import { tryFastVoiceAction } from './voiceRouter.js';
+import { tryFastVoiceAction, repairVoiceTranscript } from './voiceRouter.js';
 import { classifyIntent } from './semanticIntent.js';
 import { rememberUserMemory, recallRelevantMemories } from './memoryRag.js';
 import { isEpisodicHistoryQuery, parseEpisodicDateQuery } from './dateQueryParser.js';
@@ -378,7 +378,7 @@ async function tryLocalScreenReader(text, lang, requestPermission) {
  * Works identically for BOTH typed Chat messages and Voice commands.
  */
 export async function runLocalQuickBrain(text, { requestPermission = null } = {}) {
-  const clean = String(text || '').trim();
+  const clean = repairVoiceTranscript(text);
   if (!clean) return { handled: false };
   const lang = detectCommandLanguage(clean);
 

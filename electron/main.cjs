@@ -354,6 +354,7 @@ app.whenReady().then(() => {
   ipcMain.handle('voice:offlineStop', () => offlineVoice.stop());
   ipcMain.handle('voice:offlineSetName', (_, aiName) => offlineVoice.setAiName(aiName));
   ipcMain.handle('voice:offlineStatus', () => offlineVoice.getStatus());
+  ipcMain.handle('voice:offlineDictate', (_, timeoutSec) => offlineVoice.dictateOnce(timeoutSec || 7));
 
   ipcMain.handle('updater:check', (_, cfg) => appUpdater.checkForUpdates(cfg || {}));
   ipcMain.handle('updater:download', (_, url) => appUpdater.downloadAndInstall(url));

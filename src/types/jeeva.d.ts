@@ -63,6 +63,7 @@ export interface ElectronBridgeAPI {
   episodicClear: () => Promise<{ cleared: boolean }>;
   extractDocText: (payload: { filePath?: string; base64?: string; name?: string }) => Promise<any>;
   screenRead: (mode?: 'read' | 'ocr' | 'click_text', targetText?: string) => Promise<any>;
+  offlineVoiceDictate: (timeoutSec?: number) => Promise<{ text: string; confidence?: number }>;
 }
 
 declare global {

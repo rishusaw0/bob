@@ -229,13 +229,18 @@ function hasAny(text, enRegex, hiTerms = []) {
 }
 
 const PHONETIC_SYNONYMS = [
-  [/\b(?:volum|valume|vollume|voulme|avaaz)\b/gi, 'volume'],
-  [/\b(?:brigtness|brightnes|britness|roshani)\b/gi, 'brightness'],
+  [/\b(?:volum|valume|vollume|voulme|wollum|avaaz|wall\s+you|ball\s+you)\b/gi, 'volume'],
+  [/\b(?:brigtness|brightnes|britness|braitness|roshani)\b/gi, 'brightness'],
   [/\b(?:batery|battry|bettery|batry)\b/gi, 'battery'],
-  [/\b(?:screensht|screnshot|screen shot)\b/gi, 'screenshot'],
-  [/\b(?:wi-fi|wai-fai|waifi|wify)\b/gi, 'wifi'],
+  [/\b(?:screensht|screnshot|screen shot|skreen shot)\b/gi, 'screenshot'],
+  [/\b(?:skreen|sreen|scren)\b/gi, 'screen'],
+  [/\b(?:reid|reed)\s+screen\b/gi, 'read screen'],
+  [/\b(?:crome|kroam|chrom)\b/gi, 'chrome'],
+  [/\b(?:nota\s*pad)\b/gi, 'notepad'],
+  [/\b(?:u\s*tube|utube|you\s+tube)\b/gi, 'youtube'],
+  [/\b(?:wi-fi|wai-fai|waifi|wify|vi\s*fi|why\s*fi)\b/gi, 'wifi'],
   [/\b(?:spotfy|spotifi)\b/gi, 'spotify'],
-  [/\b(?:vs\s*code|v\s*s\s*code)\b/gi, 'vscode'],
+  [/\b(?:vs\s*code|v\s*s\s*code|we\s*s\s*code)\b/gi, 'vscode'],
   [/\b(?:khol\s*do|chala\s*do)\b/gi, 'kholo'],
 ];
 
@@ -244,8 +249,10 @@ export function normalizePhoneticVoiceText(text) {
   for (const [pattern, replacement] of PHONETIC_SYNONYMS) {
     out = out.replace(pattern, replacement);
   }
-  return out;
+  return out.replace(/\s+/g, ' ').trim();
 }
+
+export const repairVoiceTranscript = normalizePhoneticVoiceText;
 
 export function splitChainedVoiceClauses(rawText) {
   const wake = matchWakePhrase(rawText);

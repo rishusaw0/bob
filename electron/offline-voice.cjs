@@ -94,9 +94,35 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
     return { ...status };
   }
 
+  function dictateOnce(timeoutSec = 7) {
+    const scriptPath = resolveUnpackedPath('win-voice.ps1');
+    return new Promise((resolve) => {
+      let stdout = '';
+      const proc = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-Mode', 'dictate', '-TimeoutSec', String(timeoutSec)],
+        { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
+      );
+      proc.stdout.on('data', (d) => { stdout += d.toString('utf8'); });
+      proc.on('close', () => {
+        for (const line of stdout.split(/\r?\n/)) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try {
+            const obj = JSON.parse(trimmed);
+            if (obj.type === 'dictation') return resolve(obj);
+          } catch {}
+        }
+        resolve({ type: 'dictation', text: '' });
+      });
+      proc.on('error', () => resolve({ type: 'dictation', text: '' }));
+    });
+  }
+
   return {
     start,
     stop,
+    dictateOnce,
     getStatus: () => ({ ...status }),
     setAiName: (name) => {
       const clean = String(name || 'Jeeva').trim() || 'Jeeva';
