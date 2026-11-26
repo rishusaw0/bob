@@ -721,8 +721,8 @@ export default function App() {
 
     try {
       const userAskedSpeech = /\b(read aloud|speak|sunao|bolkar|bol kar|awaz mein)\b/i.test(promptText);
-      // Tier-0 & Tier-1: Zero-API Deterministic + Episodic Date + Semantic Intent Local Brain
-      if (!forceCloud && !routing.forceCloud && !attachment) {
+      // Tier-0 & Layer-1: Zero-API Deterministic + Slot Extractor + Episodic Date + Semantic Intent Local Brain
+      if (!forceCloud && (!routing.forceCloud || routing.strictNoApi) && !attachment) {
         const quick = await runLocalQuickBrain(promptText, { requestPermission });
         if (quick?.handled) {
           finalizeReply({
@@ -783,10 +783,25 @@ export default function App() {
               : 'Auto Hybrid: solved locally by SLM (0 Gemini API calls)',
             image: slm.image || null,
             tools: slm.tools || [],
+            shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
             speakLabel: 'Local SLM',
           });
           return;
         }
+      }
+
+      // Command-First Local Lock: never silently burn Gemini API on PC commands
+      if (routing.strictNoApi && !forceCloud) {
+        finalizeReply({
+          replyText:
+            'PC commands abhi 100% Local AI mode par locked hain, isliye Gemini API use nahi hui. Simple commands jaise "Notepad kholo", "10 minute baad meeting reminder lagao", "Downloads organize karo", ya "YouTube par song play karo" seedhe chalte hain. Advanced multi-step commands ke liye Settings -> Local AI Brain me lightweight offline model enable karein, ya zaroorat ho to neeche "Ask Gemini" dabaiye.',
+          tier: 'local-guard',
+          modelLabel: 'Local Command Lock',
+          routeReason: routing.routeReason,
+          shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
+          speakLabel: 'Local Guard',
+        });
+        return;
       }
 
       // Offline-Only Guard (when user selected Offline Mode OR internet is completely disconnected)

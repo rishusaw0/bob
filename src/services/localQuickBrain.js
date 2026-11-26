@@ -4,6 +4,7 @@ import { classifyIntent } from './semanticIntent.js';
 import { rememberUserMemory, recallRelevantMemories } from './memoryRag.js';
 import { isEpisodicHistoryQuery, parseEpisodicDateQuery } from './dateQueryParser.js';
 import { queryEpisodicTimeline } from './episodicMemory.js';
+import { tryLocalSlotAction } from './localSlotActions.js';
 import { detectCommandLanguage } from './voicePermissionPrompt.js';
 import { executeFunctionCall } from './tools.js';
 
@@ -456,6 +457,12 @@ export async function runLocalQuickBrain(text, { requestPermission = null } = {}
       image: fastOs.image || null,
       tools: fastOs.tools || [],
     };
+  }
+
+  // 4.5 Layer-1 Deterministic Parameterized Slot Actions (Reminders, File Search/Organize, Software, Settings, Power)
+  const slotHit = await tryLocalSlotAction(clean, lang, requestPermission);
+  if (slotHit?.handled) {
+    return slotHit;
   }
 
   // 5. Tier-1 Semantic Hinglish/English Intent Classifier (for natural messy phrasing)

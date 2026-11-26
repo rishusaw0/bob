@@ -598,9 +598,11 @@ export default function MessageBubble({ message, onEdit, onRegenerate, onEscalat
                     ? 'Cloud AI'
                     : message.brainMeta.tier === 'local-slm'
                       ? 'Local AI'
-                      : message.brainMeta.tier === 'intent'
-                        ? 'Smart Local'
-                        : 'Instant'}
+                      : message.brainMeta.tier === 'local-guard'
+                        ? 'Local Guard'
+                        : message.brainMeta.tier === 'intent'
+                          ? 'Smart Local'
+                          : 'Local Engine · 0 API'}
                 </span>
               )}
               {message.timestamp && (

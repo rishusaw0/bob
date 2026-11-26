@@ -49,6 +49,8 @@ import {
   setDocSummaryPref,
   getReplyStyle,
   setReplyStyle,
+  getStrictLocalCommands,
+  setStrictLocalCommands,
 } from '../services/userPrefs';
 import {
   PERMISSION_CATEGORIES,
@@ -89,6 +91,7 @@ export default function SettingsPanel({
   const [wakeTrigger, setWakeTrigger] = useState(() => getWakeTriggerPhrase());
   const [docSummaryPref, setDocSummaryPrefState] = useState(() => getDocSummaryPref());
   const [replyStyle, setReplyStyleState] = useState(() => getReplyStyle());
+  const [strictLocalCmds, setStrictLocalCmds] = useState(() => getStrictLocalCommands());
   const [wakeWordOn, setWakeWordOn] = useState(() => getWakeWordEnabled());
   const [wakeOpenMode, setWakeOpenModeState] = useState(() => getWakeOpenMode());
   const [strictVoice, setStrictVoice] = useState(() => getStrictVoiceMode());
@@ -838,6 +841,30 @@ export default function SettingsPanel({
                         className="text-obsidian-muted hover:text-obsidian-text text-[10px]"
                       >
                         Reset
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-obsidian-border/60">
+                      <div>
+                        <p className="text-[11px] font-medium text-obsidian-text">
+                          Keep All PC Commands 100% Local (No API)
+                        </p>
+                        <p className="text-[10px] text-obsidian-muted">
+                          App, typing, files, reminders aur settings commands kabhi Gemini API use nahi karengi
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setStrictLocalCmds((v) => setStrictLocalCommands(!v))}
+                        className={`w-9 h-5 rounded-full transition-colors p-0.5 flex-shrink-0 ${
+                          strictLocalCmds ? 'bg-emerald-500' : 'bg-zinc-700'
+                        }`}
+                      >
+                        <div
+                          className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                            strictLocalCmds ? 'translate-x-4' : 'translate-x-0'
+                          }`}
+                        />
                       </button>
                     </div>
 

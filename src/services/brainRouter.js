@@ -1,5 +1,6 @@
-// Hybrid Brain Router — Mode Management, Complexity Gatekeeper, History Compactor & Savings Telemetry
+// Hybrid Brain Router — Command-First Local Lock, Complexity Gatekeeper, History Compactor & Savings Telemetry
 import { isTextOrDocAttachment } from './docExtractor.js';
+import { getStrictLocalCommands } from './userPrefs.js';
 
 const BRAIN_MODE_KEY = 'jeeva_brain_mode'; // 'auto' | 'offline' | 'cloud'
 const BRAIN_STATS_KEY = 'jeeva_brain_stats';
@@ -74,6 +75,67 @@ export function resetBrainStats() {
 }
 
 /**
+ * Classifies prompt into PC command vs Local Document vs Cloud Vision/Web vs General Q&A
+ * so PC commands stay 100% local (0 Gemini API calls) while Cloud handles visual/web/heavy tasks.
+ */
+export function classifyQueryKind(cleanText, attachment = null) {
+  const lower = String(cleanText || '').trim().toLowerCase();
+
+  if (attachment && !isTextOrDocAttachment(attachment)) {
+    return { queryKind: 'cloud_vision', isPcCommand: false, heavyReason: 'multimodal_attachment' };
+  }
+  if (
+    /\b(generate image|create image|draw a|make a picture|photo banao|image banao)\b/i.test(lower) ||
+    /^\/image\b/i.test(lower)
+  ) {
+    return { queryKind: 'cloud_vision', isPcCommand: false, heavyReason: 'image_generation' };
+  }
+  if (
+    /\b(screenshot le lo aur|analyze screenshot|vision inspect|is photo mein|look at this screenshot)\b/i.test(lower)
+  ) {
+    return { queryKind: 'cloud_vision', isPcCommand: false, heavyReason: 'vision_screen_task' };
+  }
+
+  if (attachment && isTextOrDocAttachment(attachment)) {
+    return { queryKind: 'document_local', isPcCommand: false, heavyReason: '' };
+  }
+
+  const looksLikeOpenOrPlay = /\b(open|kholo|chalao|play|bajao|lagao|youtube|spotify)\b/i.test(lower);
+  if (
+    /\b(weather|mausam|latest news|live score|cricket score|stock price today|current price|google search|search online|deep research)\b/i.test(
+      lower
+    ) ||
+    (/https?:\/\//i.test(lower) && !looksLikeOpenOrPlay)
+  ) {
+    return { queryKind: 'cloud_web_heavy', isPcCommand: false, heavyReason: 'live_web_knowledge' };
+  }
+
+  if (
+    cleanText.includes('```') ||
+    cleanText.length > 600 ||
+    /\b(write full app|full project|architecture design|refactor entire|multi-file|leetcode|algorithm proof)\b/i.test(lower)
+  ) {
+    return { queryKind: 'cloud_web_heavy', isPcCommand: false, heavyReason: 'heavy_coding_or_reasoning' };
+  }
+
+  const isQuestionPhrase =
+    /\b(kya hota|what is|why|kyun|how does|kaise kaam|explain|samjhao|difference between|compare|meaning of|history of|who is|kaun hai)\b/i.test(
+      lower
+    );
+
+  const pcActionVerbOrTarget =
+    /\b(open|launch|start|close|quit|exit|kholo|chalao|bajao|lagao|band karo|volume|brightness|awaz|roshni|mute|unmute|wifi|bluetooth|dark mode|light mode|theme|screenshot|screen padh|screen read|read screen|click\b|scroll|copy karo|paste karo|save karo|undo karo|select all|press enter|enter dabao|type\b|likho|reminder|timer|alarm|downloads|desktop|organize|clean temp|temp saaf|installed app|installed software|install\b|uninstall\b|winget|lock pc|sleep pc|restart pc|shutdown|maximize|minimize|snap left|snap right|running apps|clipboard|battery|ram status|cpu status|top process|pc health|system health|new tab|close tab|next tab|previous tab|skip ad|coding mode|night mode|kal maine kya|yaad rakho|remember that|settings kholo)\b/i.test(
+      lower
+    ) || /स्क्रीन|वॉल्यूम|ब्राइटनेस|बैटरी|वाईफाई|क्लिक/i.test(cleanText);
+
+  if (pcActionVerbOrTarget && !isQuestionPhrase) {
+    return { queryKind: 'pc_command', isPcCommand: true, heavyReason: '' };
+  }
+
+  return { queryKind: 'general_qa', isPcCommand: false, heavyReason: '' };
+}
+
+/**
  * Strips explicit routing prefixes (@cloud, /gemini, @local) and determines routing constraints.
  */
 export function assessQueryRouting(text, attachment = null, mode = getBrainMode(), env = {}) {
@@ -97,52 +159,50 @@ export function assessQueryRouting(text, attachment = null, mode = getBrainMode(
         : true;
   const batteryLow = Boolean(env.batteryLow);
   const freeRamLow = Boolean(env.freeRamLow);
+  const strictCommands =
+    typeof env.strictLocalCommands === 'boolean' ? env.strictLocalCommands : getStrictLocalCommands();
 
-  if (mode === 'cloud') forceCloud = true;
+  const effectiveText = cleanText || String(text || '').trim();
+  const classification = classifyQueryKind(effectiveText, attachment);
+  const { queryKind, isPcCommand, heavyReason } = classification;
+
+  if (mode === 'cloud' && !(isPcCommand && strictCommands)) {
+    forceCloud = true;
+  }
   if (mode === 'offline' || (!online && mode === 'auto' && !forceCloud)) {
     forceLocal = true;
     forceCloud = false;
   }
 
-  // Heavy / cloud-only triggers (PDF/text documents stay LOCAL; only images/audio/video/scanned need Cloud!)
-  let heavyReason = '';
-  if (attachment && !isTextOrDocAttachment(attachment)) {
-    heavyReason = 'multimodal_attachment';
-  } else if (/\b(generate image|create image|draw a|make a picture|photo banao|image banao)\b/i.test(cleanText) || /^\/image\b/i.test(cleanText)) {
-    heavyReason = 'image_generation';
-  } else if (/\b(screenshot le lo aur|analyze screenshot|vision inspect)\b/i.test(cleanText)) {
-    heavyReason = 'vision_screen_task';
-  } else if (
-    /\b(weather|mausam|latest news|live score|stock price today|current price|google search|search online|deep research)\b/i.test(cleanText) ||
-    /https?:\/\//i.test(cleanText)
-  ) {
-    heavyReason = 'live_web_knowledge';
-  } else if (
-    cleanText.includes('```') ||
-    cleanText.length > 600 ||
-    /\b(write full app|full project|architecture design|refactor entire|multi-file|leetcode|algorithm proof)\b/i.test(cleanText)
-  ) {
-    heavyReason = 'heavy_coding_or_reasoning';
+  // PC Commands are locked to JEEVA's own Local AI unless user explicitly uses @gemini
+  const strictNoApi = Boolean(isPcCommand && strictCommands && !forceCloud);
+  if (strictNoApi) {
+    forceLocal = true;
+    forceCloud = false;
   }
 
   let routeReason = 'Auto Hybrid: running locally first to save API calls';
-  if (!online) routeReason = 'Auto-Switched to Local: internet offline detected';
+  if (strictNoApi) routeReason = 'Command-First Local Lock: executing locally (0 Gemini API calls)';
+  else if (!online) routeReason = 'Auto-Switched to Local: internet offline detected';
   else if (forceCloud && mode === 'cloud') routeReason = 'Cloud Mode selected';
-  else if (forceCloud) routeReason = 'Forced Cloud via @cloud tag';
+  else if (forceCloud) routeReason = 'Forced Cloud via @gemini tag';
   else if (heavyReason) routeReason = `Auto-Switched to Gemini: ${heavyReason.replace(/_/g, ' ')}`;
   else if (freeRamLow || batteryLow) routeReason = 'Low RAM/Battery Guard active — avoiding heavy SLM';
 
   return {
-    cleanText: cleanText || String(text || '').trim(),
+    cleanText: effectiveText,
     mode: !online && mode === 'auto' ? 'offline' : mode,
     online,
     batteryLow,
     freeRamLow,
+    queryKind,
+    isPcCommand,
+    strictNoApi,
     forceCloud,
     forceLocal,
     heavyReason,
     routeReason,
-    shouldTryLocalFirst: !forceCloud && ((!heavyReason && !freeRamLow) || forceLocal),
+    shouldTryLocalFirst: !forceCloud && (isPcCommand || ((!heavyReason && !freeRamLow) || forceLocal)),
   };
 }
 

@@ -242,6 +242,11 @@ globalThis.window = {
     typeClipboard: async (t) => `Typed ${t}`,
     sendHotkey: async (c) => `Sent ${c}`,
     mouseAction: async (s, _x, _y, _x2, _y2, d) => `Mouse ${s} ${d}`,
+    scheduler: async (sub, delay, msg) => `Scheduled ${sub}: ${msg} in ${delay}m`,
+    filePro: async (sub, src) => `Organized ${sub} ${src}`,
+    openSetting: async (s) => `Opened setting ${s}`,
+    listInstalledApps: async (f) => `Installed apps (${f || 'all'})`,
+    windowControl: async (act, app) => `Window ${act} ${app}`,
   },
 };
 
@@ -395,6 +400,22 @@ assert.equal(typeof createStreamingSpeaker, 'function');
 const spChunks = splitIntoChunks('First short answer sentence. Second longer explanation sentence right after it.', 220, 100);
 assert.ok(spChunks.length >= 1 && spChunks[0].length <= 100);
 
+// Layer-1 slot action verification (0 Gemini API calls)
+const { runLocalQuickBrain } = await import(pathToFileURL(path.join(ROOT, 'src/services/localQuickBrain.js')).href);
+
+const remHit = await runLocalQuickBrain('10 minute baad meeting reminder lagao');
+assert.equal(remHit.handled, true);
+assert.equal(remHit.tools[0].name, 'schedule_pc_task');
+
+const orgHit = await runLocalQuickBrain('downloads organize karo');
+assert.equal(orgHit.handled, true);
+assert.equal(orgHit.tools[0].name, 'file_manager_pro');
+
+const btHit = await runLocalQuickBrain('bluetooth settings kholo');
+assert.equal(btHit.handled, true);
+assert.equal(btHit.tools[0].name, 'open_windows_setting');
+assert.equal(btHit.tools[0].args.setting, 'bluetooth');
+
 const volAur = await tryFastVoiceAction('volume thoda aur badhao');
 assert.equal(volAur.handled, true);
 assert.equal(volAur.tools[0].args.action, 'up');
@@ -497,6 +518,20 @@ assert.equal(routeCloud.shouldTryLocalFirst, false);
 
 const routeLocal = assessQueryRouting('18% of 2500 kitna hoga', null, 'auto');
 assert.equal(routeLocal.shouldTryLocalFirst, true);
+
+const cmdRouteCloudMode = assessQueryRouting('notepad me hello world type karo', null, 'cloud', { online: true, strictLocalCommands: true });
+assert.equal(cmdRouteCloudMode.queryKind, 'pc_command');
+assert.equal(cmdRouteCloudMode.strictNoApi, true);
+assert.equal(cmdRouteCloudMode.forceCloud, false);
+
+const weatherRoute = assessQueryRouting('aaj Delhi ka weather kya hai', null, 'auto', { online: true });
+assert.equal(weatherRoute.queryKind, 'cloud_web_heavy');
+assert.equal(weatherRoute.heavyReason, 'live_web_knowledge');
+assert.equal(weatherRoute.strictNoApi, false);
+
+const explicitCloudCmd = assessQueryRouting('@gemini chrome kholo', null, 'auto', { online: true });
+assert.equal(explicitCloudCmd.forceCloud, true);
+assert.equal(explicitCloudCmd.strictNoApi, false);
 
 const hw = detectHardwareProfile();
 assert.ok(hw.totalGb > 0 && hw.safeThreads >= 2);

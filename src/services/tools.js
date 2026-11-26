@@ -629,7 +629,7 @@ export async function executeFunctionCall(
     appendAuditLog({ tool: name, category, summary, decision: `allowed (${targetBypass ? targetScope : policy})` });
   }
 
-  if (isMobileBrowser) {
+  if (name === 'mobile_browser_action') {
     return { result: await executeMobileBrowserAction(args.action, args.value) };
   }
 
