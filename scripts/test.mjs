@@ -1,0 +1,238 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync, spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import * as luIcons from 'react-icons/lu';
+
+const require = createRequire(import.meta.url);
+const ROOT = path.resolve(import.meta.dirname, '..');
+
+function readRel(rel) {
+  return fs.readFileSync(path.join(ROOT, rel), 'utf8');
+}
+
+// 1. Node syntax check on server & all Electron CJS modules
+console.log('[1/6] Checking JS/CJS syntax...');
+const jsTargets = [
+  'server/index.js',
+  ...fs.readdirSync(path.join(ROOT, 'electron'))
+    .filter((f) => f.endsWith('.cjs'))
+    .map((f) => path.join('electron', f)),
+];
+for (const rel of jsTargets) {
+  execFileSync(process.execPath, ['-c', path.join(ROOT, rel)], { stdio: 'pipe' });
+}
+
+// 2. Cross-wiring static audit (icons, tools, IPCs, actions, permissions)
+console.log('[2/6] Running full cross-wiring audit...');
+function checkIcons(dir) {
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) checkIcons(full);
+    else if (/\.(js|jsx)$/.test(ent.name)) {
+      const code = fs.readFileSync(full, 'utf8');
+      for (const hit of code.matchAll(/import\s*\{([^}]+)\}\s*from\s*['"]react-icons\/lu['"]/g)) {
+        for (const raw of hit[1].split(',')) {
+          const name = raw.trim().split(/\s+as\s+/)[0].trim();
+          if (name) assert.ok(luIcons[name], `Missing react-icons/lu export "${name}" in ${full}`);
+        }
+      }
+    }
+  }
+}
+checkIcons(path.join(ROOT, 'src'));
+
+const toolsSrc = readRel('src/services/tools.js');
+const permSrc = readRel('src/services/permissions.js');
+const guardSrc = readRel('electron/permission-guard.cjs');
+const actionsSrc = readRel('electron/pc-actions.cjs');
+const mainSrc = readRel('electron/main.cjs');
+const preloadSrc = readRel('electron/preload.cjs');
+const bridgeSrc = readRel('src/services/bridge.js');
+
+const toolsArrayBlock = toolsSrc.slice(toolsSrc.indexOf('export const TOOLS'), toolsSrc.indexOf('function guessDocumentMime'));
+const declaredTools = [...toolsArrayBlock.matchAll(/name:\s*'([a-z_]+)'/g)].map((m) => m[1]);
+const execBlock = toolsSrc.slice(toolsSrc.indexOf('export async function executeFunctionCall'));
+const handledCases = new Set([...execBlock.matchAll(/case\s*'([a-z_]+)'/g)].map((m) => m[1]));
+if (execBlock.includes("name === 'generate_image_tool'")) handledCases.add('generate_image_tool');
+if (execBlock.includes("name === 'mobile_browser_action'")) handledCases.add('mobile_browser_action');
+
+const permCases = new Set(
+  [...permSrc.slice(permSrc.indexOf('getToolCategory'), permSrc.indexOf('getToolRiskLevel')).matchAll(/case\s*'([a-z_]+)'/g)].map((m) => m[1])
+);
+
+for (const t of declaredTools) {
+  assert.ok(handledCases.has(t), `Tool "${t}" missing in executeFunctionCall`);
+  assert.ok(permCases.has(t), `Tool "${t}" missing in permissions.js getToolCategory`);
+}
+
+const preloadInvokes = [...preloadSrc.matchAll(/ipcRenderer\.invoke\(['"]([^'"]+)['"]/g)].map((m) => m[1]);
+const mainHandles = new Set([...mainSrc.matchAll(/ipcMain\.handle\(['"]([^'"]+)['"]/g)].map((m) => m[1]));
+for (const ch of preloadInvokes) {
+  assert.ok(mainHandles.has(ch), `IPC channel "${ch}" exposed in preload.cjs but missing in main.cjs`);
+}
+
+const actionsBlock = actionsSrc.slice(actionsSrc.indexOf('const actions = {'), actionsSrc.indexOf('return {\n    actions'));
+const actionKeys = [...actionsBlock.matchAll(/^\s{4}(?:async\s+)?([a-zA-Z0-9_]+)\s*\(/gm)].map((m) => m[1]);
+const guardCases = new Set(
+  [...guardSrc.slice(guardSrc.indexOf('getActionCategory'), guardSrc.indexOf('isActionHighRisk')).matchAll(/case\s*'([a-zA-Z0-9_]+)'/g)].map((m) => m[1])
+);
+const remoteActions = new Set([...bridgeSrc.matchAll(/callRemoteAction\(['"]([a-zA-Z0-9_]+)['"]/g)].map((m) => m[1]));
+
+for (const act of actionKeys) {
+  assert.ok(guardCases.has(act), `Action "${act}" missing in permission-guard.cjs`);
+  if (!['liveStats', 'saveImage'].includes(act)) {
+    assert.ok(remoteActions.has(act), `Action "${act}" missing in bridge.js remote actions`);
+  }
+}
+console.log(`   Verified ${declaredTools.length} tools, ${preloadInvokes.length} IPC handlers, ${actionKeys.length} actions.`);
+
+// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard
+console.log('[3/6] Testing coord-mapper, updater, scheduler & permission guard...');
+const { mapCoordsToPhysical } = require(path.join(ROOT, 'electron/coord-mapper.cjs'));
+const { compareSemver } = require(path.join(ROOT, 'electron/updater.cjs'));
+const { createScheduler } = require(path.join(ROOT, 'electron/pc-scheduler.cjs'));
+const { getActionCategory, isActionHighRisk } = require(path.join(ROOT, 'electron/permission-guard.cjs'));
+
+const mapped150 = mapCoordsToPhysical({
+  x: 960,
+  y: 600,
+  coordSpace: 'pixels',
+  screenshotMeta: { imageWidth: 1920, imageHeight: 1200, physicalWidth: 2880, physicalHeight: 1800, scaleFactor: 1.5 },
+  primaryDisplay: { scaleFactor: 1.5, size: { width: 1920, height: 1200 }, bounds: { x: 0, y: 0 } },
+});
+assert.equal(mapped150.x, 1440);
+assert.equal(mapped150.y, 900);
+
+const mappedNorm = mapCoordsToPhysical({
+  x: 500,
+  y: 500,
+  coordSpace: 'normalized_1000',
+  primaryDisplay: { scaleFactor: 1, size: { width: 1920, height: 1080 }, bounds: { x: 0, y: 0 } },
+});
+assert.equal(mappedNorm.x, 960);
+assert.equal(mappedNorm.y, 540);
+
+assert.equal(compareSemver('1.0.2', '1.0.0'), 1);
+assert.equal(compareSemver('1.0.0', '1.0.0'), 0);
+assert.equal(compareSemver('0.9.9', '1.0.0'), -1);
+
+assert.equal(getActionCategory('browserControl', ['youtube_skip_ad']), 'screen_input');
+assert.equal(getActionCategory('browserControl', ['list_tabs']), 'apps_window');
+assert.equal(isActionHighRisk('manageProcess', ['kill_process', '123']), true);
+assert.equal(isActionHighRisk('emptyRecycleBin', []), true);
+
+const tmpSchedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-test-sched-'));
+let fired = false;
+const sched = createScheduler({ userDataDir: tmpSchedDir, onFire: () => { fired = true; } });
+sched.scheduleReminder({ delayMinutes: 0.003, message: 'Test' });
+const cmd = sched.scheduleDelayedCommand({ delayMinutes: 5, command: 'echo no' });
+assert.equal(sched.cancelTask(cmd.id).cancelled, 1);
+await new Promise((r) => setTimeout(r, 320));
+assert.equal(fired, true);
+sched.dispose();
+fs.rmSync(tmpSchedDir, { recursive: true, force: true });
+
+// 4. Voice router verification (including "batao" status exception + battery + browser)
+console.log('[4/6] Testing fast Voice Router rules...');
+const memStore = new Map();
+globalThis.localStorage = {
+  getItem: (k) => (memStore.has(k) ? memStore.get(k) : null),
+  setItem: (k, v) => memStore.set(k, String(v)),
+  removeItem: (k) => memStore.delete(k),
+};
+globalThis.localStorage.setItem(
+  'jeeva_permission_rules',
+  JSON.stringify({ hardware_settings: 'always', apps_window: 'always', files_storage: 'always', screen_input: 'always' })
+);
+globalThis.window = {
+  electronAPI: {
+    battery: async () => 'Battery: 85% (Charging)',
+    diagnostics: async () => JSON.stringify([{ name: 'Code', ramMb: 520 }]),
+    browserControl: async (act) => `Ran ${act}`,
+    clipboardHistory: async () => ({ items: [{ preview: 'hello' }] }),
+  },
+};
+
+const vrUrl = pathToFileURL(path.join(ROOT, 'src/services/voiceRouter.js')).href;
+const { tryFastVoiceAction, matchWakePhrase, getWakeOpenMode, setWakeOpenMode } = await import(vrUrl);
+
+const aliasWake = matchWakePhrase('Hey Jeean chrome kholo', 'Jeeva');
+assert.equal(aliasWake.matched, true);
+assert.equal(aliasWake.command, 'chrome kholo');
+
+const exactWake = matchWakePhrase('Hey Jeeva', 'Jeeva');
+assert.equal(exactWake.matched, true);
+assert.equal(exactWake.command, '');
+
+assert.equal(setWakeOpenMode('full'), 'full');
+assert.equal(getWakeOpenMode(), 'full');
+assert.equal(setWakeOpenMode('cortana'), 'cortana');
+
+const topBatao = await tryFastVoiceAction('top processes batao');
+assert.equal(topBatao.handled, true);
+assert.ok(topBatao.replyText.includes('Code'));
+
+const batBatao = await tryFastVoiceAction('battery batao');
+assert.equal(batBatao.handled, true);
+assert.ok(batBatao.replyText.includes('85%'));
+
+const tabAct = await tryFastVoiceAction('new tab');
+assert.equal(tabAct.handled, true);
+assert.equal(tabAct.tools[0].args.action, 'new_tab');
+
+const openEnded = await tryFastVoiceAction('python ke baare mein batao');
+assert.equal(openEnded.handled, false);
+
+// 5. Render Server timed & scoped share tokens verification
+console.log('[5/6] Testing Render server expiring/scoped share links...');
+const serverUrl = pathToFileURL(path.join(ROOT, 'server/index.js')).href;
+const {
+  createTimedShareToken,
+  getRelayAuthContext,
+  isActionAllowedForReadOnly,
+  hashPairToken,
+  UPDATE_LATEST_VERSION,
+} = await import(serverUrl);
+
+assert.ok(UPDATE_LATEST_VERSION);
+const ownerPair = 'JVA-TEST-OWNR-1234';
+const ownerKey = `pair:${hashPairToken(ownerPair)}`;
+
+const tmpFull = createTimedShareToken({ ownerKey, ttlMinutes: 60, scope: 'full' });
+assert.ok(tmpFull.shareToken.startsWith('JVA-TMP-'));
+assert.equal(tmpFull.scope, 'full');
+
+const fullCtx = getRelayAuthContext({ headers: { 'x-pair-token': tmpFull.shareToken } });
+assert.equal(fullCtx.ownerKey, ownerKey);
+assert.equal(fullCtx.scope, 'full');
+assert.equal(fullCtx.expired, false);
+
+const tmpRo = createTimedShareToken({ ownerKey, ttlMinutes: 30, scope: 'read_only' });
+const roCtx = getRelayAuthContext({ headers: { 'x-pair-token': tmpRo.shareToken } });
+assert.equal(roCtx.ownerKey, ownerKey);
+assert.equal(roCtx.scope, 'read_only');
+assert.equal(isActionAllowedForReadOnly('runCommand', ['echo hack']), false);
+assert.equal(isActionAllowedForReadOnly('liveStats', []), true);
+assert.equal(isActionAllowedForReadOnly('diagnostics', ['kill_process', '123']), false);
+assert.equal(isActionAllowedForReadOnly('diagnostics', ['overview']), true);
+
+const fakeTmpCtx = getRelayAuthContext({ headers: { 'x-pair-token': 'JVA-TMP-DOESNOTEXIST' } });
+assert.equal(fakeTmpCtx.ownerKey, null);
+assert.equal(fakeTmpCtx.expired, true);
+
+// 6. PowerShell AST validation on ALL .ps1 scripts
+console.log('[6/6] Checking PowerShell AST across all electron/*.ps1...');
+const psFiles = fs.readdirSync(path.join(ROOT, 'electron')).filter((f) => f.endsWith('.ps1'));
+const astScript = psFiles
+  .map((f) => {
+    const full = path.join(ROOT, 'electron', f).replace(/'/g, "''");
+    return `$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile('${full}',[ref]$null,[ref]$e);if($e){throw "AST error in ${f}: $($e[0].Message)"};`;
+  })
+  .join('');
+execFileSync('powershell.exe', ['-NoProfile', '-Command', astScript], { stdio: 'pipe' });
+
+console.log(`ALL_TESTS_PASSED (${psFiles.length} PS scripts, ${declaredTools.length} AI tools, server share-tokens, DPI mapper, voice router)`);
