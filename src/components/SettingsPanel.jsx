@@ -736,7 +736,7 @@ export default function SettingsPanel({
                   </div>
                   {!canInstallPWA && (
                     <p className="text-[11px] text-obsidian-muted">
-                      Browser menu -&gt; &quot;Install JEEVA AI&quot; (or Share -&gt; Add to Home Screen on iOS). For Windows PC installer, run <code className="text-obsidian-secondary">npm run build</code> on PC to generate the <code className="text-obsidian-secondary">release/*.exe</code> installer.
+                      Browser menu -&gt; &quot;Install JEEVA AI&quot; (or Share -&gt; Add to Home Screen on iOS). For Windows PC installer, run <code className="text-obsidian-secondary">npm run build:desktop</code> on PC to generate the <code className="text-obsidian-secondary">release/*.exe</code> installer.
                     </p>
                   )}
                 </div>

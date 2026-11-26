@@ -9,8 +9,9 @@
     "dev": "concurrently \"npm run dev:react\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
     "dev:react": "vite",
     "dev:electron": "electron .",
-    "build": "vite build --mode public && electron-builder",
-    "build:react": "vite build --mode public"
+    "build": "vite build --mode public",
+    "build:react": "vite build --mode public",
+    "build:desktop": "vite build --mode public && electron-builder --win nsis --publish never"
   },
   "engines": {
     "node": ">=18.0.0"
