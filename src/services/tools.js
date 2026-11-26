@@ -1,5 +1,6 @@
 import { getSystemAPI, executeMobileBrowserAction } from './bridge.js';
 import { queryEpisodicTimeline } from './episodicMemory.js';
+import { summarizeTextLocally } from './docExtractor.js';
 import {
   PERMISSION_CATEGORIES,
   getToolCategory,
@@ -618,7 +619,24 @@ export async function executeFunctionCall(
   }
 
   async function readLocalDocument(filePath, instruction) {
-    if (!client) throw new Error('Gemini client not initialized');
+    // 1. Try 100% Local Offline Extraction FIRST (PDF FlateDecode, DOCX/PPTX/XLSX XML, TXT)
+    if (api.extractDocText) {
+      try {
+        const localDoc = await api.extractDocText({ filePath, name: filePath });
+        if (localDoc?.ok && !localDoc.isScannedPdf && localDoc.text) {
+          const wantShortSummary = /\b(summary|summarize|short|brief|points)\b/i.test(instruction || '');
+          if (wantShortSummary && !client) {
+            return `Local Summary (${localDoc.name}):\n\n${summarizeTextLocally(localDoc.text, 6)}`;
+          }
+          return localDoc.text.slice(0, 6500);
+        }
+      } catch {}
+    }
+
+    // 2. Fallback to Gemini ONLY if scanned/image PDF and Gemini client is ready
+    if (!client) {
+      throw new Error('Yeh scanned/image PDF hai — local text extract nahi mila, aur Gemini API connected nahi hai.');
+    }
     const file = await api.readBinaryFile(filePath);
     const mime = guessDocumentMime(filePath);
     const models = Array.from(new Set([preferredModel, 'gemini-3.5-flash-lite', 'gemini-4-hydrogen']));

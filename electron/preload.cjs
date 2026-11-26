@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   runCommand: (cmd) => ipcRenderer.invoke('system:runCommand', cmd),
   readFile: (path) => ipcRenderer.invoke('system:readFile', path),
   readBinaryFile: (path) => ipcRenderer.invoke('system:readBinaryFile', path),
+  extractDocText: (payload) => ipcRenderer.invoke('system:extractDocText', payload),
   writeFile: (path, content) => ipcRenderer.invoke('system:writeFile', path, content),
   listFiles: (dir) => ipcRenderer.invoke('system:listFiles', dir),
   searchFiles: (query, dir) => ipcRenderer.invoke('system:searchFiles', query, dir),

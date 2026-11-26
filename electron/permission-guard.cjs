@@ -65,6 +65,7 @@ function getActionCategory(action, args = []) {
 
     case 'readFile':
     case 'readBinaryFile':
+    case 'extractDocText':
     case 'writeFile':
     case 'listFiles':
     case 'searchFiles':

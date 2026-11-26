@@ -20,6 +20,7 @@ import {
   LuZap,
 } from 'react-icons/lu';
 import { startVoiceCapture } from '../services/voiceCapture';
+import { isTextOrDocAttachment } from '../services/docExtractor';
 import { toast } from '../services/toast';
 
 const SLASH_COMMANDS = [
@@ -182,12 +183,13 @@ export default function InputBar({
     reader.onload = (ev) => {
       const mimeType =
         file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream');
+      const isImage = mimeType.startsWith('image/');
       setAttachment({
         dataUrl: ev.target.result,
         mimeType,
         name: file.name,
-        isImage: mimeType.startsWith('image/'),
-        isDocument: mimeType === 'application/pdf' || /\.(pdf|docx|pptx|xlsx)$/i.test(file.name),
+        isImage,
+        isDocument: !isImage && isTextOrDocAttachment({ name: file.name, mimeType, isImage }),
       });
     };
     reader.readAsDataURL(file);
@@ -239,9 +241,11 @@ export default function InputBar({
     };
   }, []);
 
+  const canUseBrain = isReady || brainMode !== 'cloud';
+
   const startRecording = () => {
-    if (!isReady) {
-      toast.error('Pehle Settings mein Gemini API key ya Cloud URL connect karein.');
+    if (!canUseBrain) {
+      toast.error('Pehle Settings mein Gemini API key connect karein ya Brain Mode ko Hybrid par set karein.');
       return;
     }
     const baseText = text ? text + ' ' : '';
@@ -401,13 +405,13 @@ export default function InputBar({
             placeholder={
               voiceStatus
                 ? voiceStatus
-                : isReady
-                ? 'Ask anything, drop a PDF, or give a PC command...'
-                : 'Configure Gemini API key in Settings to begin'
+                : canUseBrain
+                  ? 'Ask anything, drop a PDF/TXT, or give a PC command...'
+                  : 'Connect Gemini API key or switch Brain to Hybrid'
             }
             rows={1}
             className="w-full bg-transparent px-2 py-1.5 text-sm text-obsidian-text placeholder:text-obsidian-muted focus:outline-none resize-none max-h-36 overflow-y-auto"
-            disabled={!isReady}
+            disabled={!canUseBrain}
           />
 
           {/* Bottom Toolbar */}
@@ -417,14 +421,14 @@ export default function InputBar({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="p-1.5 rounded-lg text-obsidian-secondary hover:text-obsidian-text hover:bg-obsidian-elevated transition-colors"
-                title="Attach PDF, Image, Video, or Audio"
+                title="Attach PDF, TXT, DOCX, Image, Video, or Audio"
               >
                 <LuPaperclip className="w-4 h-4" />
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.docx,.pptx,.xlsx,image/*,video/*,audio/*"
+                accept=".pdf,.docx,.pptx,.xlsx,.txt,.md,.csv,.json,.log,image/*,video/*,audio/*"
                 onChange={handleFileUpload}
                 className="hidden"
               />

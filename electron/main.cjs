@@ -419,6 +419,7 @@ ipcMain.handle('system:wifi', (_, m) => actions.wifi(m));
 ipcMain.handle('system:runCommand', (_, cmd) => actions.runCommand(cmd));
 ipcMain.handle('system:readFile', (_, p) => actions.readFile(p));
 ipcMain.handle('system:readBinaryFile', (_, p) => actions.readBinaryFile(p));
+ipcMain.handle('system:extractDocText', (_, payload) => actions.extractDocText(payload));
 ipcMain.handle('system:writeFile', (_, p, c) => actions.writeFile(p, c));
 ipcMain.handle('system:listFiles', (_, d) => actions.listFiles(d));
 ipcMain.handle('system:searchFiles', (_, q, d) => actions.searchFiles(q, d));

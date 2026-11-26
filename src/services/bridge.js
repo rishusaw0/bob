@@ -217,6 +217,7 @@ export function getSystemAPI() {
     runCommand: (cmd) => callRemoteAction('runCommand', [cmd]),
     readFile: (p) => callRemoteAction('readFile', [p]),
     readBinaryFile: (p) => callRemoteAction('readBinaryFile', [p]),
+    extractDocText: (payload) => callRemoteAction('extractDocText', [payload]),
     writeFile: (p, c) => callRemoteAction('writeFile', [p, c]),
     listFiles: (d) => callRemoteAction('listFiles', [d]),
     searchFiles: (q, d) => callRemoteAction('searchFiles', [q, d]),

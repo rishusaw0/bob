@@ -44,6 +44,7 @@ import {
   compactHistoryForCloud,
 } from './services/brainRouter';
 import { logEpisodicTurn } from './services/episodicMemory';
+import { isTextOrDocAttachment, runLocalDocumentTurn } from './services/docExtractor';
 import { useVoiceEngine } from './services/useVoiceEngine';
 import { useWatchdogAndStats } from './hooks/useWatchdogAndMemory';
 import ToastContainer from './components/ToastContainer';
@@ -709,6 +710,29 @@ export default function App() {
             image: quick.image || null,
             tools: quick.tools || [],
             speakLabel: 'Local Brain',
+          });
+          return;
+        }
+      }
+
+      // Local Document & PDF Reader Pipeline (0 Gemini API calls for digital PDF, DOCX, TXT, MD, CSV!)
+      if (attachment && isTextOrDocAttachment(attachment) && !forceCloud && !routing.forceCloud) {
+        const docTurn = await runLocalDocumentTurn({
+          attachment,
+          userPrompt: promptText,
+          historyMessages: messages,
+          requestPermission,
+          fromVoice,
+        });
+        if (docTurn?.handled) {
+          finalizeReply({
+            replyText: docTurn.replyText,
+            tier: docTurn.tier || 'fast',
+            modelLabel: docTurn.modelLabel || 'Offline Doc Reader',
+            routeReason: docTurn.routeReason,
+            tools: docTurn.tools || [],
+            shouldSpeak: Boolean(docTurn.autoSpeak || ttsEnabled || fromVoice),
+            speakLabel: `Reading: ${attachment.name}`,
           });
           return;
         }

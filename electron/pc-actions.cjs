@@ -6,6 +6,7 @@ const { exec, execFile } = require('child_process');
 const { mapCoordsToPhysical } = require('./coord-mapper.cjs');
 const { createBrowserBridge } = require('./browser-bridge.cjs');
 const { checkPathSafety, checkCommandSafety, checkProcessKillSafety } = require('./security-guardrails.cjs');
+const { extractDocumentContent } = require('./doc-reader.cjs');
 
 let prevCpuTotals = null;
 function sampleCpuUsagePct() {
@@ -243,6 +244,10 @@ function createPcActions({
         size: stats.size,
         name: path.basename(filePath),
       };
+    },
+
+    async extractDocText(payload) {
+      return extractDocumentContent(payload || {});
     },
 
     async writeFile(filePath, content) {

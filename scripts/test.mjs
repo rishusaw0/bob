@@ -496,6 +496,25 @@ assert.equal(epStore.forgetDay('2026-11-25').removed, 1);
 epStore.close();
 fs.rmSync(tmpEpDir, { recursive: true, force: true });
 
+// Offline PDF & Text Reader tests (zlib FlateDecode PDF + Extractive Local Summarizer + Router stays Local)
+const zlib = require('node:zlib');
+const { extractPdfTextFromBuffer } = require(path.join(ROOT, 'electron/doc-reader.cjs'));
+const { isTextOrDocAttachment, summarizeTextLocally } = await import(pathToFileURL(path.join(ROOT, 'src/services/docExtractor.js')).href);
+const compressedPdfStream = zlib.deflateSync(Buffer.from('BT (Hello JEEVA Offline PDF Reader) Tj ET', 'latin1'));
+const fakePdfBuf = Buffer.concat([
+  Buffer.from('%PDF-1.4\n1 0 obj << /Type /Page >> endobj\n2 0 obj << /Filter /FlateDecode >>\nstream\n', 'latin1'),
+  compressedPdfStream,
+  Buffer.from('\nendstream endobj\n%%EOF', 'latin1'),
+]);
+const pdfExtracted = extractPdfTextFromBuffer(fakePdfBuf);
+assert.equal(pdfExtracted.isScannedPdf, false);
+assert.ok(pdfExtracted.text.includes('Hello JEEVA Offline PDF Reader'));
+assert.equal(isTextOrDocAttachment({ name: 'notes.pdf', mimeType: 'application/pdf', isImage: false }), true);
+assert.equal(isTextOrDocAttachment({ name: 'notes.txt', mimeType: 'text/plain', isImage: false }), true);
+assert.equal(isTextOrDocAttachment({ name: 'photo.png', mimeType: 'image/png', isImage: true }), false);
+assert.equal(assessQueryRouting('Summarize this PDF', { name: 'notes.pdf', mimeType: 'application/pdf' }, 'auto').shouldTryLocalFirst, true);
+assert.ok(summarizeTextLocally('First clear sentence about JEEVA offline AI. Second sentence about CPU efficiency. Third sentence about RAM safety.', 2).length > 20);
+
 // 6. PowerShell AST validation on ALL .ps1 scripts
 console.log('[6/6] Checking PowerShell AST across all electron/*.ps1...');
 const psFiles = fs.readdirSync(path.join(ROOT, 'electron')).filter((f) => f.endsWith('.ps1'));

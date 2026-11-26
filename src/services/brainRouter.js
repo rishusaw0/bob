@@ -1,4 +1,5 @@
 // Hybrid Brain Router — Mode Management, Complexity Gatekeeper, History Compactor & Savings Telemetry
+import { isTextOrDocAttachment } from './docExtractor.js';
 
 const BRAIN_MODE_KEY = 'jeeva_brain_mode'; // 'auto' | 'offline' | 'cloud'
 const BRAIN_STATS_KEY = 'jeeva_brain_stats';
@@ -103,9 +104,9 @@ export function assessQueryRouting(text, attachment = null, mode = getBrainMode(
     forceCloud = false;
   }
 
-  // Heavy / cloud-only triggers (only trigger in 'auto' mode when user hasn't forced local)
+  // Heavy / cloud-only triggers (PDF/text documents stay LOCAL; only images/audio/video/scanned need Cloud!)
   let heavyReason = '';
-  if (attachment) {
+  if (attachment && !isTextOrDocAttachment(attachment)) {
     heavyReason = 'multimodal_attachment';
   } else if (/\b(generate image|create image|draw a|make a picture|photo banao|image banao)\b/i.test(cleanText) || /^\/image\b/i.test(cleanText)) {
     heavyReason = 'image_generation';
