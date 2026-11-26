@@ -240,6 +240,7 @@ export function getSystemAPI() {
     windowControl: (action, targetApp) => callRemoteAction('windowControl', [action, targetApp]),
     uiAutomate: (action, appName, element, value) =>
       callRemoteAction('uiAutomate', [action, appName, element, value]),
+    screenRead: (mode, targetText) => callRemoteAction('screenRead', [mode, targetText]),
     browserControl: (sub, value) => callRemoteAction('browserControl', [sub, value]),
     mouseAction: (sub, x, y, x2, y2, delta, coordSpace) =>
       callRemoteAction('mouseAction', [sub, x, y, x2, y2, delta, coordSpace]),

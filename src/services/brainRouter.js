@@ -110,7 +110,7 @@ export function assessQueryRouting(text, attachment = null, mode = getBrainMode(
     heavyReason = 'multimodal_attachment';
   } else if (/\b(generate image|create image|draw a|make a picture|photo banao|image banao)\b/i.test(cleanText) || /^\/image\b/i.test(cleanText)) {
     heavyReason = 'image_generation';
-  } else if (/\b(screenshot le lo aur|screen par kya|dekh ke batao|screen dekho|click on|ui inspect)\b/i.test(cleanText)) {
+  } else if (/\b(screenshot le lo aur|analyze screenshot|vision inspect)\b/i.test(cleanText)) {
     heavyReason = 'vision_screen_task';
   } else if (
     /\b(weather|mausam|latest news|live score|stock price today|current price|google search|search online|deep research)\b/i.test(cleanText) ||

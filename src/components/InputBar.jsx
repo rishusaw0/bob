@@ -27,6 +27,7 @@ const SLASH_COMMANDS = [
   { cmd: '/image', label: 'Generate Image', icon: LuImage, hint: '/image <prompt>', run: (arg) => arg ? `Generate an image: ${arg}` : null },
   { cmd: '/translate', label: 'Translate Text', icon: LuLanguages, hint: '/translate [lang] <text>', run: (arg) => arg ? `Translate this: ${arg}` : null },
   { cmd: '/summarize', label: 'Summarize Chat', icon: LuSparkles, hint: '/summarize', run: () => 'Summarize our entire conversation concisely.' },
+  { cmd: '/screenread', label: 'Screen Reader (Offline)', icon: LuMonitor, hint: '/screenread', run: () => 'Screen padh kar sunao aur clickable buttons batao' },
   { cmd: '/screenshot', label: 'Take Screenshot', icon: LuMonitor, hint: '/screenshot', run: () => 'Screenshot le lo aur batao screen par kya hai' },
   { cmd: '/system', label: 'System Info', icon: LuCpu, hint: '/system', run: () => 'System ki complete info batao' },
   { cmd: '/voice', label: 'Switch Voice', icon: LuVolume2, hint: '/voice [en/hi/mix]', meta: 'settings' },
@@ -441,6 +442,19 @@ export default function InputBar({
               >
                 <LuCamera className="w-4 h-4" />
               </button>
+
+              {window.electronAPI && (
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => onSend('Screen padh kar sunao aur buttons batao')}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-mono text-obsidian-secondary hover:text-emerald-300 hover:bg-obsidian-elevated transition-colors disabled:opacity-40"
+                  title="Read active screen text & clickable buttons offline"
+                >
+                  <LuMonitor className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Screen</span>
+                </button>
+              )}
 
               <button
                 type="button"

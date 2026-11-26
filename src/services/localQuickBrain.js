@@ -307,6 +307,72 @@ async function tryEpisodicHistoryRecall(text, lang) {
   };
 }
 
+async function tryLocalScreenReader(text, lang, requestPermission) {
+  const clean = String(text || '').trim();
+  const lower = clean.toLowerCase();
+
+  // 1. Read active screen / window + interactive buttons offline (UIA + WinRT OCR)
+  if (
+    /\b(read screen|screen read|screen reader|screen par kya|screen pe kya|read this screen|what is on.*screen|what's on.*screen|screen padh|screen batao|screen ke buttons)\b|स्क्रीन पढ़ो|स्क्रीन पर क्या/i.test(
+      lower
+    )
+  ) {
+    const res = await executeFunctionCall('screen_reader', { action: 'read' }, requestPermission, {
+      fromVoice: false,
+      userPrompt: clean,
+    });
+    if (res?.error) {
+      return { replyText: res.error, tools: [{ name: 'screen_reader', status: 'error', args: { action: 'read' } }] };
+    }
+    let data = {};
+    try {
+      data = JSON.parse(res?.result || '{}');
+    } catch {}
+    const title = data.windowTitle || 'Active Window';
+    const textLines = Array.isArray(data.visibleText) && data.visibleText.length ? data.visibleText : data.ocrText || [];
+    const controls = Array.isArray(data.interactiveElements) ? data.interactiveElements : [];
+
+    const spokenSnippet = textLines.slice(0, 8).join('. ').slice(0, 420);
+    const controlList = controls.slice(0, 10).map((c) => `\`${c.name}\` (${c.type})`).join(', ');
+    const header = replyByLang(
+      lang,
+      `Active window is **${title}**.`,
+      `Abhi screen par **${title}** khula hai.`,
+      `अभी स्क्रीन पर **${title}** खुला है।`
+    );
+    const body = spokenSnippet ? `\n\n**Visible Screen Text:**\n${spokenSnippet}` : '\n\nNo readable text detected in this window.';
+    const controlsBlock = controlList ? `\n\n**Clickable Controls (${controls.length}):** ${controlList}` : '';
+
+    return {
+      replyText: `${header}${body}${controlsBlock}`,
+      autoSpeak: true,
+      tools: [{ name: 'screen_reader', status: 'done', args: { action: 'read' } }],
+    };
+  }
+
+  // 2. Click visible button / text on active screen ("click Submit on screen", "screen par Next dabao")
+  const clickMatch =
+    clean.match(/^(?:screen par|screen pe)\s+(?:click|press|tap|dabao)\s+["']?(.{2,55}?)["']?(?:\s+(?:par|pe|ko|button))?$/i) ||
+    clean.match(/^(?:click|press|tap)\s+["']?(.{2,55}?)["']?\s+(?:on screen|screen par|button on screen)$/i);
+  if (clickMatch && clickMatch[1]) {
+    const target = clickMatch[1].trim();
+    const res = await executeFunctionCall(
+      'screen_reader',
+      { action: 'click_text', target_text: target },
+      requestPermission,
+      { fromVoice: false, userPrompt: clean }
+    );
+    const ok = !res?.error;
+    return {
+      replyText: ok ? String(res.result || `Clicked ${target}`) : res.error,
+      autoSpeak: true,
+      tools: [{ name: 'screen_reader', status: ok ? 'done' : 'error', args: { action: 'click_text', target_text: target } }],
+    };
+  }
+
+  return null;
+}
+
 /**
  * Unified Tier-0 + Tier-1 Local Execution Engine.
  * Works identically for BOTH typed Chat messages and Voice commands.
@@ -316,7 +382,21 @@ export async function runLocalQuickBrain(text, { requestPermission = null } = {}
   if (!clean) return { handled: false };
   const lang = detectCommandLanguage(clean);
 
-  // 0. Zero-API Date-Indexed Episodic Memory Q&A ("Kal maine kya pucha tha?", "25 Nov ko kya bola?")
+  // 0. Zero-API Active Screen Reader & Clicker (UIA + WinRT OCR)
+  const screenHit = await tryLocalScreenReader(clean, lang, requestPermission);
+  if (screenHit) {
+    return {
+      handled: true,
+      tier: 'fast',
+      modelLabel: 'Offline Screen Reader',
+      routeReason: 'Read/used active screen offline via Windows UIA + OCR (0 API calls)',
+      replyText: screenHit.replyText,
+      autoSpeak: Boolean(screenHit.autoSpeak),
+      tools: screenHit.tools || [],
+    };
+  }
+
+  // 0b. Zero-API Date-Indexed Episodic Memory Q&A ("Kal maine kya pucha tha?", "25 Nov ko kya bola?")
   const episodicHit = await tryEpisodicHistoryRecall(clean, lang);
   if (episodicHit) {
     return {

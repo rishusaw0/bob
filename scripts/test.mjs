@@ -515,6 +515,10 @@ assert.equal(isTextOrDocAttachment({ name: 'photo.png', mimeType: 'image/png', i
 assert.equal(assessQueryRouting('Summarize this PDF', { name: 'notes.pdf', mimeType: 'application/pdf' }, 'auto').shouldTryLocalFirst, true);
 assert.ok(summarizeTextLocally('First clear sentence about JEEVA offline AI. Second sentence about CPU efficiency. Third sentence about RAM safety.', 2).length > 20);
 
+// Screen Reader routing & tool-picker checks
+assert.equal(assessQueryRouting('Screen par kya likha hai padh kar sunao', null, 'auto').shouldTryLocalFirst, true);
+assert.ok(pickTopToolsForQuery('read active screen and click submit button', 4).includes('screen_reader'));
+
 // 6. PowerShell AST validation on ALL .ps1 scripts
 console.log('[6/6] Checking PowerShell AST across all electron/*.ps1...');
 const psFiles = fs.readdirSync(path.join(ROOT, 'electron')).filter((f) => f.endsWith('.ps1'));

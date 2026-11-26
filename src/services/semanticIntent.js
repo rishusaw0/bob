@@ -327,6 +327,7 @@ const TOOL_DESCRIPTIONS = {
   pc_power_tools: 'power plan balanced high performance power saver display info recycle bin',
   memory_rag: 'remember recall memory preference project path past fact',
   episodic_recall: 'what did i ask say yesterday last week monday date history timeline morning evening',
+  screen_reader: 'read active screen visible text buttons ocr click element type into window screen reader',
 };
 
 const PRECOMPUTED_TOOL_VECS = Object.entries(TOOL_DESCRIPTIONS).map(([name, desc]) => ({

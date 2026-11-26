@@ -172,6 +172,7 @@ export function getToolCategory(name, args = {}) {
     case 'press_shortcut':
     case 'ui_automate':
     case 'mouse_and_hotkey':
+    case 'screen_reader':
       return 'screen_input';
 
     case 'run_system_command':

@@ -79,6 +79,7 @@ function getActionCategory(action, args = []) {
       return 'files_storage';
 
     case 'screenshot':
+    case 'screenRead':
     case 'typeText':
     case 'minimizeAll':
     case 'uiAutomate':

@@ -445,6 +445,9 @@ ipcMain.handle('system:windowControl', (_, action, targetApp) => actions.windowC
 ipcMain.handle('system:uiAutomate', (_, action, appName, element, value) =>
   actions.uiAutomate(action, appName, element, value)
 );
+ipcMain.handle('system:screenRead', (_, mode, targetText) =>
+  actions.screenRead(mode, targetText)
+);
 ipcMain.handle('system:mouseAction', (_, sub, x, y, x2, y2, delta, coordSpace) =>
   actions.mouseAction(sub, x, y, x2, y2, delta, coordSpace)
 );

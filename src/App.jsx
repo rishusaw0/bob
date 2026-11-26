@@ -709,6 +709,7 @@ export default function App() {
             routeReason: quick.routeReason || routing.routeReason,
             image: quick.image || null,
             tools: quick.tools || [],
+            shouldSpeak: Boolean(quick.autoSpeak || ttsEnabled || fromVoice),
             speakLabel: 'Local Brain',
           });
           return;

@@ -519,6 +519,21 @@ export const TOOLS = [
   },
   {
     type: 'function',
+    name: 'screen_reader',
+    description:
+      'Reads visible text, headings, errors, and interactive buttons/inputs on the active Windows screen offline (UIA + WinRT OCR), or clicks/types into a visible screen element.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['read', 'ocr', 'click_text', 'type_into'] },
+        target_text: { type: 'string', description: 'Button label, field name, or visible text to click or type into' },
+        input_value: { type: 'string', description: 'Text to type when action is type_into' },
+      },
+      required: ['action'],
+    },
+  },
+  {
+    type: 'function',
     name: 'generate_image_tool',
     description: 'Generates an image from a text prompt when the user asks to create/draw/generate a picture, logo, or wallpaper.',
     parameters: {
@@ -831,6 +846,16 @@ export async function executeFunctionCall(
           limit: 12,
         });
         return { result: JSON.stringify({ count: rows.length, entries: rows }) };
+      }
+      case 'screen_reader': {
+        const act = String(args.action || 'read').toLowerCase();
+        if (act === 'type_into') {
+          return {
+            result: await api.uiAutomate('set_text', 'foreground', args.target_text || '', args.input_value || ''),
+          };
+        }
+        const sr = await api.screenRead(act, args.target_text || '');
+        return { result: typeof sr === 'string' ? sr : JSON.stringify(sr) };
       }
       default:
         return { error: `Unknown function: ${name}` };

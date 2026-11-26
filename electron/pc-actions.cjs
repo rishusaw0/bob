@@ -572,6 +572,23 @@ function createPcActions({
       );
     },
 
+    async screenRead(mode = 'read', targetText = '') {
+      const cleanMode = ['read', 'ocr', 'click_text'].includes(String(mode || '').toLowerCase())
+        ? String(mode).toLowerCase()
+        : 'read';
+      const raw = await runPsScript(
+        'win-apps.ps1',
+        ['-Task', 'screen-read', '-Arg1', cleanMode, '-Arg2', String(targetText || '')],
+        25000
+      );
+      if (cleanMode === 'click_text') return raw;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return { windowTitle: '', visibleText: [String(raw || '')], ocrText: [], interactiveElements: [] };
+      }
+    },
+
     async mouseAction(sub = 'click', x = 0, y = 0, x2 = 0, y2 = 0, delta = -3, coordSpace = 'pixels') {
       const clean = String(sub || 'click').toLowerCase();
       const primary = screen.getPrimaryDisplay();

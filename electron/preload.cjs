@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowControl: (action, targetApp) => ipcRenderer.invoke('system:windowControl', action, targetApp),
   uiAutomate: (action, appName, element, value) =>
     ipcRenderer.invoke('system:uiAutomate', action, appName, element, value),
+  screenRead: (mode, targetText) => ipcRenderer.invoke('system:screenRead', mode, targetText),
 
   // Advanced Workstation & Automation
   mouseAction: (sub, x, y, x2, y2, delta, coordSpace) =>
