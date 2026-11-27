@@ -1,42 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
   <defs>
-    <linearGradient id="bgGrad" x1="12" y1="8" x2="116" y2="120" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#0f172a"/>
-      <stop offset="55%" stop-color="#090d16"/>
-      <stop offset="100%" stop-color="#05070b"/>
+    <linearGradient id="base" x1="12" y1="8" x2="116" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111b31"/>
+      <stop offset=".55" stop-color="#080d19"/>
+      <stop offset="1" stop-color="#05070d"/>
     </linearGradient>
-    <linearGradient id="ringGrad" x1="16" y1="16" x2="112" y2="112" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#34d399"/>
-      <stop offset="50%" stop-color="#38bdf8"/>
-      <stop offset="100%" stop-color="#8b5cf6"/>
+    <linearGradient id="edge" x1="18" y1="14" x2="112" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#72f4d2"/>
+      <stop offset=".48" stop-color="#36c9ff"/>
+      <stop offset="1" stop-color="#9a7bff"/>
     </linearGradient>
-    <linearGradient id="coreGrad" x1="36" y1="26" x2="94" y2="100" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#6ee7b7"/>
-      <stop offset="55%" stop-color="#38bdf8"/>
-      <stop offset="100%" stop-color="#a78bfa"/>
+    <linearGradient id="signal" x1="37" y1="29" x2="91" y2="100" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9affdf"/>
+      <stop offset=".5" stop-color="#48d9ff"/>
+      <stop offset="1" stop-color="#a78bfa"/>
     </linearGradient>
+    <radialGradient id="aura" cx="0" cy="0" r="1" gradientTransform="matrix(0 58 -58 0 64 61)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38bdf8" stop-opacity=".2"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="17" y="13" width="94" height="102" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
   </defs>
-
-  <!-- Obsidian Squircle Base -->
-  <rect x="4" y="4" width="120" height="120" rx="30" fill="url(#bgGrad)"/>
-  <rect x="5.5" y="5.5" width="117" height="117" rx="28.5" stroke="url(#ringGrad)" stroke-opacity="0.55" stroke-width="3"/>
-
-  <!-- Subtle Outer Neural Halo -->
-  <circle cx="64" cy="64" r="40" stroke="url(#ringGrad)" stroke-opacity="0.22" stroke-width="2" stroke-dasharray="6 6"/>
-
-  <!-- Modern Geometric J + Voice Core -->
-  <path
-    d="M74 34V72C74 84.15 64.15 94 52 94C42.8 94 35.1 88.35 32 80.2"
-    stroke="url(#coreGrad)"
-    stroke-width="11"
-    stroke-linecap="round"
-  />
-
-  <!-- Top Neural Spark Node -->
-  <circle cx="74" cy="34" r="6.5" fill="#6ee7b7"/>
-
-  <!-- Voice Wave Bars (Left Accent) -->
-  <rect x="34" y="46" width="6" height="18" rx="3" fill="#38bdf8" fill-opacity="0.9"/>
-  <rect x="46" y="38" width="6" height="28" rx="3" fill="#34d399"/>
-  <rect x="88" y="50" width="6" height="20" rx="3" fill="#a78bfa" fill-opacity="0.9"/>
+  <rect x="4" y="4" width="120" height="120" rx="31" fill="url(#base)"/>
+  <rect x="4.8" y="4.8" width="118.4" height="118.4" rx="30.2" stroke="url(#edge)" stroke-opacity=".7" stroke-width="1.6"/>
+  <rect x="10" y="10" width="108" height="108" rx="25" fill="url(#aura)"/>
+  <circle cx="64" cy="64" r="43" stroke="url(#edge)" stroke-opacity=".25" stroke-width="1.4" stroke-dasharray="2 6"/>
+  <path d="M64 24a40 40 0 0 1 39 31" stroke="url(#edge)" stroke-width="2.2" stroke-linecap="round" opacity=".8"/>
+  <path d="M102 73a40 40 0 0 1-27 30" stroke="url(#edge)" stroke-width="2.2" stroke-linecap="round" opacity=".55"/>
+  <g filter="url(#glow)">
+    <path d="M78 31v43.5c0 14.1-10.7 25.5-24 25.5-9.7 0-18.1-6.1-21.9-14.9" stroke="url(#signal)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M34 57h8m-4-8v16m13-24v32m36-19v21m12-12v9" stroke="url(#signal)" stroke-width="5.5" stroke-linecap="round"/>
+  </g>
+  <circle cx="78" cy="30" r="5.5" fill="#b8ffe9"/>
+  <circle cx="78" cy="30" r="9" stroke="#72f4d2" stroke-opacity=".35"/>
+  <circle cx="32" cy="85" r="3" fill="#48d9ff"/>
+  <circle cx="96" cy="90" r="2.5" fill="#a78bfa"/>
 </svg>

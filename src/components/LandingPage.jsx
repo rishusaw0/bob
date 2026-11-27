@@ -147,12 +147,16 @@ export default function LandingPage({
       <header className="border-b border-white/10 bg-[#090a0f]/75 backdrop-blur-xl sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-15 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="relative group flex items-center justify-center w-9 h-9 rounded-xl shadow-lg shadow-emerald-500/20">
-              <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-br from-emerald-400/50 via-sky-400/40 to-violet-500/50 blur-sm opacity-75 group-hover:opacity-100 transition-opacity" />
+            <div className="relative group flex items-center justify-center w-10 h-10 rounded-[14px]">
+              <div className="absolute -inset-1 rounded-[17px] bg-gradient-to-br from-emerald-300/45 via-sky-400/45 to-violet-500/45 blur-md opacity-70 group-hover:opacity-100 transition-opacity duration-300" />
+              <div className="absolute inset-0 rounded-[14px] border border-sky-200/20 shadow-[inset_0_0_12px_rgba(56,189,248,0.12)]" />
               <img
-                src="./icon.svg"
-                alt="JEEVA AI Logo"
-                className="relative w-9 h-9 rounded-xl"
+                src="/icon.svg?v=2"
+                alt="JEEVA AI"
+                width="40"
+                height="40"
+                decoding="async"
+                className="relative z-10 w-10 h-10 rounded-[14px] ring-1 ring-white/10 transition-transform duration-300 group-hover:scale-[1.04]"
               />
             </div>
             <div>
