@@ -311,6 +311,25 @@ function countAgentsForOwner(ownerKey) {
 const server = http.createServer(async (req, res) => {
   const urlObj = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
   const reqPath = urlObj.pathname;
+  const fwdProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  const hostHeader = String(req.headers.host || '').trim();
+
+  // Force HTTPS redirect on public hosts behind Render proxy (keep internal healthchecks intact)
+  if (
+    fwdProto === 'http' &&
+    hostHeader &&
+    !/^(localhost|127\.0\.0\.1)(:\d+)?$/i.test(hostHeader) &&
+    reqPath !== '/healthz' &&
+    reqPath !== '/api/health'
+  ) {
+    res.statusCode = 301;
+    res.setHeader('Location', `https://${hostHeader}${req.url || '/'}`);
+    res.end();
+    return;
+  }
+  if (fwdProto === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
 
   if (reqPath.startsWith('/api/') || reqPath === '/healthz') {
     setApiCorsHeaders(res);
