@@ -34,7 +34,8 @@ function createWindowManager({
       } catch {}
       return { action: 'deny' };
     });
-    contents.on('will-navigate', (event, targetUrl) => {
+
+    const guardNavigation = (event, targetUrl) => {
       const currentUrl = contents.getURL();
       if (!currentUrl) return;
       let current;
@@ -51,7 +52,9 @@ function createWindowManager({
       if (['https:', 'http:', 'mailto:'].includes(target.protocol)) {
         Promise.resolve(shell?.openExternal?.(targetUrl)).catch(() => {});
       }
-    });
+    };
+    contents.on('will-navigate', guardNavigation);
+    contents.on('will-redirect', guardNavigation);
     contents.on('will-attach-webview', (event) => event.preventDefault());
   }
 
