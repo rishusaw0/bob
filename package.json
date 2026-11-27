@@ -1,17 +1,15 @@
 {
   "name": "jeeva-ai",
   "version": "1.0.0",
-  "description": "JEEVA AI - Personal AI Assistant powered by Gemini",
+  "description": "JEEVA AI - Windows PC Desktop Assistant powered by local tools and Gemini",
   "main": "electron/main.cjs",
   "scripts": {
-    "start": "node server/index.js",
     "test": "node scripts/test.mjs",
-    "dev": "concurrently \"npm run dev:react\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
-    "dev:react": "vite",
+    "dev": "concurrently \"npm run dev:react\" \"wait-on http://127.0.0.1:5173 && npm run dev:electron\"",
+    "dev:react": "vite --host 127.0.0.1",
     "dev:electron": "electron .",
-    "build": "vite build --mode public",
-    "build:react": "vite build --mode public",
-    "build:desktop": "vite build --mode public && electron-builder --win nsis --publish never"
+    "build": "npm run build:desktop",
+    "build:desktop": "vite build --mode desktop && electron-builder --win nsis --publish never"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -46,22 +44,15 @@
   },
   "build": {
     "appId": "com.roushan.jeeva-ai",
-    "productName": "JEEVA AI",
-    "protocols": [
-      {
-        "name": "JEEVA AI Protocol",
-        "schemes": [
-          "jeeva"
-        ]
-      }
-    ],
+    "productName": "JEEVA AI Desktop",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "public/**/*",
+      "public/icon.png",
+      "public/icon.svg",
       "package.json"
     ],
     "asarUnpack": [

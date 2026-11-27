@@ -11,7 +11,6 @@ function createWindowManager({
   screen,
   actions,
   resolveUnpackedPath,
-  getCloudRelay,
   getAutoLaunchManager,
   emitRendererEvent,
   getWatchdogAlert,

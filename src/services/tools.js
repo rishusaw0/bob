@@ -1,4 +1,4 @@
-import { getSystemAPI, executeMobileBrowserAction } from './bridge.js';
+import { getSystemAPI } from './bridge.js';
 import { queryEpisodicTimeline } from './episodicMemory.js';
 import { summarizeTextLocally } from './docExtractor.js';
 import {
@@ -228,33 +228,6 @@ export const TOOLS = [
         shortcut: { type: 'string', description: 'Shortcut name or SendKeys string' },
       },
       required: ['shortcut'],
-    },
-  },
-  {
-    type: 'function',
-    name: 'adb_phone_control',
-    description:
-      'Controls an Android phone connected to PC via ADB (USB or Wireless Debugging): list devices, home, back, volume_up, volume_down, media_play_pause, open_url, open_app (package name), brightness (0-100), lock.',
-    parameters: {
-      type: 'object',
-      properties: {
-        action: { type: 'string', enum: ['devices', 'home', 'back', 'volume_up', 'volume_down', 'media_play_pause', 'open_url', 'open_app', 'brightness', 'lock'] },
-        arg: { type: 'string', description: 'URL, package name, or brightness value' },
-      },
-      required: ['action'],
-    },
-  },
-  {
-    type: 'function',
-    name: 'mobile_browser_action',
-    description: 'Runs a native mobile browser action directly on the phone (battery, vibrate, open_whatsapp, dial_number, open_link).',
-    parameters: {
-      type: 'object',
-      properties: {
-        action: { type: 'string', enum: ['battery', 'vibrate', 'open_whatsapp', 'dial_number', 'open_link'] },
-        value: { type: 'string', description: 'Phone number or URL if applicable' },
-      },
-      required: ['action'],
     },
   },
   {
@@ -587,14 +560,8 @@ export async function executeFunctionCall(
     return { result: 'Image generated successfully', generatedImage: imageUrl };
   }
 
-  const isLocalWebTool = name === 'mobile_browser_action' || name === 'episodic_recall';
   const api = getSystemAPI();
-  if (!isLocalWebTool && !api) {
-    return {
-      error:
-        'PC connected nahi hai. Ya to PC app par Render Cloud Relay connect karein, ya Link to PC mein 4-digit PIN daalein.',
-    };
-  }
+  if (!api) return { error: 'JEEVA PC desktop app is required to run PC tools.' };
 
   const category = getToolCategory(name, args);
   const catMeta = PERMISSION_CATEGORIES.find((c) => c.id === category);
@@ -648,10 +615,6 @@ export async function executeFunctionCall(
     appendAuditLog({ tool: name, category, summary, decision: `allowed (${decision})` });
   } else {
     appendAuditLog({ tool: name, category, summary, decision: `allowed (${targetBypass ? targetScope : policy})` });
-  }
-
-  if (name === 'mobile_browser_action') {
-    return { result: await executeMobileBrowserAction(args.action, args.value) };
   }
 
   async function readLocalDocument(filePath, instruction) {
@@ -750,8 +713,6 @@ export async function executeFunctionCall(
         };
         return { result: await api.typeText(shortcuts[args.shortcut] || args.shortcut) };
       }
-      case 'adb_phone_control':
-        return { result: await api.adbControl(args.action, args.arg) };
       case 'system_power':
         return { result: await api.power(args.action) };
       case 'take_screenshot': {

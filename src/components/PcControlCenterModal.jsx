@@ -323,7 +323,7 @@ export default function PcControlCenterModal({
           )}
           {!api ? (
             <div className="text-center py-10 text-xs text-obsidian-muted border border-dashed border-obsidian-border rounded-xl">
-              Connect your PC (Desktop App or Pair Key) to manage workstation resources directly.
+              Open JEEVA AI on this Windows PC to manage workstation resources.
             </div>
           ) : tab === 'clipboard' ? (
             <div className="space-y-3">

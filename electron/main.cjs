@@ -14,15 +14,11 @@ const {
   Notification,
 } = require('electron');
 const path = require('path');
-const crypto = require('crypto');
 const fs = require('fs');
-const os = require('os');
 
 const { createPermissionGuard } = require('./permission-guard.cjs');
-const { createCloudRelay } = require('./cloud-relay.cjs');
 const { createScheduler } = require('./pc-scheduler.cjs');
 const { createPcActions } = require('./pc-actions.cjs');
-const { getLanIPs, startBridgeServer } = require('./bridge-server.cjs');
 const { createOfflineVoice } = require('./offline-voice.cjs');
 const { createUpdater } = require('./updater.cjs');
 const { createAutoLaunchManager, APP_MODEL_ID } = require('./auto-launch.cjs');
@@ -32,9 +28,7 @@ const { createWindowManager } = require('./window-manager.cjs');
 const { createLocalBrainManager } = require('./local-brain.cjs');
 const { createEpisodicMemory } = require('./episodic-memory.cjs');
 
-let bridgeServer = null;
 let permissionGuard = null;
-let cloudRelay = null;
 let pcScheduler = null;
 let offlineVoice = null;
 let appUpdater = null;
@@ -128,22 +122,6 @@ function getEpisodicMemory() {
   return episodicMemory;
 }
 
-function getOrCreateBridgePin() {
-  const pinPath = path.join(app.getPath('userData'), 'bridge-pin.txt');
-  try {
-    if (fs.existsSync(pinPath)) {
-      const saved = fs.readFileSync(pinPath, 'utf-8').trim();
-      if (/^\d{4}$/.test(saved)) return saved;
-    }
-  } catch {}
-  const pin = String(crypto.randomInt(0, 10000)).padStart(4, '0');
-  try {
-    fs.writeFileSync(pinPath, pin, { encoding: 'utf-8', mode: 0o600 });
-    try { fs.chmodSync(pinPath, 0o600); } catch {}
-  } catch {}
-  return pin;
-}
-
 let pcActionKit;
 function getScheduler() {
   if (pcScheduler) return pcScheduler;
@@ -180,33 +158,10 @@ windowManager = createWindowManager({
   screen,
   actions,
   resolveUnpackedPath,
-  getCloudRelay: () => cloudRelay,
   getAutoLaunchManager,
   emitRendererEvent,
   getWatchdogAlert: () => lastWatchdogAlert,
 });
-
-let pendingDeepLinkUrl = process.argv.find((a) => typeof a === 'string' && a.startsWith('jeeva://')) || null;
-
-function handleDeepLink(rawUrl) {
-  if (!rawUrl || !String(rawUrl).startsWith('jeeva://')) return;
-  try {
-    const u = new URL(rawUrl);
-    if (u.hostname === 'connect' || u.pathname === '/connect') {
-      const server = (u.searchParams.get('server') || '').trim();
-      const pair = (u.searchParams.get('pair') || '').trim();
-      const validServer = /^https?:\/\/[^/\s]+/i.test(server) ? server.replace(/\/+$/, '') : '';
-      if (validServer && pair.length >= 12 && cloudRelay) {
-        const relayStat = cloudRelay.connect({ renderUrl: validServer, pairToken: pair });
-        const win = windowManager.getMainWindow();
-        if (win && !win.isDestroyed()) {
-          windowManager.applyWindowMode('full');
-          emitRendererEvent('relay:deepLinked', { renderUrl: validServer, pairToken: pair, status: relayStat });
-        }
-      }
-    }
-  } catch {}
-}
 
 async function executeMacroStep(step) {
   if (!step || !step.type) return;
@@ -240,14 +195,9 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', (_, argv) => {
-    const deepArg = argv.find((a) => typeof a === 'string' && a.startsWith('jeeva://'));
-    if (deepArg) {
-      handleDeepLink(deepArg);
-    } else {
-      const win = windowManager.getMainWindow();
-      if (win && !win.isDestroyed()) windowManager.applyWindowMode('full');
-    }
+  app.on('second-instance', () => {
+    const win = windowManager.getMainWindow();
+    if (win && !win.isDestroyed()) windowManager.applyWindowMode('full');
   });
 }
 
@@ -268,34 +218,9 @@ app.whenReady().then(() => {
     callback(allowed);
   });
 
-  if (process.defaultApp && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('jeeva', process.execPath, [path.resolve(process.argv[1])]);
-  } else {
-    app.setAsDefaultProtocolClient('jeeva');
-  }
-
-  const pin = getOrCreateBridgePin();
   permissionGuard = createPermissionGuard({
     userDataPath: app.getPath('userData'),
     BrowserWindow,
-  });
-
-  cloudRelay = createCloudRelay({
-    userDataPath: app.getPath('userData'),
-    safeStorage,
-    osHostname: os.hostname(),
-    onExecuteCommand: async (cmd) => {
-      const fn = actions[cmd.action];
-      if (!fn) throw new Error(`Unknown PC action: ${cmd.action}`);
-      const actionArgs = Array.isArray(cmd.args) ? cmd.args : [];
-      await permissionGuard.authorizeRemoteAction({
-        action: cmd.action,
-        args: actionArgs,
-        sourceLabel: cmd.source || 'Render Cloud Relay',
-      });
-      return await fn(...actionArgs);
-    },
-    onStatusChange: (relayStat) => emitRendererEvent('relay:statusChanged', relayStat),
   });
 
   offlineVoice = createOfflineVoice({
@@ -309,17 +234,9 @@ app.whenReady().then(() => {
     onStatus: (st) => emitRendererEvent('updater:status', st),
   });
 
-  bridgeServer = startBridgeServer({
-    pin,
-    actions,
-    getPermissionGuard: () => permissionGuard,
-    distDir: path.join(__dirname, '..', 'dist'),
-  });
-
   const mainWin = windowManager.createWindow();
   windowManager.createNotchWindow();
   windowManager.setupTray();
-  cloudRelay.initAutoConnect();
 
   if (mainWin && !mainWin.isVisible()) {
     setTimeout(() => {
@@ -335,15 +252,6 @@ app.whenReady().then(() => {
       fs.writeFileSync(autoFlagPath, String(Date.now()), 'utf8');
     }
   } catch {}
-
-  if (pendingDeepLinkUrl && mainWin) {
-    mainWin.webContents.once('did-finish-load', () => {
-      if (pendingDeepLinkUrl) {
-        handleDeepLink(pendingDeepLinkUrl);
-        pendingDeepLinkUrl = null;
-      }
-    });
-  }
 
   for (const hk of ['Ctrl+Shift+Space', 'Alt+Shift+J', 'Alt+Space']) {
     try {
@@ -372,17 +280,11 @@ app.whenReady().then(() => {
     return '';
   });
 
-  registerSecureIpcHandler('bridge:info', () => ({ port: 51823, pin, ips: getLanIPs() }));
-
   registerSecureIpcHandler('permissions:sync', (_, rules) => permissionGuard.saveRules(rules));
   registerSecureIpcHandler('permissions:get', () => permissionGuard.getRules());
   registerSecureIpcHandler('permissions:auditGet', () => permissionGuard.getAuditLog());
   registerSecureIpcHandler('permissions:auditClear', () => permissionGuard.clearAuditLog());
 
-  registerSecureIpcHandler('relay:connect', (_, cfg) => cloudRelay.connect(cfg || {}));
-  registerSecureIpcHandler('relay:disconnect', () => cloudRelay.disconnect());
-  registerSecureIpcHandler('relay:regeneratePairToken', () => cloudRelay.regeneratePairToken());
-  registerSecureIpcHandler('relay:status', () => cloudRelay.getStatus());
 
   registerSecureIpcHandler('app:getAutoLaunch', () => getAutoLaunchManager().isEnabled());
   registerSecureIpcHandler('app:setAutoLaunch', (_, enabled) => {
@@ -435,15 +337,10 @@ app.on('will-quit', () => {
   pcScheduler?.dispose?.();
   offlineVoice?.stop?.();
   globalShortcut.unregisterAll();
-  cloudRelay?.shutdown?.();
-  bridgeServer?.close();
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin' && (!cloudRelay?.getStatus?.().enabled || app.isQuitting)) {
-    bridgeServer?.close();
-    app.quit();
-  }
+  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('activate', () => {
@@ -479,7 +376,6 @@ registerSecureIpcHandler('system:minimizeAll', () => actions.minimizeAll());
 registerSecureIpcHandler('system:saveDesktopFile', (_, f, c) => actions.saveDesktopFile(f, c));
 registerSecureIpcHandler('system:saveImage', (_, d, f) => actions.saveImage(d, f));
 registerSecureIpcHandler('system:liveStats', () => actions.liveStats());
-registerSecureIpcHandler('system:adbControl', (_, a, arg) => actions.adbControl(a, arg));
 registerSecureIpcHandler('system:listInstalledApps', (_, filter) => actions.listInstalledApps(filter));
 registerSecureIpcHandler('system:manageSoftware', (_, action, pkg) => actions.manageSoftware(action, pkg));
 registerSecureIpcHandler('system:windowControl', (_, action, targetApp) => actions.windowControl(action, targetApp));

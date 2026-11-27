@@ -37,12 +37,7 @@ export const PERMISSION_CATEGORIES = [
     description: 'Run arbitrary CMD/PowerShell commands; lock, sleep, restart, shutdown PC',
     risk: 'high',
   },
-  {
-    id: 'phone_adb',
-    label: 'Phone & Mobile ADB',
-    description: 'Control connected Android phone via ADB or mobile browser actions',
-    risk: 'high',
-  },
+
 ];
 
 const DEFAULT_LOCAL_RULES = {
@@ -52,7 +47,6 @@ const DEFAULT_LOCAL_RULES = {
   files_storage: 'ask',
   screen_input: 'ask',
   terminal_power: 'ask',
-  phone_adb: 'ask',
 };
 
 const DEFAULT_REMOTE_RULES = {
@@ -62,7 +56,6 @@ const DEFAULT_REMOTE_RULES = {
   files_storage: 'ask',
   screen_input: 'ask',
   terminal_power: 'ask',
-  phone_adb: 'ask',
 };
 
 const RULES_STORAGE_KEY = 'jeeva_permission_rules';
@@ -179,10 +172,6 @@ export function getToolCategory(name, args = {}) {
     case 'system_power':
       return 'terminal_power';
 
-    case 'adb_phone_control':
-    case 'mobile_browser_action':
-      return 'phone_adb';
-
     default:
       return 'apps_window';
   }
@@ -202,7 +191,6 @@ export function getToolRiskLevel(name, args = {}) {
     name === 'system_power' ||
     name === 'close_application' ||
     name === 'run_system_command' ||
-    name === 'adb_phone_control' ||
     (name === 'manage_software' && ['install', 'uninstall', 'update'].includes(args?.action)) ||
     (name === 'file_operation' && args?.operation === 'delete') ||
     (name === 'system_diagnostics' && args?.action === 'kill_process') ||
@@ -284,15 +272,13 @@ export function formatToolSummary(name, args = {}) {
       return `Execute shell command: ${args.command || ''}`;
     case 'system_power':
       return `System power action: ${args.action || ''}`;
-    case 'adb_phone_control':
-      return `Android ADB: ${args.action || ''} ${args.arg || ''}`.trim();
     default:
       return `${name.replace(/_/g, ' ')}`;
   }
 }
 
 export function isRemoteEnvironment() {
-  return typeof window !== 'undefined' && !window.electronAPI;
+  return false;
 }
 
 export function getPermissionRules() {

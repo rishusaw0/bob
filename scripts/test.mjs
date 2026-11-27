@@ -14,10 +14,9 @@ function readRel(rel) {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
 }
 
-// 1. Node syntax check on server & all Electron CJS modules
-console.log('[1/6] Checking JS/CJS syntax...');
+// 1. Node syntax check on all Electron CJS modules
+console.log('[1/6] Checking Electron desktop JS/CJS syntax...');
 const jsTargets = [
-  'server/index.js',
   ...fs.readdirSync(path.join(ROOT, 'electron'))
     .filter((f) => f.endsWith('.cjs'))
     .map((f) => path.join('electron', f)),
@@ -51,14 +50,12 @@ const guardSrc = readRel('electron/permission-guard.cjs');
 const actionsSrc = readRel('electron/pc-actions.cjs');
 const mainSrc = readRel('electron/main.cjs');
 const preloadSrc = readRel('electron/preload.cjs');
-const bridgeSrc = readRel('src/services/bridge.js');
 
 const toolsArrayBlock = toolsSrc.slice(toolsSrc.indexOf('export const TOOLS'), toolsSrc.indexOf('function guessDocumentMime'));
 const declaredTools = [...toolsArrayBlock.matchAll(/name:\s*'([a-z_]+)'/g)].map((m) => m[1]);
 const execBlock = toolsSrc.slice(toolsSrc.indexOf('export async function executeFunctionCall'));
 const handledCases = new Set([...execBlock.matchAll(/case\s*'([a-z_]+)'/g)].map((m) => m[1]));
 if (execBlock.includes("name === 'generate_image_tool'")) handledCases.add('generate_image_tool');
-if (execBlock.includes("name === 'mobile_browser_action'")) handledCases.add('mobile_browser_action');
 
 const permCases = new Set(
   [...permSrc.slice(permSrc.indexOf('getToolCategory'), permSrc.indexOf('getToolRiskLevel')).matchAll(/case\s*'([a-z_]+)'/g)].map((m) => m[1])
@@ -81,17 +78,12 @@ const actionKeys = [...actionsBlock.matchAll(/^\s{4}(?:async\s+)?([a-zA-Z0-9_]+)
 const guardCases = new Set(
   [...guardSrc.slice(guardSrc.indexOf('getActionCategory'), guardSrc.indexOf('isActionHighRisk')).matchAll(/case\s*'([a-zA-Z0-9_]+)'/g)].map((m) => m[1])
 );
-const remoteActions = new Set([...bridgeSrc.matchAll(/callRemoteAction\(['"]([a-zA-Z0-9_]+)['"]/g)].map((m) => m[1]));
-
 for (const act of actionKeys) {
   assert.ok(guardCases.has(act), `Action "${act}" missing in permission-guard.cjs`);
-  if (!['liveStats', 'saveImage'].includes(act)) {
-    assert.ok(remoteActions.has(act), `Action "${act}" missing in bridge.js remote actions`);
-  }
 }
 console.log(`   Verified ${declaredTools.length} tools, ${preloadInvokes.length} IPC handlers, ${actionKeys.length} actions.`);
 
-// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard, security guardrails, memory RAG, server store & WS codec
+// 3. Unit tests: DPI mapper, updater, scheduler, permission guard, security guardrails and memory
 console.log('[3/6] Testing coord-mapper, updater, scheduler, guardrails, memory RAG & auto-launch...');
 const { mapCoordsToPhysical } = require(path.join(ROOT, 'electron/coord-mapper.cjs'));
 const { compareSemver } = require(path.join(ROOT, 'electron/updater.cjs'));
@@ -225,13 +217,6 @@ assert.equal(fallbackMgr.setEnabled(false).enabled, false);
 assert.equal(fallbackMgr.isEnabled(), false);
 fs.rmSync(tmpAutoDir, { recursive: true, force: true });
 
-
-// Relay URL policy: plaintext transport is permitted only on loopback.
-const { normalizeRenderUrl } = require(path.join(ROOT, 'electron/cloud-relay.cjs'));
-assert.equal(normalizeRenderUrl('https://relay.example.com'), 'https://relay.example.com');
-assert.equal(normalizeRenderUrl('http://localhost:3000'), 'http://localhost:3000');
-assert.throws(() => normalizeRenderUrl('http://relay.example.com'), /requires HTTPS/i);
-assert.throws(() => normalizeRenderUrl('https://relay.example.com/path'), /base server URL/i);
 
 // Secret paths and empty paths are rejected by the local filesystem guard.
 assert.equal(checkPathSafety('', 'read').allowed, false);
@@ -555,67 +540,31 @@ assert.equal(tabAct.tools[0].args.action, 'new_tab');
 const openEnded = await tryFastVoiceAction('python ke baare mein batao');
 assert.equal(openEnded.handled, false);
 
-// 5. Render Server timed & scoped share tokens verification
-console.log('[5/6] Testing Render server expiring/scoped share links...');
-const serverUrl = pathToFileURL(path.join(ROOT, 'server/index.js')).href;
-const {
-  createTimedShareToken,
-  getRelayAuthContext,
-  isActionAllowedForReadOnly,
-  hashPairToken,
-  UPDATE_LATEST_VERSION,
-} = await import(serverUrl);
-
-assert.ok(UPDATE_LATEST_VERSION);
-const ownerPair = 'JVA-TEST-OWNR-1234';
-const ownerKey = `pair:${hashPairToken(ownerPair)}`;
-
-const tmpFull = createTimedShareToken({ ownerKey, ttlMinutes: 60, scope: 'full' });
-assert.ok(tmpFull.shareToken.startsWith('JVA-TMP-'));
-assert.equal(tmpFull.scope, 'full');
-
-const fullCtx = getRelayAuthContext({ headers: { 'x-pair-token': tmpFull.shareToken } });
-assert.equal(fullCtx.ownerKey, ownerKey);
-assert.equal(fullCtx.scope, 'full');
-assert.equal(fullCtx.expired, false);
-
-const tmpRo = createTimedShareToken({ ownerKey, ttlMinutes: 30, scope: 'read_only' });
-const roCtx = getRelayAuthContext({ headers: { 'x-pair-token': tmpRo.shareToken } });
-assert.equal(roCtx.ownerKey, ownerKey);
-assert.equal(roCtx.scope, 'read_only');
-assert.equal(isActionAllowedForReadOnly('runCommand', ['echo hack']), false);
-assert.equal(isActionAllowedForReadOnly('liveStats', []), false);
-assert.equal(isActionAllowedForReadOnly('battery', []), true);
-assert.equal(isActionAllowedForReadOnly('systemInfo', []), false);
-assert.equal(isActionAllowedForReadOnly('diagnostics', ['kill_process', '123']), false);
-assert.equal(isActionAllowedForReadOnly('diagnostics', ['overview']), false);
-assert.equal(isActionAllowedForReadOnly('listFiles', ['C:\\\\']), false);
-
-const fakeTmpCtx = getRelayAuthContext({ headers: { 'x-pair-token': 'JVA-TMP-DOESNOTEXIST' } });
-assert.equal(fakeTmpCtx.ownerKey, null);
-assert.equal(fakeTmpCtx.expired, true);
-
-// WebSocket codec & Server Store persistence tests
-const wsUrl = pathToFileURL(path.join(ROOT, 'server/ws-codec.js')).href;
-const storeUrl = pathToFileURL(path.join(ROOT, 'server/store.js')).href;
-const { computeWebSocketAccept, encodeServerFrame, createFrameReader } = await import(wsUrl);
-const { createServerStore } = await import(storeUrl);
-assert.equal(computeWebSocketAccept('dGhlIHNhbXBsZSBub25jZQ=='), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=');
-let decodedWs = '';
-const reader = createFrameReader((op, pay) => {
-  if (op === 1) decodedWs = pay.toString('utf8');
-});
-reader(encodeServerFrame(1, Buffer.from('hello-ws', 'utf8')));
-assert.equal(decodedWs, 'hello-ws');
-
-const tmpStoreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-test-store-'));
-const st1 = await createServerStore(tmpStoreDir);
-st1.setShareToken('hash123', { ownerKey: 'owner:test', scope: 'read_only', expiresAt: Date.now() + 60000, createdAt: Date.now() });
-st1.close();
-const st2 = await createServerStore(tmpStoreDir);
-assert.equal(st2.getShareToken('hash123')?.scope, 'read_only');
-st2.close();
-fs.rmSync(tmpStoreDir, { recursive: true, force: true });
+// 5. Desktop-only architecture checks
+console.log('[5/6] Verifying Windows desktop-only build surface...');
+for (const removedPath of [
+  'server',
+  'render.yaml',
+  'src/components/LandingPage.jsx',
+  'src/components/MobileConnectModal.jsx',
+  'public/manifest.json',
+  'public/service-worker.js',
+  'public/robots.txt',
+  'public/sitemap.xml',
+  'public/icon-192.png',
+  'public/icon-512.png',
+  'electron/bridge-server.cjs',
+  'electron/cloud-relay.cjs',
+  'electron/ws-client.cjs',
+]) {
+  assert.equal(fs.existsSync(path.join(ROOT, removedPath)), false, `Removed mobile/web module still exists: ${removedPath}`);
+}
+const appSource = readRel('src/App.jsx');
+assert.ok(!/MobileConnectModal|LandingPage|serverConfig|appToken|cloudApiUrl|showMobileModal|PWA|Render/.test(appSource),
+  'App must not contain browser workspace, phone, PWA or hosted workspace references');
+const desktopBridge = readRel('src/services/bridge.js');
+assert.ok(desktopBridge.includes('window.electronAPI'), 'PC renderer must use local Electron IPC');
+assert.ok(!desktopBridge.includes('fetch(') && !desktopBridge.includes('/api/'), 'PC bridge must not expose HTTP routes');
 
 // Hybrid Local AI Brain tests (Semantic Intent, Top-4 Tool Pruning, Escalation Gatekeeper & Hardware Profile)
 const { classifyIntent, pickTopToolsForQuery } = await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
@@ -677,10 +626,7 @@ saveCustomClonedVoice({ id: 'voice_test_123', displayName: 'Test Voice' });
 assert.equal(getActiveCustomVoiceId(), 'voice_test_123');
 removeCustomClonedVoice('voice_test_123');
 assert.equal(getActiveCustomVoiceId(), '');
-// SEO & Brand asset checks for webbuildix.online
-assert.ok(fs.existsSync(path.join(ROOT, 'public/robots.txt')));
-assert.ok(fs.readFileSync(path.join(ROOT, 'public/sitemap.xml'), 'utf8').includes('https://webbuildix.online/'));
-assert.ok(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes('rel="canonical" href="https://webbuildix.online/"'));
+// Desktop application icon asset check
 assert.ok(fs.readFileSync(path.join(ROOT, 'public/icon.svg'), 'utf8').includes('viewBox="0 0 128 128"'));
 assert.ok(computeAdaptiveSilenceMs(500, 740) <= 540);
 assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'), 'english');
@@ -782,4 +728,4 @@ const astScript = psFiles
   .join('');
 execFileSync('powershell.exe', ['-NoProfile', '-Command', astScript], { stdio: 'pipe' });
 
-console.log(`ALL_TESTS_PASSED (${psFiles.length} PS scripts, ${declaredTools.length} AI tools, server share-tokens, DPI mapper, voice router)`);
+console.log(`ALL_TESTS_PASSED (${psFiles.length} PowerShell scripts, ${declaredTools.length} PC tools, desktop-only modules, DPI mapper, voice router)`);

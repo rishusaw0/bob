@@ -7,9 +7,7 @@ import {
   LuSquare,
   LuX,
   LuCpu,
-  LuSmartphone,
   LuAudioLines,
-  LuDownload,
   LuVolume2,
   LuRadio,
   LuEyeOff,
@@ -21,15 +19,12 @@ export default function TitleBar({
   onSettingsClick,
   onNewChat,
   onOpenPalette,
-  onOpenMobileModal,
   onOpenPcControl,
   onSwitchCortana,
   onSwitchSpeaker,
   wakeEnabled = false,
   orbState = 'idle',
   onToggleWake,
-  canInstallPWA,
-  onInstallPWA,
   model,
   onModelChange,
   liveStats,
@@ -162,26 +157,7 @@ export default function TitleBar({
           <LuPlus className="w-4 h-4" />
         </button>
 
-        {!isElectron && canInstallPWA && (
-          <button
-            onClick={onInstallPWA}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-[11px] font-medium text-emerald-300 transition-colors mr-1"
-            title="Install JEEVA AI App on this device"
-          >
-            <LuDownload className="w-3 h-3" />
-            <span className="hidden sm:inline">Install App</span>
-          </button>
-        )}
-
-        <button
-          onClick={onOpenMobileModal}
-          className="p-1.5 rounded-md text-obsidian-secondary hover:text-obsidian-text hover:bg-obsidian-elevated transition-colors"
-          title={isElectron ? 'Remote & Render Link' : 'Connect to PC'}
-        >
-          <LuSmartphone className="w-4 h-4" />
-        </button>
-
-        <button
+remove title PWA + mobile actions        <button
           onClick={onSettingsClick}
           className="p-1.5 rounded-md text-obsidian-secondary hover:text-obsidian-text hover:bg-obsidian-elevated transition-colors"
           title="Preferences"
