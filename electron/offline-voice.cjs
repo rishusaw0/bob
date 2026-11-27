@@ -1,15 +1,57 @@
 const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
-function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
+function detectLocalAsrEngines(userDataDir = '') {
+  const baseDir = userDataDir
+    ? path.join(userDataDir, 'voice-models')
+    : path.join(process.env.APPDATA || '', 'jeeva-ai', 'voice-models');
+  let whisperExe = '';
+  let whisperModel = '';
+  let voskModelDir = '';
+
+  try {
+    if (baseDir && fs.existsSync(baseDir)) {
+      const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.isFile() && /^(whisper-cli|main)\.exe$/i.test(e.name)) {
+          whisperExe = path.join(baseDir, e.name);
+        }
+        if (e.isFile() && /^ggml-.*\.bin$/i.test(e.name)) {
+          whisperModel = path.join(baseDir, e.name);
+        }
+        if (e.isDirectory() && /^vosk-model-/i.test(e.name)) {
+          voskModelDir = path.join(baseDir, e.name);
+        }
+      }
+    }
+  } catch {}
+
+  const whisperReady = Boolean(whisperExe && whisperModel);
+  const voskReady = Boolean(voskModelDir);
+  return {
+    modelsDir: baseDir,
+    whisperReady,
+    voskReady,
+    supportsFullHindiHinglish: whisperReady || voskReady,
+    engineType: whisperReady ? 'whisper.cpp' : voskReady ? 'vosk' : 'windows-sapi-fallback',
+  };
+}
+
+function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } = {}) {
   let child = null;
   const activeDictations = new Set();
   let activeAiName = 'Jeeva';
+  const asrInfo = detectLocalAsrEngines(userDataDir);
   let status = {
     available: null, // null = untested, true/false once probed
     running: false,
     culture: '',
     reason: '',
     aiName: activeAiName,
+    engineType: asrInfo.engineType,
+    supportsFullHindiHinglish: asrInfo.supportsFullHindiHinglish,
+    modelsDir: asrInfo.modelsDir,
   };
 
   function emitStatus() {
@@ -44,6 +86,7 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
       );
     } catch (err) {
       status = {
+        ...status,
         available: false,
         running: false,
         culture: '',
@@ -73,6 +116,7 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
           const msg = JSON.parse(trimmed);
           if (msg.type === 'ready') {
             status = {
+              ...status,
               available: true,
               running: true,
               culture: msg.culture || 'en',
@@ -82,6 +126,7 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
             emitStatus();
           } else if (msg.type === 'unavailable') {
             status = {
+              ...status,
               available: false,
               running: false,
               culture: '',
@@ -103,6 +148,7 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
     proc.on('error', (err) => {
       if (child === proc) child = null;
       status = {
+        ...status,
         available: false,
         running: false,
         culture: '',
@@ -142,16 +188,23 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
 
   function dictateOnce(timeoutSec = 7) {
     const safeSec = Math.max(3, Math.min(15, Number(timeoutSec) || 7));
-    const scriptPath = resolveUnpackedPath('win-voice.ps1');
+    const scriptPath = typeof resolveUnpackedPath === 'function' ? resolveUnpackedPath('win-voice.ps1') : '';
+    if (!scriptPath) {
+      return Promise.resolve({ type: 'dictation', text: '', reason: 'win-voice.ps1 path unavailable' });
+    }
     return new Promise((resolve) => {
       let settled = false;
       let stdout = '';
       let proc = null;
+      let killTimer = null;
 
       const finish = (payload) => {
         if (settled) return;
         settled = true;
-        clearTimeout(killTimer);
+        if (killTimer) {
+          clearTimeout(killTimer);
+          killTimer = null;
+        }
         if (proc) activeDictations.delete(proc);
         resolve(payload);
       };
@@ -166,8 +219,12 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
         return finish({ type: 'dictation', text: '' });
       }
 
+      if (!proc || typeof proc.on !== 'function') {
+        return finish({ type: 'dictation', text: '' });
+      }
+
       activeDictations.add(proc);
-      const killTimer = setTimeout(() => {
+      killTimer = setTimeout(() => {
         safeKill(proc);
         finish({ type: 'dictation', text: '', timedOut: true });
       }, (safeSec + 4) * 1000);
@@ -195,7 +252,7 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
     start,
     stop,
     dictateOnce,
-    getStatus: () => ({ ...status }),
+    getStatus: () => ({ ...status, ...detectLocalAsrEngines(userDataDir) }),
     setAiName: (name) => {
       const clean = String(name || 'Jeeva').trim() || 'Jeeva';
       const changed = clean.toLowerCase() !== activeAiName.toLowerCase();
@@ -209,4 +266,4 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent } = {}) {
   };
 }
 
-module.exports = { createOfflineVoice };
+module.exports = { createOfflineVoice, detectLocalAsrEngines };

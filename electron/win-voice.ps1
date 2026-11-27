@@ -26,8 +26,9 @@ if (-not $recognizers -or $recognizers.Count -eq 0) {
   exit 0
 }
 
-# Prefer en-IN or en-US recognizer for Romanized Hinglish + English accuracy
+# Prefer en-IN, hi-IN (if Hindi pack installed), or en-* recognizer
 $picked = $recognizers | Where-Object { $_.Culture.Name -eq "en-IN" } | Select-Object -First 1
+if (-not $picked) { $picked = $recognizers | Where-Object { $_.Culture.Name -eq "hi-IN" } | Select-Object -First 1 }
 if (-not $picked) { $picked = $recognizers | Where-Object { $_.Culture.Name -like "en-*" } | Select-Object -First 1 }
 if (-not $picked) { $picked = $recognizers | Select-Object -First 1 }
 
