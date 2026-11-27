@@ -492,7 +492,7 @@ export const VOICE_STYLE_HINTS = {
   hindi:
     'Native Indian Hindi speaker. Use standard, accurate Hindi pronunciation, crisp consonants, clear vowel sounds and natural matra pronunciation. Speak warmly and confidently with short conversational sentence pauses.',
   hinglish:
-    'Fluent bilingual Indian Hinglish speaker. Pronounce Hindi words written in Latin letters as natural Hindi (not as English spelling); pronounce English words in clear Indian English. Switch languages smoothly without changing or dropping words. Use crisp consonants, distinct syllables, correct Hindi matras, natural lexical stress on meaningful words and gentle syllable separation without spelling out letters. Keep a steady speaking pace and a short 120 ms transition between completed sentence clips; do not add dramatic pauses or exaggerated breaths.',
+    'Fluent bilingual Indian Hinglish speaker. Pronounce Hindi words written in Latin letters as natural Hindi (not as English spelling); pronounce English words in clear Indian English. Switch languages smoothly without changing or dropping words. Use crisp consonants, distinct syllables, correct Hindi matras, natural lexical stress on meaningful words and gentle syllable separation without spelling out letters. Keep a steady speaking pace and short natural pauses with a 120 ms transition between completed sentence clips; do not add dramatic pauses or exaggerated breaths.',
 };
 
 export async function createReplicatedVoice({
