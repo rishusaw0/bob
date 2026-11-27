@@ -185,6 +185,7 @@ let activeAudio = null;
 let activeUtterance = null;
 let activeGain = null;
 let activeAudioCtx = null;
+let activeAudioNodes = null;
 let activeMeterTimer = null;
 let stopRequested = false;
 let playbackToken = 0;
@@ -462,13 +463,15 @@ function clearTtsMeter() {
     clearInterval(activeMeterTimer);
     activeMeterTimer = null;
   }
-  activeGain = null;
-  if (activeAudioCtx) {
-    try {
-      if (activeAudioCtx.state !== 'closed') activeAudioCtx.close().catch(() => {});
-    } catch {}
-    activeAudioCtx = null;
+  // Reuse one AudioContext across sentence chunks; closing and reopening it
+  // after every full stop adds avoidable startup latency.
+  if (activeAudioNodes) {
+    for (const node of activeAudioNodes) {
+      try { node.disconnect(); } catch {}
+    }
+    activeAudioNodes = null;
   }
+  activeGain = null;
   currentState = { ...currentState, audioLevel: 0, freqBands: [0, 0, 0, 0, 0] };
   notify();
 }
@@ -514,6 +517,7 @@ function playAudioUrl(audioUrl) {
     if (stopRequested) return resolve();
     clearTtsMeter();
     const audio = new Audio(audioUrl);
+    audio.preload = 'auto';
     audio.playbackRate = currentState.rate;
     audio.volume = 1;
     activeAudio = audio;
@@ -521,7 +525,7 @@ function playAudioUrl(audioUrl) {
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (Ctx) {
-        const ctx = new Ctx();
+        const ctx = activeAudioCtx && activeAudioCtx.state !== 'closed' ? activeAudioCtx : new Ctx();
         if (ctx.state === 'suspended') ctx.resume().catch(() => {});
         const src = ctx.createMediaElementSource(audio);
         const gain = ctx.createGain();
@@ -533,6 +537,7 @@ function playAudioUrl(audioUrl) {
         analyser.connect(ctx.destination);
         activeAudioCtx = ctx;
         activeGain = gain;
+        activeAudioNodes = [src, gain, analyser];
 
         const freqData = new Uint8Array(analyser.frequencyBinCount);
         activeMeterTimer = setInterval(() => {
@@ -976,6 +981,11 @@ export function stopSpeech() {
     activeAudio = null;
   }
   clearTtsMeter();
+  if (activeAudioCtx) {
+    const ctx = activeAudioCtx;
+    activeAudioCtx = null;
+    try { if (ctx.state !== 'closed') ctx.close().catch(() => {}); } catch {}
+  }
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
