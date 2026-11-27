@@ -218,7 +218,7 @@ app.whenReady().then(() => {
     callback(allowed);
   });
 
-  permissionGuard = createPermissionGuard({  permissionGuard = createPermissionGuard({
+  permissionGuard = createPermissionGuard({
     userDataPath: app.getPath('userData'),
     BrowserWindow,
   });
