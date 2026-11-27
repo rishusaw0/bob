@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   LuX,
   LuKey,
@@ -133,6 +133,8 @@ export default function SettingsPanel({
   const [voiceprintLevel, setVoiceprintLevelState] = useState(() => getVoiceprintSecurityLevel());
   const [testingVoiceprint, setTestingVoiceprint] = useState(false);
   const [lastVoiceMatch, setLastVoiceMatch] = useState(null);
+  const [audioDiagnosticBusy, setAudioDiagnosticBusy] = useState(false);
+  const [audioDiagnostic, setAudioDiagnostic] = useState(null);
 
   // Own Voice Cloning (Gemini 3.8 Voice Replication)
   const [customVoices, setCustomVoices] = useState(() => getCustomClonedVoices());
@@ -153,6 +155,41 @@ export default function SettingsPanel({
     return () => clearTimeout(t);
   }, []);
 
+  const handleAudioDiagnostics = async () => {
+    if (audioDiagnosticBusy) return;
+    setAudioDiagnosticBusy(true);
+    setAudioDiagnostic(null);
+    let stream;
+    try {
+      toast.info('Allow microphone access, then speak clearly while the mic level is measured.');
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone diagnostics are not supported by this device.');
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) throw new Error('Audio diagnostics are not supported by this browser.');
+      const ctx = new Ctx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      const samples = new Float32Array(analyser.fftSize);
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+      analyser.getFloatTimeDomainData(samples);
+      let sum = 0, peak = 0;
+      for (const sample of samples) { sum += sample * sample; peak = Math.max(peak, Math.abs(sample)); }
+      const rms = Math.sqrt(sum / samples.length);
+      source.disconnect();
+      await ctx.close().catch(() => {});
+      setAudioDiagnostic({ rms, peak, device: stream.getAudioTracks()[0]?.label || 'Default microphone' });
+      toast.success(rms < 0.006 ? 'Mic connected, but input is very quiet. Check microphone level.' : 'Microphone check complete.');
+      speakText('Audio output test. JEEVA ki awaaz clear sunai de rahi hai? Main Hindi aur English dono natural tareeke se bol sakta hoon.', { label: 'Speaker & Voice Test' });
+    } catch (err) {
+      setAudioDiagnostic({ error: err?.message || 'Audio diagnostics failed' });
+      toast.error(err?.message || 'Audio diagnostics failed');
+    } finally {
+      stream?.getTracks?.().forEach((track) => track.stop());
+      setAudioDiagnosticBusy(false);
+    }
+  };
   const handleEnrollVoiceprint = async () => {
     if (enrollingVoice) return;
     setEnrollingVoice(true);
@@ -1144,6 +1181,17 @@ remove owner PIN & hosted server URL              </div>
                   </select>
                 </div>
 
+                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-obsidian-border/50">
+                  <button type="button" disabled={audioDiagnosticBusy} onClick={handleAudioDiagnostics}
+                    className="px-2.5 py-1.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] disabled:opacity-50">
+                    {audioDiagnosticBusy ? 'Checking microphone…' : 'Run Mic + Speaker Test'}
+                  </button>
+                  <button type="button" onClick={() => speakText('Namaste! Main JEEVA hoon. Aapka kaam dhyan se aur saaf awaaz mein karunga. How can I help you today?', { label: 'Hindi and English Voice Preview' })}
+                    className="px-2.5 py-1.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px]">
+                    Preview Hindi + English
+                  </button>
+                  {audioDiagnostic && <p className="w-full text-[10px] text-obsidian-muted">{audioDiagnostic.error || `Mic: ${audioDiagnostic.device} · RMS ${audioDiagnostic.rms.toFixed(3)} · Peak ${audioDiagnostic.peak.toFixed(3)}`}</p>}
+                </div>
                 <div className="flex items-center justify-between gap-2 pt-1 border-t border-obsidian-border/50">
                   <span className="text-[10px] text-obsidian-muted">Mic Noise &amp; VAD Sensitivity:</span>
                   <select
