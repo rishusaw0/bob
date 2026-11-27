@@ -859,6 +859,10 @@ export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = n
             notify();
             await speakChunkNative(chunk, profile);
           }
+          // Apply the same short, natural transition to streamed assistant replies.
+          if ((i + 1 < subChunks.length || queue.length > 0) && !stopRequested && myToken === playbackToken) {
+            await waitForSpeechTransition();
+          }
         }
       }
     } finally {
