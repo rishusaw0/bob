@@ -1,6 +1,7 @@
 // Strict Path & Command Guardrails for Windows PC Safety
 // Prevents destructive actions on OS system files, registry hives, .env secrets, and browser credential stores.
 const path = require('path');
+const fs = require('fs');
 
 const BLOCKED_PATH_PATTERNS = [
   /^[a-z]:\\windows(?:\\|$)/i,
@@ -45,43 +46,62 @@ function normalizeWinPath(targetPath) {
   return path.normalize(String(targetPath || '').trim());
 }
 
+function getPathCandidates(targetPath) {
+  const lexical = normalizeWinPath(targetPath);
+  const candidates = [lexical];
+  try {
+    let probe = lexical;
+    const tail = [];
+    while (probe && !fs.existsSync(probe)) {
+      const parent = path.dirname(probe);
+      if (parent === probe) break;
+      tail.unshift(path.basename(probe));
+      probe = parent;
+    }
+    if (probe && fs.existsSync(probe)) {
+      const realParent = fs.realpathSync.native(probe);
+      candidates.push(path.normalize(path.join(realParent, ...tail)));
+    }
+  } catch {}
+  return [...new Set(candidates)];
+}
+
 /**
  * Checks whether reading/writing/deleting/organizing targetPath hits protected OS/secret locations.
  * `mode`: 'read' | 'write' | 'delete'
  */
 function checkPathSafety(targetPath, mode = 'read') {
   const raw = String(targetPath || '').trim();
-  if (!raw) return { allowed: true };
-  const normalized = normalizeWinPath(raw);
+  if (!raw) return { allowed: false, reason: 'A non-empty target path is required.' };
+  const candidates = getPathCandidates(raw);
 
-  // Allow non-destructive directory listing outside credential vaults, block sensitive reads/writes/deletes
-  if (/\.env(?:\.[a-z0-9_-]+)?$/i.test(normalized) || /\.vault$/i.test(normalized)) {
-    return {
-      allowed: false,
-      reason: `Blocked by Security Guardrails: protected credential/secret file (${path.basename(normalized)})`,
-    };
-  }
-
-  for (const rx of BLOCKED_PATH_PATTERNS) {
-    if (rx.test(normalized)) {
-      if (mode === 'read' && /^[a-z]:\\windows(?:\\|$)/i.test(normalized) && !/system32\\config|sam/i.test(normalized)) {
-        continue;
-      }
+  for (const normalized of candidates) {
+    if (/\.env(?:\.[a-z0-9_-]+)?$/i.test(normalized) || /\.vault$/i.test(normalized)) {
       return {
         allowed: false,
-        reason: `Blocked by Security Guardrails: protected Windows/credential path (${normalized})`,
+        reason: `Blocked by Security Guardrails: protected credential/secret file (${path.basename(normalized)})`,
+      };
+    }
+
+    for (const rx of BLOCKED_PATH_PATTERNS) {
+      if (rx.test(normalized)) {
+        if (mode === 'read' && /^[a-z]:\\windows(?:\\|$)/i.test(normalized) && !/system32\\config|sam/i.test(normalized)) {
+          continue;
+        }
+        return {
+          allowed: false,
+          reason: `Blocked by Security Guardrails: protected Windows/credential path (${normalized})`,
+        };
+      }
+    }
+
+    if (mode !== 'read' && /^[a-z]:\\?$/i.test(normalized)) {
+      return {
+        allowed: false,
+        reason: `Blocked by Security Guardrails: root drive modification is disabled (${normalized})`,
       };
     }
   }
-
-  // Block root drive destructive operations (C:\, D:\)
-  if (mode !== 'read' && /^[a-z]:\\?$/i.test(normalized)) {
-    return {
-      allowed: false,
-      reason: `Blocked by Security Guardrails: root drive modification is disabled (${normalized})`,
-    };
-  }
-
   return { allowed: true };
 }
 
@@ -113,6 +133,7 @@ function checkProcessKillSafety(target) {
 
 module.exports = {
   checkPathSafety,
+  getPathCandidates,
   checkCommandSafety,
   checkProcessKillSafety,
   PROTECTED_PROCESS_NAMES,

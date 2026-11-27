@@ -258,7 +258,9 @@ function createPcActions({
     },
 
     async listFiles(dirPath) {
-      const dir = dirPath || os.homedir();
+      const dir = path.resolve(dirPath || os.homedir());
+      const check = checkPathSafety(dir, 'read');
+      if (!check.allowed) throw new Error(check.reason);
       const items = fs.readdirSync(dir, { withFileTypes: true });
       return items.map((item) => ({
         name: item.name,
@@ -268,14 +270,18 @@ function createPcActions({
     },
 
     async searchFiles(query, dirPath) {
-      const dir = dirPath || os.homedir();
+      const dir = path.resolve(dirPath || os.homedir());
+      const check = checkPathSafety(dir, 'read');
+      if (!check.allowed) throw new Error(check.reason);
+      const needle = String(query || '').trim().toLowerCase();
+      if (!needle) return [];
       const results = [];
       function searchDir(currentDir, depth = 0) {
         if (depth > 3) return;
         try {
           const items = fs.readdirSync(currentDir, { withFileTypes: true });
           for (const item of items) {
-            if (item.name.toLowerCase().includes(query.toLowerCase())) {
+            if (item.name.toLowerCase().includes(needle)) {
               results.push({
                 name: item.name,
                 path: path.join(currentDir, item.name),

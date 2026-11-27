@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -17,8 +18,18 @@ function getLanIPs() {
 }
 
 function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
-  let failedAttempts = 0;
-  let lockUntil = 0;
+  const tlsKeyPath = String(process.env.JEEVA_BRIDGE_TLS_KEY || '').trim();
+  const tlsCertPath = String(process.env.JEEVA_BRIDGE_TLS_CERT || '').trim();
+  let tlsOptions = null;
+  if (tlsKeyPath || tlsCertPath) {
+    if (!tlsKeyPath || !tlsCertPath) throw new Error('Both JEEVA_BRIDGE_TLS_KEY and JEEVA_BRIDGE_TLS_CERT are required.');
+    tlsOptions = {
+      key: fs.readFileSync(path.resolve(tlsKeyPath)),
+      cert: fs.readFileSync(path.resolve(tlsCertPath)),
+    };
+  }
+  const lanEnabled = Boolean(tlsOptions);
+  const bindHost = lanEnabled ? '0.0.0.0' : '127.0.0.1';
   const resolvedDist = path.resolve(distDir);
   const mimeTypes = {
     '.html': 'text/html; charset=utf-8',
@@ -29,7 +40,7 @@ function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
     '.json': 'application/json',
   };
 
-  const server = http.createServer((req, res) => {
+  const requestHandler = (req, res) => {
     const reqPath = (req.url || '/').split('?')[0];
 
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -43,7 +54,7 @@ function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
 
     if (req.method === 'GET' && reqPath === '/api/pc/info') {
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ online: true, hostname: os.hostname(), lanIPs: getLanIPs() }));
+      res.end(JSON.stringify({ online: true, hostname: os.hostname(), protocol: lanEnabled ? 'https' : 'http', lanEnabled, lanIPs: lanEnabled ? getLanIPs() : [] }));
       return;
     }
 
@@ -152,10 +163,11 @@ function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: 'Not found' }));
     });
-  });
+  };
+  const server = lanEnabled ? https.createServer(tlsOptions, requestHandler) : http.createServer(requestHandler);
 
-  server.listen(5174, '0.0.0.0', () => {
-    console.log('JEEVA Phone-to-PC Bridge active on 0.0.0.0:5174');
+  server.listen(5174, bindHost, () => {
+    console.log(`JEEVA Phone-to-PC Bridge active on ${lanEnabled ? 'HTTPS/LAN' : 'localhost only'} at ${bindHost}:5174`);
   });
   server.on('error', (err) => {
     console.log('Bridge server note:', err.message);

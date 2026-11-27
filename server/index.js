@@ -4,6 +4,7 @@ import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI } from '@google/genai';
 import { createServerStore } from './store.js';
@@ -21,12 +22,30 @@ const RELAY_SECRET = (process.env.RELAY_SECRET || '').trim();
 const INSTALLER_DOWNLOAD_URL = (process.env.INSTALLER_DOWNLOAD_URL || '').trim();
 const PRIVATE_LOCK_ALL = process.env.PRIVATE_LOCK_ALL === 'true';
 const GEMINI_RPM_LIMIT = Math.max(5, Number(process.env.GEMINI_RPM_LIMIT) || 40);
-const SESSION_SECRET =
-  process.env.SESSION_SECRET ||
-  crypto
-    .createHash('sha256')
-    .update(`jeeva-v1:${GEMINI_API_KEY}:${APP_PIN || 'open'}`)
-    .digest('hex');
+function loadSessionSecret() {
+  const configured = String(process.env.SESSION_SECRET || '').trim();
+  if (configured) return configured;
+  const dataDir = process.env.DATA_DIR || path.join(os.tmpdir(), 'jeeva-server-data');
+  const secretPath = path.join(dataDir, '.session-secret');
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    const existing = fs.readFileSync(secretPath, 'utf8').trim();
+    if (existing.length >= 64) return existing;
+  } catch {}
+  const generated = crypto.randomBytes(32).toString('hex');
+  try {
+    fs.writeFileSync(secretPath, generated, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    try { fs.chmodSync(secretPath, 0o600); } catch {}
+    return generated;
+  } catch (err) {
+    if (err?.code === 'EEXIST') {
+      try { const concurrent = fs.readFileSync(secretPath, 'utf8').trim(); if (concurrent.length >= 64) return concurrent; } catch {}
+    }
+    console.warn('Could not persist SESSION_SECRET; signed sessions may reset after restart:', err?.message || err);
+    return generated;
+  }
+}
+const SESSION_SECRET = loadSessionSecret();
 
 // Connected PC agents keyed by `${ownerKey}::${deviceId}` for strict multi-user isolation
 const relayAgents = new Map();
@@ -398,7 +417,9 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const body = await readJsonBody(req);
-      if (!APP_PIN || String(body.pin || '').trim() === APP_PIN) {
+      const suppliedPin = String(body.pin || '').trim();
+      const pinMatches = !APP_PIN || (suppliedPin.length === APP_PIN.length && crypto.timingSafeEqual(Buffer.from(suppliedPin), Buffer.from(APP_PIN)));
+      if (pinMatches) {
         unlockAttempts.delete(clientIp);
         sendJson(res, 200, { ok: true, token: APP_PIN ? signToken(APP_PIN) : 'open' });
       } else {
