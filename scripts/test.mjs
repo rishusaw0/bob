@@ -722,9 +722,9 @@ assert.ok(repaired.toLowerCase().includes('volume 50') && repaired.toLowerCase()
 const uninstallNsis = readRel('build/uninstaller.nsh');
 assert.ok(uninstallNsis.includes('!macro customUnInstall'), 'NSIS custom uninstall hook must be present');
 assert.ok(uninstallNsis.includes('${ifNot} ${isUpdated}'), 'Uninstall cleanup must not run during installer-driven updates');
-assert.ok(uninstallNsis.includes('${ifNot} ${Silent}') && uninstallNsis.includes('Goto jeeva_keep_app_data'),
+assert.ok(uninstallNsis.includes('IfSilent jeeva_keep_app_data') && uninstallNsis.includes('/SD IDNO'),
   'Silent uninstall must preserve app data without a prompt');
-assert.ok(uninstallNsis.includes('MB_YESNO|MB_DEFBUTTON2') && uninstallNsis.includes('IDYES jeeva_delete_app_data'),
+assert.ok(uninstallNsis.includes('MB_YESNO|MB_DEFBUTTON2') && uninstallNsis.includes('/SD IDNO') && uninstallNsis.includes('IDYES jeeva_delete_app_data'),
   'Interactive uninstall must ask for explicit consent, defaulting to keep data');
 assert.ok(uninstallNsis.includes('${APP_FILENAME}') && uninstallNsis.includes('${APP_PRODUCT_FILENAME}') && uninstallNsis.includes('${APP_PACKAGE_NAME}'),
   'Data cleanup must cover JEEVA app-data names used by electron-builder');
