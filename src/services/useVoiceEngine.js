@@ -481,6 +481,27 @@ export function useVoiceEngine({
     requestPermission,
   ]);
 
+  const toggleOrb = useCallback(() => {
+    if (liveActive) {
+      stopLiveCall();
+      return;
+    }
+    if (speechState.isPlaying) {
+      voiceFollowUpPendingRef.current = false;
+      fadeOutAndStopSpeech(110);
+      return;
+    }
+    if (phase === 'listening') {
+      stopCommandCapture(true);
+    } else if (!isLoading) {
+      startCommandListening();
+    }
+  }, [liveActive, stopLiveCall, speechState.isPlaying, phase, isLoading, stopCommandCapture, startCommandListening]);
+
+  const toggleWake = useCallback(() => {
+    setWakeEnabled((prev) => persistWakeEnabled(!prev));
+  }, []);
+
   useEffect(() => {
     const api = window.electronAPI;
     if (!api?.onNotchEvent) return;
@@ -509,27 +530,6 @@ export function useVoiceEngine({
       stopLiveCall();
     };
   }, [stopCommandCapture, stopWakeListener, stopBargeIn, stopLiveCall]);
-
-  const toggleOrb = useCallback(() => {
-    if (liveActive) {
-      stopLiveCall();
-      return;
-    }
-    if (speechState.isPlaying) {
-      voiceFollowUpPendingRef.current = false;
-      fadeOutAndStopSpeech(110);
-      return;
-    }
-    if (phase === 'listening') {
-      stopCommandCapture(true);
-    } else if (!isLoading) {
-      startCommandListening();
-    }
-  }, [liveActive, stopLiveCall, speechState.isPlaying, phase, isLoading, stopCommandCapture, startCommandListening]);
-
-  const toggleWake = useCallback(() => {
-    setWakeEnabled((prev) => persistWakeEnabled(!prev));
-  }, []);
 
   return {
     phase,
