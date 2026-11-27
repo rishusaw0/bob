@@ -17,8 +17,11 @@ import { clearSessionPermissions, isUsingServerProxy, testGeminiConnection } fro
 import { getBrainMode, setBrainMode, getBrainStats, resetBrainStats } from '../services/brainRouter';
 import {
   speakText,
+  VOICE_PERSONAS,
   getVoiceAccent,
   setVoiceAccent,
+  getVoicePersona,
+  setVoicePersona,
   getPreferredNativeVoice,
   setPreferredNativeVoice,
   getAvailableSpeechVoices,
@@ -121,6 +124,7 @@ export default function SettingsPanel({
   const [brainProgress, setBrainProgress] = useState(null);
   const [brainBusy, setBrainBusy] = useState(false);
   const [voiceAccent, setVoiceAccentState] = useState(() => getVoiceAccent());
+  const [voicePersona, setVoicePersonaState] = useState(() => getVoicePersona());
   const [nativeVoice, setNativeVoiceState] = useState(() => getPreferredNativeVoice());
   const [availableVoices, setAvailableVoices] = useState(() => getAvailableSpeechVoices());
   const [speechSpeedMode, setSpeechSpeedModeState] = useState(() => getSpeechSpeedMode());
@@ -1047,7 +1051,23 @@ export default function SettingsPanel({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <select
+                    value={voicePersona}
+                    onChange={(e) => {
+                      const next = setVoicePersona(e.target.value);
+                      setVoicePersonaState(next);
+                      toast.success(`Human voice persona: ${VOICE_PERSONAS[next]?.label || next}`);
+                    }}
+                    className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
+                  >
+                    {Object.values(VOICE_PERSONAS).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        Persona: {p.label}
+                      </option>
+                    ))}
+                  </select>
+
                   <select
                     value={voiceAccent}
                     onChange={(e) => {
@@ -1070,9 +1090,9 @@ export default function SettingsPanel({
                     }}
                     className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
                   >
-                    <option value="hybrid_fast">Speed: Fast Hybrid (&lt;50ms Instant)</option>
-                    <option value="instant_local">Speed: Always Instant Offline</option>
-                    <option value="cloud_studio">Speed: Cloud Studio First</option>
+                    <option value="hybrid_fast">Voice: Realistic Human + Fast Fallback</option>
+                    <option value="cloud_studio">Voice: Studio Human Always First</option>
+                    <option value="instant_local">Voice: Instant Offline OS Voice</option>
                   </select>
 
                   <select
@@ -1083,7 +1103,7 @@ export default function SettingsPanel({
                     }}
                     className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
                   >
-                    <option value="">Offline Voice: Auto Best Indian Voice</option>
+                    <option value="">Offline Voice: Auto Best Natural Voice</option>
                     {availableVoices.map((v) => (
                       <option key={v.name} value={v.name}>
                         {v.name} ({v.lang})

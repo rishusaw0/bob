@@ -466,17 +466,41 @@ export async function generateTitle(userMessage) {
 
 let regionalVoiceCache = new Map();
 
+export function isGeminiReady() {
+  return Boolean(client);
+}
+
 export function resetRegionalVoiceCache() {
   regionalVoiceCache.clear();
 }
 
-async function getRegionalVoices(accent = 'indian') {
+const PERSONA_VOICES = {
+  natural_warm: {
+    indian: { english: 'Achird', hindi: 'Sulafat', hinglish: 'Achird' },
+    global: { english: 'Aoede', hindi: 'Sulafat', hinglish: 'Achird' },
+  },
+  calm_pro: {
+    indian: { english: 'Charon', hindi: 'Orus', hinglish: 'Charon' },
+    global: { english: 'Charon', hindi: 'Orus', hinglish: 'Charon' },
+  },
+  crisp_studio: {
+    indian: { english: 'Sulafat', hindi: 'Sulafat', hinglish: 'Aoede' },
+    global: { english: 'Aoede', hindi: 'Sulafat', hinglish: 'Aoede' },
+  },
+  conversational: {
+    indian: { english: 'Puck', hindi: 'Achird', hinglish: 'Puck' },
+    global: { english: 'Puck', hindi: 'Achird', hinglish: 'Puck' },
+  },
+};
+
+async function getRegionalVoices(accent = 'indian', persona = 'natural_warm') {
   const key = accent === 'global' ? 'global' : 'indian';
+  const personaKey = PERSONA_VOICES[persona] ? persona : 'natural_warm';
+  const personaFallback = PERSONA_VOICES[personaKey][key];
+  if (personaKey !== 'natural_warm') return personaFallback;
+
   if (regionalVoiceCache.has(key)) return regionalVoiceCache.get(key);
-  const fallback =
-    key === 'indian'
-      ? { english: 'Achird', hindi: 'Sulafat', hinglish: 'Achird' }
-      : { english: 'Charon', hindi: 'Sulafat', hinglish: 'Achird' };
+  const fallback = personaFallback;
   if (!client?.voices?.list) return fallback;
 
   // Background refresh without blocking first spoken word latency (0ms stall)
@@ -500,10 +524,14 @@ async function getRegionalVoices(accent = 'indian') {
 }
 
 const VOICE_STYLE_HINTS = {
-  english: 'clear, crisp, warm Indian English accent (en-IN), fluent natural conversational tone with articulate pronunciation and calm comfortable pacing',
-  english_global: 'clear, articulate, warm natural English studio narrator with steady pacing',
-  hindi: 'warm, expressive, fluent native Indian Hindi speaker with crisp pronunciation and calm natural pacing',
-  hinglish: 'friendly, natural Indian conversational voice (en-IN / hi-IN), crystal-clear pronunciation switching smoothly between Indian English and Hindi without rushing',
+  english:
+    'realistic human Indian English speaker (en-IN), warm conversational studio presence, natural micro-pauses at punctuation, subtle expressive emphasis, never robotic or monotonous',
+  english_global:
+    'realistic human studio narrator, warm articulate conversational tone, natural breathing pauses and genuine human inflection without sounding synthetic',
+  hindi:
+    'realistic native Indian Hindi human speaker, warm expressive voice with natural conversational cadence, soft breathing pauses, and crisp authentic pronunciation',
+  hinglish:
+    'realistic bilingual Indian human assistant (en-IN / hi-IN), friendly conversational warmth, effortless code-switching between English and Hindi with natural human rhythm',
 };
 
 export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
@@ -513,7 +541,11 @@ export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
     opts?.accent ||
     (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_accent') : null) ||
     'indian';
-  const voices = await getRegionalVoices(accent);
+  const persona =
+    opts?.persona ||
+    (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_persona') : null) ||
+    'natural_warm';
+  const voices = await getRegionalVoices(accent, persona);
   const voice = voices[profile] || voices.hinglish;
   const styleKey = profile === 'english' && accent === 'global' ? 'english_global' : profile;
   const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;

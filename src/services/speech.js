@@ -1,5 +1,5 @@
-// Smart Multi-Voice Read-Aloud Engine (Indian English, Hindi, Hinglish + Clear Pronunciation Normalizer)
-import { textToSpeech, resetRegionalVoiceCache } from './gemini.js';
+// Smart Multi-Voice Read-Aloud Engine (Indian English, Hindi, Hinglish + Realistic Human Studio Voices)
+import { textToSpeech, resetRegionalVoiceCache, isGeminiReady } from './gemini.js';
 
 export const VOICE_PROFILES = {
   auto: { id: 'auto', label: 'Auto Detect', shortLabel: 'Auto' },
@@ -8,7 +8,15 @@ export const VOICE_PROFILES = {
   hinglish: { id: 'hinglish', label: 'Hinglish (Bilingual)', shortLabel: 'Hinglish' },
 };
 
+export const VOICE_PERSONAS = {
+  natural_warm: { id: 'natural_warm', label: 'Natural Warm (Human)' },
+  calm_pro: { id: 'calm_pro', label: 'Calm Executive (Male)' },
+  crisp_studio: { id: 'crisp_studio', label: 'Crisp Studio (Female)' },
+  conversational: { id: 'conversational', label: 'Friendly Conversational' },
+};
+
 const VOICE_ACCENT_KEY = 'jeeva_voice_accent';
+const VOICE_PERSONA_KEY = 'jeeva_voice_persona';
 const PREFERRED_NATIVE_VOICE_KEY = 'jeeva_native_voice';
 const SPEECH_SPEED_MODE_KEY = 'jeeva_speech_speed';
 
@@ -47,6 +55,18 @@ export function getVoiceAccent() {
 export function setVoiceAccent(accent) {
   const clean = accent === 'global' ? 'global' : 'indian';
   writeStorage(VOICE_ACCENT_KEY, clean);
+  resetRegionalVoiceCache();
+  return clean;
+}
+
+export function getVoicePersona() {
+  const v = readStorage(VOICE_PERSONA_KEY, 'natural_warm');
+  return VOICE_PERSONAS[v] ? v : 'natural_warm';
+}
+
+export function setVoicePersona(persona) {
+  const clean = VOICE_PERSONAS[persona] ? persona : 'natural_warm';
+  writeStorage(VOICE_PERSONA_KEY, clean);
   resetRegionalVoiceCache();
   return clean;
 }
@@ -291,12 +311,15 @@ function scoreVoiceCandidate(v, targetLangOrder) {
   if (!langScore) return -1;
 
   let qualityBonus = 0;
-  if (/natural|neural|online/i.test(name)) qualityBonus += 45;
-  if (/neerja|prabhat|swara|madhur|ravi|heera|kalpana|hemant|veena|rishi|google\s+.*india|google हिन्दी/i.test(name)) {
-    qualityBonus += 60;
+  if (/natural|neural|online/i.test(name)) qualityBonus += 120;
+  if (/google/i.test(name)) qualityBonus += 60;
+  if (/neerja|prabhat|swara|madhur|ava|andrew|aria|guy|jenny|veena|rishi|google\s+.*india|google हिन्दी/i.test(name)) {
+    qualityBonus += 75;
   }
-  if (/india/i.test(name)) qualityBonus += 40;
-  if (/google/i.test(name)) qualityBonus += 15;
+  if (/india/i.test(name)) qualityBonus += 45;
+  if (/\b(david|zira|mark|heera|ravi|kalpana|hemant)\b/i.test(name) && !/natural|neural|online/i.test(name)) {
+    qualityBonus -= 45;
+  }
   return langScore + qualityBonus;
 }
 
@@ -341,8 +364,8 @@ function speakChunkNative(text, profile) {
     utterance.lang = profile === 'hindi' ? 'hi-IN' : indianAccent || profile === 'hinglish' ? 'en-IN' : 'en-US';
     const voice = pickNativeVoice(profile);
     if (voice) utterance.voice = voice;
-    utterance.rate = Math.min(1.6, Math.max(0.8, currentState.rate * 1.04));
-    utterance.pitch = 1.0;
+    utterance.rate = Math.min(1.5, Math.max(0.82, currentState.rate * 0.98));
+    utterance.pitch = 1.02;
 
     let done = false;
     let pulseTimer = setInterval(() => {
@@ -528,10 +551,9 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
   const initialProfile =
     forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(clean) : selectedMode);
   const speedMode = getSpeechSpeedMode();
-  const useInstantDirect =
-    speedMode !== 'cloud_studio' ||
-    (typeof navigator !== 'undefined' && navigator.onLine === false) ||
-    Boolean(instant);
+  const isOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
+  const canUseStudio = speedMode !== 'instant_local' && isOnline && isGeminiReady() && !instant;
+  const useInstantDirect = !canUseStudio;
 
   currentState = {
     ...currentState,
@@ -547,7 +569,7 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
   };
   notify();
 
-  // Fast <40ms Direct Local Indian Voice path (no multi-second Gemini Cloud wait!)
+  // Fast Direct Local Voice path (when offline, instant_local mode, or Gemini key not yet configured)
   if (useInstantDirect) {
     for (let i = 0; i < chunks.length; i++) {
       if (stopRequested || myToken !== playbackToken) break;
@@ -579,29 +601,13 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
     return;
   }
 
-  // Prefetch helper with strict 1500ms race timeout + phrase cache so Cloud TTS never hangs
-  const accent = getVoiceAccent();
-  const timeoutMs = speedMode === 'cloud_studio' ? 3500 : 1500;
+  // Prefetch helper with race timeout + phrase cache so Human Studio TTS never hangs
+  const timeoutMs = speedMode === 'cloud_studio' ? 4500 : 2400;
   const fetchChunkAudio = (idx) => {
     const chunkText = chunks[idx];
     const profile =
       forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunkText) : selectedMode);
-    const cacheKey = `${accent}:${profile}:${chunkText}`;
-    if (ttsAudioCache.has(cacheKey)) {
-      return Promise.resolve({ url: ttsAudioCache.get(cacheKey), profile });
-    }
-    const ttsPromise = textToSpeech(chunkText, profile, { accent }).then((url) => {
-      if (ttsAudioCache.size >= 24) {
-        const firstKey = ttsAudioCache.keys().next().value;
-        ttsAudioCache.delete(firstKey);
-      }
-      ttsAudioCache.set(cacheKey, url);
-      return { url, profile };
-    });
-    const timerPromise = new Promise((_, rej) =>
-      setTimeout(() => rej(new Error('TTS timeout — fast local fallback')), timeoutMs)
-    );
-    return Promise.race([ttsPromise, timerPromise]);
+    return fetchStudioChunkAudio(chunkText, profile, timeoutMs);
   };
 
   let nextPromise = fetchChunkAudio(0).catch((err) => ({ error: err }));
@@ -669,9 +675,30 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
   }
 }
 
+function fetchStudioChunkAudio(chunkText, profile, timeoutMs = 2400) {
+  const accent = getVoiceAccent();
+  const persona = getVoicePersona();
+  const cacheKey = `${accent}:${persona}:${profile}:${chunkText}`;
+  if (ttsAudioCache.has(cacheKey)) {
+    return Promise.resolve({ url: ttsAudioCache.get(cacheKey), profile });
+  }
+  const ttsPromise = textToSpeech(chunkText, profile, { accent, persona }).then((url) => {
+    if (ttsAudioCache.size >= 24) {
+      const firstKey = ttsAudioCache.keys().next().value;
+      ttsAudioCache.delete(firstKey);
+    }
+    ttsAudioCache.set(cacheKey, url);
+    return { url, profile };
+  });
+  const timerPromise = new Promise((_, rej) =>
+    setTimeout(() => rej(new Error('TTS timeout — fast local fallback')), timeoutMs)
+  );
+  return Promise.race([ttsPromise, timerPromise]);
+}
+
 /**
  * Progressive Streaming Speaker: speaks completed sentences immediately as tokens stream in,
- * so there is ~0ms wait for the full AI answer before voice starts.
+ * using Realistic Human Studio TTS when online & configured, with instant OS fallback.
  */
 export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = null } = {}) {
   const wasSpeaking = typeof window !== 'undefined' && Boolean(window.speechSynthesis?.speaking || activeAudio);
@@ -687,6 +714,23 @@ export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = n
   let draining = false;
   let spokenChunks = 0;
   let totalQueued = 0;
+  const prefetchedPromises = new Map();
+
+  const canUseStudioNow = () => {
+    const mode = getSpeechSpeedMode();
+    const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+    return mode !== 'instant_local' && online && isGeminiReady();
+  };
+
+  const getChunkProfile = (text) =>
+    forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(text) : selectedMode);
+
+  const primeStudioChunk = (text) => {
+    if (!canUseStudioNow() || prefetchedPromises.has(text)) return;
+    const timeoutMs = getSpeechSpeedMode() === 'cloud_studio' ? 4500 : 2400;
+    const p = fetchStudioChunkAudio(text, getChunkProfile(text), timeoutMs).catch(() => null);
+    prefetchedPromises.set(text, p);
+  };
 
   const drainQueue = async () => {
     if (draining) return;
@@ -698,25 +742,53 @@ export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = n
       while (queue.length > 0 && !stopRequested && myToken === playbackToken) {
         const nextText = queue.shift();
         const subChunks = splitIntoChunks(nextText, 220, 100);
-        for (const chunk of subChunks) {
+        for (let i = 0; i < subChunks.length; i++) {
+          const chunk = subChunks[i];
           if (stopRequested || myToken !== playbackToken) break;
-          const profile =
-            forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunk) : selectedMode);
+          const profile = getChunkProfile(chunk);
           spokenChunks++;
+          const useStudio = canUseStudioNow();
+          if (useStudio && i + 1 < subChunks.length) {
+            primeStudioChunk(subChunks[i + 1]);
+          } else if (useStudio && queue.length > 0) {
+            primeStudioChunk(queue[0]);
+          }
           currentState = {
             ...currentState,
             isPlaying: true,
             isPaused: false,
-            isLoading: false,
+            isLoading: useStudio && !prefetchedPromises.has(chunk),
             currentChunk: spokenChunks,
             totalChunks: Math.max(spokenChunks, totalQueued),
             label,
             voiceMode: selectedMode,
             detectedProfile: profile,
-            engine: 'instant-local',
+            engine: useStudio ? 'gemini' : 'instant-local',
           };
           notify();
-          await speakChunkNative(chunk, profile);
+
+          let playedStudio = false;
+          if (useStudio) {
+            primeStudioChunk(chunk);
+            const studioRes = await prefetchedPromises.get(chunk);
+            prefetchedPromises.delete(chunk);
+            if (stopRequested || myToken !== playbackToken) break;
+            if (studioRes?.url) {
+              currentState = { ...currentState, isLoading: false, engine: 'gemini' };
+              notify();
+              try {
+                await playAudioUrl(studioRes.url);
+                playedStudio = true;
+              } catch {
+                playedStudio = false;
+              }
+            }
+          }
+          if (!playedStudio && !stopRequested && myToken === playbackToken) {
+            currentState = { ...currentState, isLoading: false, engine: 'instant-local' };
+            notify();
+            await speakChunkNative(chunk, profile);
+          }
         }
       }
     } finally {
@@ -741,6 +813,10 @@ export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = n
     if (!cleaned) return;
     started = true;
     totalQueued++;
+    if (canUseStudioNow() && queue.length < 2) {
+      const firstSub = splitIntoChunks(cleaned, 220, 100)[0];
+      if (firstSub) primeStudioChunk(firstSub);
+    }
     queue.push(cleaned);
     drainQueue();
   };
