@@ -70,7 +70,8 @@ for (const t of declaredTools) {
 }
 
 const preloadInvokes = [...preloadSrc.matchAll(/ipcRenderer\.invoke\(['"]([^'"]+)['"]/g)].map((m) => m[1]);
-const mainHandles = new Set([...mainSrc.matchAll(/ipcMain\.handle\(['"]([^'"]+)['"]/g)].map((m) => m[1]));
+assert.ok(mainSrc.includes('function registerSecureIpcHandler'), 'IPC handlers must be registered through the trusted-renderer guard');
+const mainHandles = new Set([...mainSrc.matchAll(/registerSecureIpcHandler\(['"]([^'"]+)['"]/g)].map((m) => m[1]));
 for (const ch of preloadInvokes) {
   assert.ok(mainHandles.has(ch), `IPC channel "${ch}" exposed in preload.cjs but missing in main.cjs`);
 }
@@ -234,7 +235,7 @@ assert.throws(() => normalizeRenderUrl('https://relay.example.com/path'), /base 
 
 // Secret paths and empty paths are rejected by the local filesystem guard.
 assert.equal(checkPathSafety('', 'read').allowed, false);
-assert.equal(checkPathSafety('C:\\\\Users\\\\Test\\\\AppData\\\\Roaming\\\\Jeeva-AI\\\\api-key.vault', 'read').allowed, false);
+assert.equal(checkPathSafety(path.win32.join('C:\\\\', 'Users', 'Test', 'AppData', 'Roaming', 'Jeeva-AI', 'api-key.vault'), 'read').allowed, false);
 
 // 4. Voice router verification (including "batao" status exception + battery + browser)
 console.log('[4/6] Testing fast Voice Router rules...');
@@ -585,6 +586,7 @@ assert.equal(roCtx.scope, 'read_only');
 assert.equal(isActionAllowedForReadOnly('runCommand', ['echo hack']), false);
 assert.equal(isActionAllowedForReadOnly('liveStats', []), false);
 assert.equal(isActionAllowedForReadOnly('battery', []), true);
+assert.equal(isActionAllowedForReadOnly('systemInfo', []), false);
 assert.equal(isActionAllowedForReadOnly('diagnostics', ['kill_process', '123']), false);
 assert.equal(isActionAllowedForReadOnly('diagnostics', ['overview']), false);
 assert.equal(isActionAllowedForReadOnly('listFiles', ['C:\\\\']), false);

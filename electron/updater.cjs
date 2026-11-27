@@ -67,7 +67,8 @@ function fetchJson(targetUrl, redirects = 0) {
 function downloadFileWithProgress(targetUrl, destPath, onProgress, expectedSha256, redirects = 0) {
   return new Promise((resolve, reject) => {
     if (redirects > 5) return reject(new Error('Too many download redirects'));
-    const u = new URL(targetUrl);
+    let u;
+    try { u = new URL(targetUrl); } catch { return reject(new Error('Invalid installer URL.')); }
     if (u.protocol !== 'https:') return reject(new Error('Installer downloads and redirects must use HTTPS.'));
     const lib = https;
     const req = lib.get(
@@ -208,6 +209,7 @@ function createUpdater({ currentVersion = '1.0.0', shell, onStatus } = {}) {
         emit({ progress: pct });
       }, state.downloadSha256);
       if (res.bytes < 1024 * 1024) {
+        fs.unlink(dest, () => {});
         throw new Error('Downloaded installer appears invalid/incomplete.');
       }
       emit({ downloading: false, progress: 100 });

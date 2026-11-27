@@ -88,6 +88,7 @@ flowchart LR
 ### Security deployment notes
 - Configure a persistent Render DATA_DIR; otherwise the automatically generated session secret may be lost when the host is replaced.
 - Set INSTALLER_SHA256 to the 64-character SHA-256 digest of the exact release installer. Updates without HTTPS and a valid digest are intentionally blocked.
+- Read-only guest shares currently expose battery status only; process, file, clipboard, Wi-Fi, diagnostics, and scheduler data remain owner-only.
 - The desktop bridge binds to localhost unless both JEEVA_BRIDGE_TLS_CERT and JEEVA_BRIDGE_TLS_KEY are configured. To use phone-to-PC LAN control, provide a trusted certificate valid for the LAN hostname/IP, install its issuing CA on the phone, and use an https:// bridge URL.
 - Restrict bridge origins with JEEVA_BRIDGE_ALLOWED_ORIGINS when deploying a custom web origin.
 

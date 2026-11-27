@@ -23,10 +23,15 @@ function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
   let tlsOptions = null;
   if (tlsKeyPath || tlsCertPath) {
     if (!tlsKeyPath || !tlsCertPath) throw new Error('Both JEEVA_BRIDGE_TLS_KEY and JEEVA_BRIDGE_TLS_CERT are required.');
-    tlsOptions = {
-      key: fs.readFileSync(path.resolve(tlsKeyPath)),
-      cert: fs.readFileSync(path.resolve(tlsCertPath)),
-    };
+    try {
+      tlsOptions = {
+        key: fs.readFileSync(path.resolve(tlsKeyPath)),
+        cert: fs.readFileSync(path.resolve(tlsCertPath)),
+      };
+    } catch (err) {
+      console.error('JEEVA bridge TLS could not be loaded; binding to localhost only:', err?.message || err);
+      tlsOptions = null;
+    }
   }
   const lanEnabled = Boolean(tlsOptions);
   const bindHost = lanEnabled ? '0.0.0.0' : '127.0.0.1';
