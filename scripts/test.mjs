@@ -661,10 +661,8 @@ saveCustomClonedVoice({ id: 'voice_test_123', displayName: 'Test Voice' });
 assert.equal(getActiveCustomVoiceId(), 'voice_test_123');
 removeCustomClonedVoice('voice_test_123');
 assert.equal(getActiveCustomVoiceId(), '');
-// SEO & Brand asset checks for webbuildix.online
-assert.ok(fs.existsSync(path.join(ROOT, 'public/robots.txt')));
-assert.ok(fs.readFileSync(path.join(ROOT, 'public/sitemap.xml'), 'utf8').includes('https://webbuildix.online/'));
-assert.ok(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes('rel="canonical" href="https://webbuildix.online/"'));
+// Desktop brand icon & packaging checks
+assert.ok(fs.existsSync(path.join(ROOT, 'public/icon.png')));
 assert.ok(fs.readFileSync(path.join(ROOT, 'public/icon.svg'), 'utf8').includes('viewBox="0 0 128 128"'));
 
 // Regression tests: Strict Offline Mode, NSIS installer hooks & offline-voice resilience
@@ -705,9 +703,31 @@ const hwProf = detectHardwareProfile();
 assert.ok(hwProf.totalGb > 0 && hwProf.recommendedModel && 'gpuVramGb' in hwProf);
 
 const { startLiveVoiceCall } = await import(pathToFileURL(path.join(ROOT, 'src/services/liveAudio.js')).href);
+const {
+  sendMessage: sendCloudMsg,
+  transcribeAudio: transcribeCloudAudio,
+  textToSpeech: cloudTts,
+  createReplicatedVoice: cloudVoiceClone,
+  generateImage: cloudImageGen,
+} = await import(pathToFileURL(path.join(ROOT, 'src/services/gemini.js')).href);
 setStrictOfflineMode(true);
 await assert.rejects(() => startLiveVoiceCall(), /Strict Offline Mode/);
+await assert.rejects(() => sendCloudMsg('hello'), /Strict Offline Mode/);
+await assert.rejects(() => transcribeCloudAudio('UklGRg=='), /Strict Offline Mode/);
+await assert.rejects(() => cloudTts('hello'), /Strict Offline Mode/);
+await assert.rejects(() => cloudVoiceClone({ sourceWavBase64: 'a', consentWavBase64: 'b' }), /Strict Offline Mode/);
+await assert.rejects(() => cloudImageGen('cat'), /Strict Offline Mode/);
 setStrictOfflineMode(false);
+
+// Electron Permission Policy security tests (Default Deny)
+const { evaluateElectronPermission } = require(path.join(ROOT, 'electron/permission-policy.cjs'));
+assert.equal(evaluateElectronPermission({ permission: 'audioCapture', origin: 'file:///app/index.html' }), true);
+assert.equal(evaluateElectronPermission({ permission: 'audioCapture', origin: 'https://evil.example.com' }), false);
+assert.equal(evaluateElectronPermission({ permission: 'media', origin: 'http://127.0.0.1:5173', mediaTypes: ['audio'] }), true);
+assert.equal(evaluateElectronPermission({ permission: 'media', origin: 'file:///app/index.html', mediaTypes: ['video'] }), false);
+assert.equal(evaluateElectronPermission({ permission: 'geolocation', origin: 'file:///app/index.html' }), false);
+assert.equal(evaluateElectronPermission({ permission: 'notifications', origin: 'file:///app/index.html' }), false);
+assert.equal(evaluateElectronPermission({ permission: 'unknown-perm', origin: 'file:///app/index.html' }), false);
 
 // Regression tests for Bugs A-F (Notch hide persistence, Startup separation, Voice crash recovery, Duplicate Settings, Hide label)
 const settingsSrc = fs.readFileSync(path.join(ROOT, 'src/components/SettingsPanel.jsx'), 'utf8');

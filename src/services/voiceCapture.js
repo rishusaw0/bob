@@ -3,6 +3,7 @@
 // 2. Adaptive Utterance Silence Grace (snappy for short cmds, patient for multi-step sentences)
 // 3. Real-Time Barge-In Monitor during TTS / Audio Playback
 import { transcribeAudio, getGeminiConnectionInfo } from './gemini.js';
+import { isStrictOfflineMode } from './offlineMode.js';
 import { matchWakePhrase, getAiName } from './voiceRouter.js';
 
 let speechApiBrokenInRuntime = false;
@@ -92,7 +93,26 @@ export function normalizePcmForStt(pcm16k, sampleRate = 16000) {
 export function isBrowserSpeechSupported() {
   if (typeof window === 'undefined') return false;
   if (window.electronAPI) return false;
+  if (isStrictOfflineMode()) return false;
   return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition) && !speechApiBrokenInRuntime;
+}
+
+/**
+ * Centralized local-first audio transcription adapter.
+ * Enforces Strict Offline Mode: NEVER sends mic audio to Gemini Cloud when Strict Offline is ON.
+ */
+async function transcribeCapturedAudio(wavBase64, opts = {}) {
+  const api = typeof window !== 'undefined' ? window.electronAPI : null;
+  if (api?.offlineVoiceTranscribe) {
+    const localWhisper = await api.offlineVoiceTranscribe(wavBase64, { language: 'auto' }).catch(() => null);
+    if (localWhisper?.ok && localWhisper?.text) {
+      return localWhisper.text;
+    }
+  }
+  if (isStrictOfflineMode()) {
+    throw new Error('Strict Offline Mode: Cloud transcription blocked. Configure local Whisper.cpp or Windows Speech pack.');
+  }
+  return await transcribeAudio(wavBase64, 'audio/wav', opts);
 }
 
 const AUDIO_CONSTRAINTS = {
@@ -273,64 +293,62 @@ export function computeAdaptiveSilenceMs(speechDurationMs, baseSilenceMs = 740) 
  */
 export async function createPcmStreamMonitor({ preRollSeconds = 0.75, gainBoost = 3.6, onFrame }) {
   const stream = await navigator.mediaDevices.getUserMedia(AUDIO_CONSTRAINTS);
-  let ctx = null;
-  let source = null;
-  let processor = null;
-  let silentSink = null;
-  let closed = false;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new Ctx();
+  if (ctx.state === 'suspended') {
+    await ctx.resume().catch(() => {});
+  }
+
+  const source = ctx.createMediaStreamSource(stream);
+  const processor = ctx.createScriptProcessor(2048, 1, 1);
+  const silentSink = ctx.createGain();
+  silentSink.gain.value = 0;
+
+  source.connect(processor);
+  processor.connect(silentSink);
+  silentSink.connect(ctx.destination);
+
+  const maxPreRollSamples = Math.round(16000 * preRollSeconds);
   let preRollChunks = [];
   let preRollTotal = 0;
+  let closed = false;
+
+  processor.onaudioprocess = (ev) => {
+    if (closed) return;
+    const raw = ev.inputBuffer.getChannelData(0);
+    const down = downsampleFloat32(raw, ctx.sampleRate, 16000);
+    const pcm16k = applyHighPassRumbleFilter(down);
+    const metrics = computeVocalVadMetrics(pcm16k, gainBoost, 16000);
+
+    preRollChunks.push(pcm16k);
+    preRollTotal += pcm16k.length;
+    while (preRollTotal > maxPreRollSamples && preRollChunks.length > 1) {
+      const dropped = preRollChunks.shift();
+      preRollTotal -= dropped.length;
+    }
+
+    onFrame?.(pcm16k, metrics, () => preRollChunks.slice());
+  };
 
   const close = () => {
     if (closed) return;
     closed = true;
     try {
-      if (processor) processor.onaudioprocess = null;
-      source?.disconnect();
-      processor?.disconnect();
-      silentSink?.disconnect();
+      processor.onaudioprocess = null;
+      source.disconnect();
+      processor.disconnect();
+      silentSink.disconnect();
     } catch {}
-    try { stream.getTracks().forEach((track) => track.stop()); } catch {}
     try {
-      if (ctx && ctx.state !== 'closed') ctx.close().catch(() => {});
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {}
+    try {
+      if (ctx.state !== 'closed') ctx.close().catch(() => {});
     } catch {}
     preRollChunks = [];
-    preRollTotal = 0;
   };
 
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) throw new Error('AudioContext is not supported by this device.');
-    ctx = new Ctx();
-    if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
-    source = ctx.createMediaStreamSource(stream);
-    processor = ctx.createScriptProcessor(2048, 1, 1);
-    silentSink = ctx.createGain();
-    silentSink.gain.value = 0;
-    source.connect(processor);
-    processor.connect(silentSink);
-    silentSink.connect(ctx.destination);
-
-    const maxPreRollSamples = Math.round(16000 * preRollSeconds);
-    processor.onaudioprocess = (ev) => {
-      if (closed) return;
-      const raw = ev.inputBuffer.getChannelData(0);
-      const down = downsampleFloat32(raw, ctx.sampleRate, 16000);
-      const pcm16k = applyHighPassRumbleFilter(down);
-      const metrics = computeVocalVadMetrics(pcm16k, gainBoost, 16000);
-      preRollChunks.push(pcm16k);
-      preRollTotal += pcm16k.length;
-      while (preRollTotal > maxPreRollSamples && preRollChunks.length > 1) {
-        const dropped = preRollChunks.shift();
-        preRollTotal -= dropped.length;
-      }
-      onFrame?.(pcm16k, metrics, () => preRollChunks.slice());
-    };
-    return { close };
-  } catch (err) {
-    close();
-    throw err;
-  }
+  return { close };
 }
 
 /**
@@ -355,7 +373,6 @@ export function startVoiceCapture({
   let noSpeechTimer = null;
   let maxCapTimer = null;
   let finalText = '';
-  let latestTranscript = '';
   let hasCapturedSpeech = false;
   let recordedChunks = [];
   let speechStarted = false;
@@ -414,7 +431,7 @@ export function startVoiceCapture({
       const cleanPcm = normalizePcmForStt(pcm, 16000);
       const wavBase64 = encodeWavBase64(cleanPcm.length >= 1600 ? cleanPcm : pcm, 16000);
       try {
-        const rawText = await transcribeAudio(wavBase64, 'audio/wav', {
+        const rawText = await transcribeCapturedAudio(wavBase64, {
           aiName: getAiName(),
           mode: 'command',
         });
@@ -446,14 +463,12 @@ export function startVoiceCapture({
 
   const startPcmCommandCapture = async () => {
     if (stopped) return;
-    clearTimeout(noSpeechTimer);
-    noSpeechTimer = null;
     try {
       onStatus('listening-audio');
       let noiseFloor = 0.018;
       let voicedFrames = 0;
 
-      const session = await createPcmStreamMonitor({
+      pcmSession = await createPcmStreamMonitor({
         preRollSeconds: 1.15,
         gainBoost: 3.6,
         onFrame: (pcm16k, metrics, getPreRoll) => {
@@ -505,11 +520,6 @@ export function startVoiceCapture({
           }
         },
       });
-      if (stopped) {
-        session.close();
-        return;
-      }
-      pcmSession = session;
 
       if (autoStopOnSilence) {
         noSpeechTimer = setTimeout(() => {
@@ -552,13 +562,12 @@ export function startVoiceCapture({
         if (newlyFinal) finalText += newlyFinal;
         const combined = (finalText + interim).trim();
         if (combined) {
-          latestTranscript = combined;
           hasCapturedSpeech = true;
           onInterim(combined);
           if (autoStopOnSilence) {
             clearTimeout(silenceTimer);
             silenceTimer = setTimeout(() => {
-              const out = (finalText || latestTranscript || combined).trim();
+              const out = (finalText || combined).trim();
               stopped = true;
               cleanup();
               onResult(out, { pcm16k: null });
@@ -569,18 +578,16 @@ export function startVoiceCapture({
 
       recognition.onerror = (ev) => {
         const errCode = ev?.error || '';
-        if ((errCode === 'no-speech' || errCode === 'aborted') && !hasCapturedSpeech) {
-          // Browser recognition can report no-speech even when the microphone works.
-          // Fall back to PCM + cloud/offline STT instead of ending the user's turn.
-          if (recognition) {
-            try { recognition.onend = null; recognition.onerror = null; recognition.stop(); } catch {}
-            recognition = null;
-          }
-          startPcmCommandCapture();
+        if (errCode === 'no-speech' || errCode === 'aborted') {
+          stopped = true;
+          cleanup();
+          onResult('', { pcm16k: null });
           return;
         }
-        if (!hasCapturedSpeech && (errCode === 'network' || errCode === 'service-not-allowed')) {
-          speechApiBrokenInRuntime = true;
+        if (!hasCapturedSpeech && (errCode === 'network' || errCode === 'service-not-allowed' || errCode === 'not-allowed')) {
+          if (errCode === 'network' || errCode === 'service-not-allowed') {
+            speechApiBrokenInRuntime = true;
+          }
           if (recognition) {
             try {
               recognition.onend = null;
@@ -598,17 +605,13 @@ export function startVoiceCapture({
       recognition.onend = () => {
         if (!stopped && hasCapturedSpeech) {
           stopped = true;
-          const out = (finalText || latestTranscript).trim();
+          const out = finalText.trim();
           cleanup();
           onResult(out, { pcm16k: null });
         } else if (!stopped) {
-          // Some Chromium builds end a continuous recognition session without
-          // emitting a no-speech error. Keep the command alive via PCM fallback.
-          if (recognition) {
-            try { recognition.onend = null; recognition.onerror = null; recognition.stop(); } catch {}
-            recognition = null;
-          }
-          startPcmCommandCapture();
+          stopped = true;
+          cleanup();
+          onResult('', { pcm16k: null });
         }
       };
 
@@ -663,7 +666,7 @@ export function startVoiceCapture({
         finishPcmCapture(speechStarted && recordedChunks.length > 0);
         return;
       }
-      const out = (finalText || latestTranscript).trim();
+      const out = finalText.trim();
       cleanup();
       onResult(out, { pcm16k: null });
     },
@@ -745,7 +748,7 @@ export function startWakeWordListener({
           const cleanPcm = normalizePcmForStt(pcm, 16000);
           const wavBase64 = encodeWavBase64(cleanPcm.length >= 2400 ? cleanPcm : pcm, 16000);
           if (cancelled) return;
-          const rawTranscript = await transcribeAudio(wavBase64, 'audio/wav', {
+          const rawTranscript = await transcribeCapturedAudio(wavBase64, {
             aiName,
             mode: 'wake',
           });
@@ -763,7 +766,7 @@ export function startWakeWordListener({
         }
       };
 
-      const session = await createPcmStreamMonitor({
+      pcmSession = await createPcmStreamMonitor({
         preRollSeconds: 1.15,
         gainBoost: 3.8,
         onFrame: (pcm16k, metrics, getPreRoll) => {
@@ -804,13 +807,8 @@ export function startWakeWordListener({
           }
         },
       });
-      if (cancelled) {
-        session.close();
-        return;
-      }
-      pcmSession = session;
     } catch (err) {
-      if (!cancelled) onError('Wake mic error: ' + (err?.message || err));
+      onError('Wake mic error: ' + (err?.message || err));
     }
   };
 
@@ -932,7 +930,7 @@ export function startBargeInMonitor({
     inFlight = true;
     try {
       const wavB64 = encodeWavBase64(pcm, 16000);
-      const raw = await transcribeAudio(wavB64, 'audio/wav', { aiName, mode: 'wake' });
+      const raw = await transcribeCapturedAudio(wavB64, { aiName, mode: 'wake' });
       if (cancelled) return;
       const cleaned = cleanSttTranscript(raw);
       if (!cleaned) {

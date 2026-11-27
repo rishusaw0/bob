@@ -32,6 +32,7 @@ const { createSystemWatchdog } = require('./system-watchdog.cjs');
 const { createWindowManager } = require('./window-manager.cjs');
 const { createLocalBrainManager } = require('./local-brain.cjs');
 const { createEpisodicMemory } = require('./episodic-memory.cjs');
+const { evaluateElectronPermission } = require('./permission-policy.cjs');
 
 let bridgeServer = null;
 let permissionGuard = null;
@@ -252,22 +253,20 @@ if (process.platform === 'win32') {
 }
 
 app.whenReady().then(() => {
-  const isTrustedRendererOrigin = (originUrl) => {
-    const o = String(originUrl || '');
-    return o.startsWith('file://') || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(o);
-  };
-  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-    if (permission === 'media' || permission === 'audioCapture') {
-      return isTrustedRendererOrigin(requestingOrigin || webContents?.getURL?.());
-    }
-    return true;
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
+    return evaluateElectronPermission({
+      permission,
+      origin: requestingOrigin || webContents?.getURL?.(),
+      mediaTypes: details?.mediaType ? [details.mediaType] : null,
+    });
   });
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    if (permission === 'media' || permission === 'audioCapture') {
-      callback(isTrustedRendererOrigin(webContents?.getURL?.()));
-      return;
-    }
-    callback(true);
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const allowed = evaluateElectronPermission({
+      permission,
+      origin: details?.requestingUrl || webContents?.getURL?.(),
+      mediaTypes: details?.mediaTypes || null,
+    });
+    callback(allowed);
   });
 
   if (process.defaultApp && process.argv.length >= 2) {

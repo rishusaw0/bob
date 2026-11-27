@@ -395,6 +395,7 @@ export async function sendMessage(
 }
 
 export async function transcribeAudio(base64Data, mimeType = 'audio/wav', opts = {}) {
+  assertCloudAllowed('Gemini Audio Transcription');
   if (!client) throw new Error('Gemini not initialized');
   const wakeName = (opts?.aiName || assistantName || 'Jeeva').trim();
   const isWake = opts?.mode === 'wake';
@@ -440,6 +441,7 @@ export async function transcribeAudio(base64Data, mimeType = 'audio/wav', opts =
 }
 
 export async function generateImage(prompt) {
+  assertCloudAllowed('Gemini Image Generation');
   if (!client) throw new Error('Gemini not initialized');
   const interaction = await client.interactions.create({
     model: 'gemini-nano-banana-2.1',
@@ -453,7 +455,7 @@ export async function generateImage(prompt) {
 }
 
 export async function generateTitle(userMessage) {
-  if (!client) return null;
+  if (isStrictOfflineMode() || !client) return null;
   try {
     const interaction = await client.interactions.create({
       model: 'gemini-3.5-flash-lite',

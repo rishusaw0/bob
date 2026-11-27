@@ -211,12 +211,8 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
         }
         return;
       }
-      if (code !== 0) {
-        scheduleRecovery(`exit code ${code}`);
-      } else if (status.running) {
-        status = { ...status, running: false };
-        emitStatus();
-      }
+      // Recover on ANY unexpected exit (even exit code 0) while voice listening is active
+      scheduleRecovery(`unexpected exit code ${code}`);
     });
 
     return { ...status };
