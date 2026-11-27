@@ -108,5 +108,6 @@ flowchart LR
 | `INSTALLER_DOWNLOAD_URL` | Direct `.exe` download URL advertised by `/api/config` | Optional |
 | `INSTALLER_SHA256` | Exact installer SHA-256 digest; updater refuses unpinned installers | Required for updates |
 | `TRUST_PROXY` | Trust forwarding headers only behind a trusted proxy | Optional |
+| `JEEVA_ALLOWED_ORIGINS` | Comma-separated exact origins permitted to call hosted APIs | Optional |
 | `JEEVA_BRIDGE_TLS_CERT` / `JEEVA_BRIDGE_TLS_KEY` | Certificate/key paths; required for LAN bridge access | Optional |
 | `JEEVA_BRIDGE_ALLOWED_ORIGINS` | Comma-separated exact origins permitted to call the local bridge | Optional |
