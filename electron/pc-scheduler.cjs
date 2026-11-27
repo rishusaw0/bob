@@ -52,6 +52,46 @@ const PC_MACROS = [
       { type: 'power_plan', plan: 'balanced' },
     ],
   },
+  {
+    id: 'work_mode',
+    name: 'Work Mode',
+    description: 'Opens VS Code + Chrome, sets High Performance power plan, and sets volume to 55%',
+    steps: [
+      { type: 'power_plan', plan: 'high_performance' },
+      { type: 'open_app', app: 'vscode' },
+      { type: 'open_app', app: 'chrome' },
+      { type: 'volume', level: 55 },
+    ],
+  },
+  {
+    id: 'study_mode',
+    name: 'Study Mode',
+    description: 'Minimizes distractions, lowers volume to 30%, and enables Dark mode for comfortable reading',
+    steps: [
+      { type: 'minimize_all' },
+      { type: 'theme', mode: 'dark' },
+      { type: 'volume', level: 30 },
+    ],
+  },
+  {
+    id: 'gaming_mode',
+    name: 'Gaming Mode',
+    description: 'Switches to High Performance power plan and sets audio volume to 80%',
+    steps: [
+      { type: 'power_plan', plan: 'high_performance' },
+      { type: 'volume', level: 80 },
+    ],
+  },
+  {
+    id: 'focus_mode',
+    name: 'Focus Mode',
+    description: 'Minimizes all background windows, mutes volume, and activates Balanced power',
+    steps: [
+      { type: 'minimize_all' },
+      { type: 'volume', level: 0 },
+      { type: 'power_plan', plan: 'balanced' },
+    ],
+  },
 ];
 
 function createScheduler({

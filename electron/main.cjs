@@ -45,6 +45,30 @@ let systemWatchdog = null;
 let lastWatchdogAlert = null;
 let windowManager = null;
 let localBrain = null;
+const recentRuntimeErrors = [];
+
+function recordRuntimeError(source, err) {
+  try {
+    const raw = err?.stack || err?.message || String(err || 'Unknown error');
+    const redacted = raw
+      .replace(/AIza[A-Za-z0-9_-]{12,}/g, '[REDACTED_KEY]')
+      .replace(/JVA-[A-Z0-9-]+/g, '[REDACTED_TOKEN]')
+      .slice(0, 300);
+    recentRuntimeErrors.unshift({
+      source: String(source || 'main'),
+      message: redacted,
+      at: new Date().toISOString(),
+    });
+    if (recentRuntimeErrors.length > 25) recentRuntimeErrors.length = 25;
+  } catch {}
+}
+
+process.on('uncaughtException', (err) => {
+  recordRuntimeError('uncaughtException', err);
+});
+process.on('unhandledRejection', (reason) => {
+  recordRuntimeError('unhandledRejection', reason);
+});
 
 function resolveUnpackedPath(...parts) {
   const p = path.join(__dirname, ...parts);
@@ -540,4 +564,37 @@ ipcMain.handle('notch:action', (_, action, payload = '') => {
     return { ok: true };
   }
   return { ok: false };
+});
+
+ipcMain.handle('app:emergencyStop', () => {
+  try { offlineVoice?.stop?.(); } catch {}
+  try { localBrain?.stopSidecar?.(); } catch {}
+  emitRendererEvent('app:emergencyStop', { at: Date.now() });
+  return { ok: true, stoppedAt: new Date().toISOString() };
+});
+
+ipcMain.handle('app:getDiagnostics', async () => {
+  const totalMemMb = Math.round(os.totalmem() / 1048576);
+  const freeMemMb = Math.round(os.freemem() / 1048576);
+  let brainInfo = null;
+  try { brainInfo = await localBrain?.getStatus?.(); } catch {}
+  let schedItems = [];
+  try { schedItems = getScheduler().listAll?.() || []; } catch {}
+  return {
+    appVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    arch: process.arch,
+    cpuCount: os.cpus()?.length || 0,
+    totalMemMb,
+    freeMemMb,
+    usedMemPct: totalMemMb > 0 ? Math.round(((totalMemMb - freeMemMb) / totalMemMb) * 100) : 0,
+    offlineVoice: offlineVoice?.getStatus?.() || null,
+    localBrain: brainInfo,
+    autoLaunch: getAutoLaunchManager().getStatus?.() || false,
+    cloudRelay: cloudRelay?.getStatus?.() || { enabled: false, connected: false },
+    schedulerCount: schedItems.length,
+    recentErrors: recentRuntimeErrors.slice(0, 10),
+    generatedAt: new Date().toISOString(),
+  };
 });

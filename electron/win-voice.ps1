@@ -133,7 +133,7 @@ try {
     if ($null -eq $ev) {
       # Break cleanly if parent closed stdin
       if ([Console]::IsInputRedirected -and [Console]::In.Peek() -eq -1) {
-        Start-Sleep -Milliseconds 150
+        break
       }
       continue
     }

@@ -169,4 +169,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('notch:event', handler);
     return () => ipcRenderer.removeListener('notch:event', handler);
   },
+  emergencyStop: () => ipcRenderer.invoke('app:emergencyStop'),
+  getDiagnostics: () => ipcRenderer.invoke('app:getDiagnostics'),
+  onEmergencyStop: (cb) => {
+    const handler = (_, ev) => cb(ev);
+    ipcRenderer.on('app:emergencyStop', handler);
+    return () => ipcRenderer.removeListener('app:emergencyStop', handler);
+  },
 });
