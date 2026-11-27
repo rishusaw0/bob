@@ -12,6 +12,7 @@ const {
   safeStorage,
   session,
   Notification,
+  powerMonitor,
 } = require('electron');
 const path = require('path');
 const crypto = require('crypto');
@@ -172,6 +173,7 @@ windowManager = createWindowManager({
   Menu,
   Tray,
   screen,
+  powerMonitor,
   actions,
   resolveUnpackedPath,
   getCloudRelay: () => cloudRelay,
@@ -321,7 +323,8 @@ app.whenReady().then(() => {
   windowManager.setupTray();
   cloudRelay.initAutoConnect();
 
-  if (mainWin && !mainWin.isVisible()) {
+  const wPrefs = windowManager.getPrefs();
+  if (mainWin && !mainWin.isVisible() && wPrefs.startupBehavior === 'notch_standby' && !wPrefs.notchUserHidden) {
     setTimeout(() => {
       windowManager.updateNotchState({ visible: true, standby: true, orbState: 'idle' });
     }, 350);
@@ -537,21 +540,31 @@ ipcMain.handle('window:setMode', (_, mode) => {
 });
 ipcMain.handle('window:wakeRestore', (_, preferredMode = 'notch') => windowManager.wakeRestore(preferredMode));
 ipcMain.handle('window:hideToTray', () => windowManager.getMainWindow()?.hide());
-ipcMain.handle('notch:update', (_, state) => windowManager.updateNotchState(state || {}));
+ipcMain.handle('notch:update', (_, state) => {
+  if (!state || typeof state !== 'object') return false;
+  return windowManager.updateNotchState(state);
+});
 ipcMain.handle('notch:action', (_, action, payload = '') => {
   const act = String(action || '').toLowerCase();
   if (act === 'hide') {
-    windowManager.updateNotchState({ visible: false });
+    windowManager.setNotchUserHidden(true);
     emitRendererEvent('notch:event', { action: 'hide' });
     return { ok: true };
   }
+  if (act === 'show') {
+    windowManager.setNotchUserHidden(false);
+    windowManager.updateNotchState({ visible: true, standby: true, orbState: 'idle' }, { explicitShow: true });
+    return { ok: true };
+  }
   if (act === 'open_chat') {
-    windowManager.updateNotchState({ visible: false });
+    windowManager.setNotchUserHidden(false);
+    windowManager.updateNotchState({ visible: false, standby: false }, { force: true });
     windowManager.applyWindowMode('full');
     return { ok: true };
   }
   if (act === 'open_dashboard') {
-    windowManager.updateNotchState({ visible: false });
+    windowManager.setNotchUserHidden(false);
+    windowManager.updateNotchState({ visible: false, standby: false }, { force: true });
     windowManager.applyWindowMode('full');
     setTimeout(() => emitRendererEvent('ui:openPcControl', 'system'), 120);
     return { ok: true };
@@ -561,11 +574,24 @@ ipcMain.handle('notch:action', (_, action, payload = '') => {
     return { ok: true };
   }
   if (act === 'send_text' && String(payload || '').trim()) {
-    emitRendererEvent('notch:event', { action: 'send_text', text: String(payload).trim() });
+    emitRendererEvent('notch:event', { action: 'send_text', text: String(payload).trim().slice(0, 2000) });
     return { ok: true };
   }
   return { ok: false };
 });
+ipcMain.handle('window:getPrefs', () => windowManager.getPrefs());
+ipcMain.handle('window:savePrefs', (_, patch) => {
+  if (!patch || typeof patch !== 'object') return windowManager.getPrefs();
+  const next = windowManager.savePrefs(patch);
+  if (patch.startupBehavior === 'disabled') {
+    try { getAutoLaunchManager().setEnabled(false); } catch {}
+  } else if (patch.startupBehavior) {
+    try { getAutoLaunchManager().setEnabled(true); } catch {}
+  }
+  windowManager.repositionNotch();
+  return next;
+});
+ipcMain.handle('window:getDisplays', () => windowManager.getDisplays());
 
 ipcMain.handle('app:emergencyStop', () => {
   try { offlineVoice?.stop?.(); } catch {}

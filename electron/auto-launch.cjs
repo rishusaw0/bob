@@ -20,8 +20,8 @@ function resolveLaunchTarget({ isPackaged = false, execPath = process.execPath, 
   if (isPackaged) {
     return {
       launchPath: exe,
-      launchArgs: ['--hidden'],
-      shortcutArgs: '--hidden',
+      launchArgs: ['--startup', '--hidden'],
+      shortcutArgs: '--startup --hidden',
     };
   }
   const rawEntry = argv[1] && !String(argv[1]).startsWith('-') ? path.resolve(String(argv[1])) : '';
@@ -29,14 +29,14 @@ function resolveLaunchTarget({ isPackaged = false, execPath = process.execPath, 
     const quotedEntry = quoteIfNeeded(rawEntry);
     return {
       launchPath: exe,
-      launchArgs: [quotedEntry, '--hidden'],
-      shortcutArgs: `${quotedEntry} --hidden`,
+      launchArgs: [quotedEntry, '--startup', '--hidden'],
+      shortcutArgs: `${quotedEntry} --startup --hidden`,
     };
   }
   return {
     launchPath: exe,
-    launchArgs: ['--hidden'],
-    shortcutArgs: '--hidden',
+    launchArgs: ['--startup', '--hidden'],
+    shortcutArgs: '--startup --hidden',
   };
 }
 

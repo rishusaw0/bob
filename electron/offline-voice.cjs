@@ -45,10 +45,17 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
   let child = null;
   const activeDictations = new Set();
   let activeAiName = 'Jeeva';
+  let intentionalStop = false;
+  let crashRetries = 0;
+  let restartTimer = null;
+  let healthyTimer = null;
+  const MAX_CRASH_RETRIES = 3;
   const asrInfo = detectLocalAsrEngines(userDataDir);
   let status = {
     available: null, // null = untested, true/false once probed
     running: false,
+    retrying: false,
+    retryCount: 0,
     culture: '',
     reason: '',
     aiName: activeAiName,
@@ -72,12 +79,16 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
     } catch {}
   }
 
-  function start(aiName = activeAiName) {
+  function start(aiName = activeAiName, isRetry = false) {
     activeAiName = String(aiName || 'Jeeva').trim() || 'Jeeva';
-    stop();
+    if (!isRetry) {
+      crashRetries = 0;
+    }
+    stop(true);
+    intentionalStop = false;
 
     const scriptPath = resolveUnpackedPath('win-voice.ps1');
-    status = { ...status, running: true, aiName: activeAiName, reason: '' };
+    status = { ...status, running: true, retrying: false, retryCount: crashRetries, aiName: activeAiName, reason: '' };
     emitStatus();
 
     let proc;
@@ -92,6 +103,7 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
         ...status,
         available: false,
         running: false,
+        retrying: false,
         culture: '',
         reason: err?.message || 'Failed to launch PowerShell voice engine',
         aiName: activeAiName,
@@ -118,20 +130,26 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
         try {
           const msg = JSON.parse(trimmed);
           if (msg.type === 'ready') {
+            clearTimeout(healthyTimer);
+            healthyTimer = setTimeout(() => { crashRetries = 0; }, 30000);
             status = {
               ...status,
               available: true,
               running: true,
+              retrying: false,
+              retryCount: crashRetries,
               culture: msg.culture || 'en',
               reason: '',
               aiName: msg.aiName || activeAiName,
             };
             emitStatus();
           } else if (msg.type === 'unavailable') {
+            intentionalStop = true;
             status = {
               ...status,
               available: false,
               running: false,
+              retrying: false,
               culture: '',
               reason: msg.reason || 'Unavailable',
               aiName: activeAiName,
@@ -148,22 +166,54 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
 
     proc.stderr?.on('data', () => {});
 
-    proc.on('error', (err) => {
-      if (child === proc) child = null;
+    const scheduleRecovery = (reasonMsg) => {
+      if (intentionalStop || status.available === false) return;
+      if (crashRetries >= MAX_CRASH_RETRIES) {
+        status = {
+          ...status,
+          running: false,
+          retrying: false,
+          retryCount: crashRetries,
+          reason: `Voice process stopped after ${MAX_CRASH_RETRIES} retries (${reasonMsg})`,
+        };
+        emitStatus();
+        return;
+      }
+      crashRetries++;
+      const delayMs = 1500 * Math.pow(2, crashRetries - 1); // 1.5s, 3s, 6s
       status = {
         ...status,
-        available: false,
         running: false,
-        culture: '',
-        reason: err?.message || 'PowerShell voice process error',
-        aiName: activeAiName,
+        retrying: true,
+        retryCount: crashRetries,
+        reason: `Recovering voice engine (${crashRetries}/${MAX_CRASH_RETRIES})...`,
       };
       emitStatus();
+      clearTimeout(restartTimer);
+      restartTimer = setTimeout(() => {
+        if (!intentionalStop) start(activeAiName, true);
+      }, delayMs);
+    };
+
+    proc.on('error', (err) => {
+      if (child === proc) child = null;
+      clearTimeout(healthyTimer);
+      scheduleRecovery(err?.message || 'Process spawn error');
     });
 
-    proc.on('exit', () => {
+    proc.on('exit', (code) => {
       if (child === proc) child = null;
-      if (status.running) {
+      clearTimeout(healthyTimer);
+      if (intentionalStop || status.available === false) {
+        if (status.running) {
+          status = { ...status, running: false, retrying: false };
+          emitStatus();
+        }
+        return;
+      }
+      if (code !== 0) {
+        scheduleRecovery(`exit code ${code}`);
+      } else if (status.running) {
         status = { ...status, running: false };
         emitStatus();
       }
@@ -172,7 +222,13 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
     return { ...status };
   }
 
-  function stop() {
+  function stop(preserveRetryState = false) {
+    intentionalStop = true;
+    clearTimeout(restartTimer);
+    restartTimer = null;
+    clearTimeout(healthyTimer);
+    healthyTimer = null;
+    if (!preserveRetryState) crashRetries = 0;
     if (child) {
       const p = child;
       child = null;
@@ -182,8 +238,8 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
       safeKill(dp);
     }
     activeDictations.clear();
-    if (status.running) {
-      status = { ...status, running: false };
+    if (status.running || status.retrying) {
+      status = { ...status, running: false, retrying: false };
       emitStatus();
     }
     return { ...status };

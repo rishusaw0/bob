@@ -9,7 +9,7 @@
     height: 100%;
     background: transparent;
     overflow: hidden;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
   }
   .stage {
     width: 100%;
@@ -18,43 +18,54 @@
     align-items: flex-start;
   }
   .island {
-    width: 210px;
-    background: rgba(11, 12, 16, 0.94);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    width: 204px;
+    background: rgba(11, 13, 18, 0.94);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.13);
     border-top: none;
     border-bottom-left-radius: 18px;
     border-bottom-right-radius: 18px;
     padding: 5px 12px 7px 12px;
     color: #f4f4f5;
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.52);
     transform: translateY(-115%);
     opacity: 0;
-    transition: width 0.2s ease, padding 0.2s ease, transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.2s ease, border-color 0.2s ease;
+    transition:
+      width 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      padding 0.2s ease,
+      transform 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.2s ease,
+      border-color 0.2s ease,
+      box-shadow 0.2s ease;
   }
   .island.visible {
     transform: translateY(0);
     opacity: 1;
   }
   .island.active,
-  .island:hover {
-    width: 404px;
+  .island:hover,
+  .island:focus-within {
+    width: 422px;
     padding: 8px 14px 11px 14px;
     border-bottom-left-radius: 22px;
     border-bottom-right-radius: 22px;
   }
   .island.state-listening {
     border-color: rgba(56, 189, 248, 0.55);
-    box-shadow: 0 14px 36px rgba(14, 165, 233, 0.28);
+    box-shadow: 0 14px 36px rgba(14, 165, 233, 0.24);
   }
   .island.state-thinking {
     border-color: rgba(251, 191, 36, 0.55);
-    box-shadow: 0 14px 36px rgba(245, 158, 11, 0.24);
+    box-shadow: 0 14px 36px rgba(245, 158, 11, 0.22);
   }
   .island.state-speaking {
     border-color: rgba(52, 211, 153, 0.55);
-    box-shadow: 0 14px 36px rgba(16, 185, 129, 0.28);
+    box-shadow: 0 14px 36px rgba(16, 185, 129, 0.24);
+  }
+  .island.state-error {
+    border-color: rgba(248, 113, 113, 0.65);
+    box-shadow: 0 14px 34px rgba(239, 68, 68, 0.22);
   }
   .cam-notch-bar {
     display: flex;
@@ -62,21 +73,28 @@
     justify-content: center;
     gap: 6px;
     margin-bottom: 0;
+    cursor: pointer;
     transition: margin 0.2s ease;
   }
   .island.active .cam-notch-bar,
-  .island:hover .cam-notch-bar {
-    margin-bottom: 6px;
+  .island:hover .cam-notch-bar,
+  .island:focus-within .cam-notch-bar {
+    margin-bottom: 7px;
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: 0.75; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.16); }
   }
   .cam-dot {
     width: 6px;
     height: 6px;
     border-radius: 999px;
     background: #10b981;
-    box-shadow: 0 0 8px #10b981;
+    animation: breathe 3s ease-in-out infinite;
   }
-  .state-listening .cam-dot { background: #38bdf8; box-shadow: 0 0 10px #38bdf8; }
-  .state-thinking .cam-dot { background: #fbbf24; box-shadow: 0 0 10px #fbbf24; }
+  .state-listening .cam-dot { background: #38bdf8; box-shadow: 0 0 8px #38bdf8; animation: none; }
+  .state-thinking .cam-dot { background: #fbbf24; box-shadow: 0 0 8px #fbbf24; animation: breathe 1s ease-in-out infinite; }
+  .state-error .cam-dot { background: #f87171; box-shadow: 0 0 8px #f87171; animation: none; }
   .cam-title {
     font-size: 10px;
     font-weight: 700;
@@ -88,7 +106,7 @@
   .row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
     max-height: 0;
     opacity: 0;
     overflow: hidden;
@@ -97,22 +115,92 @@
   .island.active .row,
   .island:hover .row,
   .island:focus-within .row {
-    max-height: 54px;
+    max-height: 64px;
     opacity: 1;
   }
-  .island.active,
-  .island:hover,
-  .island:focus-within {
-    width: 408px;
-    padding: 8px 14px 10px 14px;
-    border-bottom-left-radius: 22px;
-    border-bottom-right-radius: 22px;
+  .orb-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 999px;
+    border: 1.5px solid rgba(255, 255, 255, 0.18);
+    background: rgba(24, 24, 27, 0.92);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2.5px;
+    cursor: pointer;
+    flex-shrink: 0;
   }
-  .island.active .cam-notch-bar,
-  .island:hover .cam-notch-bar,
-  .island:focus-within .cam-notch-bar {
-    margin-bottom: 6px;
+  .orb-btn:focus-visible,
+  .pill-btn:focus-visible,
+  .chat-send:focus-visible {
+    outline: 2px solid #38bdf8;
+    outline-offset: 2px;
   }
+  .bar {
+    width: 3px;
+    height: 7px;
+    border-radius: 99px;
+    background: #38bdf8;
+    transition: height 0.08s ease;
+  }
+  .state-thinking .bar { background: #fbbf24; }
+  .state-speaking .bar { background: #34d399; }
+  .state-error .bar { background: #f87171; }
+  .text-col {
+    flex: 1;
+    min-width: 0;
+  }
+  .status-line {
+    font-size: 10px;
+    font-weight: 600;
+    color: #38bdf8;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-family: ui-monospace, monospace;
+  }
+  .state-idle .status-line { color: #a1a1aa; }
+  .state-thinking .status-line { color: #fbbf24; }
+  .state-speaking .status-line { color: #34d399; }
+  .state-error .status-line { color: #f87171; }
+  .caption {
+    font-size: 12px;
+    line-height: 1.3;
+    color: #f4f4f5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .preview-line {
+    font-size: 11px;
+    color: #a1a1aa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+    display: none;
+  }
+  .preview-line.show { display: block; }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+  }
+  .pill-btn {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(39, 39, 42, 0.88);
+    color: #e4e4e7;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 5px 8px;
+    border-radius: 9px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .pill-btn:hover { background: rgba(63, 63, 70, 0.95); }
+  .pill-btn.hide-btn { color: #fca5a5; border-color: rgba(239, 68, 68, 0.35); }
   .chat-form {
     display: flex;
     align-items: center;
@@ -135,14 +223,12 @@
     background: rgba(24, 24, 27, 0.95);
     border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 9px;
-    padding: 4px 9px;
+    padding: 5px 9px;
     font-size: 11px;
     color: #f4f4f5;
     outline: none;
   }
-  .chat-input:focus {
-    border-color: #10b981;
-  }
+  .chat-input:focus { border-color: #10b981; }
   .chat-send {
     border: none;
     background: #10b981;
@@ -154,81 +240,17 @@
     cursor: pointer;
   }
   .chat-send:hover { background: #34d399; }
-  .orb-btn {
-    width: 34px;
-    height: 34px;
-    border-radius: 999px;
-    border: 1.5px solid rgba(255, 255, 255, 0.2);
-    background: rgba(24, 24, 27, 0.9);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 2.5px;
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-  .bar {
-    width: 3px;
-    height: 8px;
-    border-radius: 99px;
-    background: #38bdf8;
-    transition: height 0.08s ease;
-  }
-  .state-thinking .bar { background: #fbbf24; }
-  .state-speaking .bar { background: #34d399; }
-  .text-col {
-    flex: 1;
-    min-width: 0;
-  }
-  .status-line {
-    font-size: 10px;
-    font-weight: 600;
-    color: #38bdf8;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-family: ui-monospace, monospace;
-  }
-  .state-thinking .status-line { color: #fbbf24; }
-  .state-speaking .status-line { color: #34d399; }
-  .caption {
-    font-size: 12px;
-    line-height: 1.3;
-    color: #f4f4f5;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    margin-top: 2px;
-  }
-  .actions {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    flex-shrink: 0;
-  }
-  .pill-btn {
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background: rgba(39, 39, 42, 0.85);
-    color: #e4e4e7;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 5px 8px;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: background 0.15s;
-  }
-  .pill-btn:hover { background: rgba(63, 63, 70, 0.95); }
-  .pill-btn.hide-btn { color: #fca5a5; border-color: rgba(239, 68, 68, 0.35); }
 </style>
 </head>
 <body>
   <div class="stage">
-    <div id="island" class="island state-idle">
-      <div class="cam-notch-bar">
+    <div id="island" class="island state-idle" role="region" aria-label="JEEVA Camera Notch">
+      <div id="notchHeader" class="cam-notch-bar" title="Click to expand/collapse Camera Notch">
         <span class="cam-dot"></span>
         <span id="aiLabel" class="cam-title">JEEVA AI</span>
       </div>
       <div class="row">
-        <button id="micBtn" class="orb-btn" title="Tap to Speak / Stop">
+        <button id="micBtn" class="orb-btn" aria-label="Toggle Microphone" title="Start or Stop Voice Listening">
           <span class="bar" id="b0"></span>
           <span class="bar" id="b1"></span>
           <span class="bar" id="b2"></span>
@@ -236,35 +258,51 @@
           <span class="bar" id="b4"></span>
         </button>
         <div class="text-col">
-          <div id="statusText" class="status-line">Ready</div>
+          <div id="statusText" class="status-line">Standby</div>
           <div id="captionText" class="caption">Say "Hey Jeeva"...</div>
+          <div id="previewText" class="preview-line"></div>
         </div>
         <div class="actions">
-          <button id="openBtn" class="pill-btn" title="Open Full Chat">Chat</button>
+          <button id="openBtn" class="pill-btn" title="Open Full Chat Window">Chat</button>
           <button id="dashBtn" class="pill-btn" title="Open PC Dashboard">Dashboard</button>
-          <button id="hideBtn" class="pill-btn hide-btn" title="Minimize to Standby Notch">Hide</button>
+          <button id="hideBtn" class="pill-btn hide-btn" title="Hide Camera Notch">Hide</button>
         </div>
       </div>
       <form id="chatForm" class="chat-form">
-        <input id="chatInput" class="chat-input" type="text" placeholder="Type command or chat right here..." autocomplete="off" />
+        <input id="chatInput" class="chat-input" type="text" placeholder="Type command or chat right here..." autocomplete="off" aria-label="Quick command input" />
         <button type="submit" class="chat-send">Send</button>
       </form>
     </div>
   </div>
 <script>
   const island = document.getElementById('island');
+  const notchHeader = document.getElementById('notchHeader');
   const aiLabel = document.getElementById('aiLabel');
   const statusText = document.getElementById('statusText');
   const captionText = document.getElementById('captionText');
+  const previewText = document.getElementById('previewText');
   const chatInput = document.getElementById('chatInput');
   const bars = [0, 1, 2, 3, 4].map((i) => document.getElementById('b' + i));
+
+  notchHeader.addEventListener('click', () => {
+    island.classList.toggle('active');
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      island.classList.remove('active');
+      window.electronAPI?.notchAction?.('hide');
+    }
+  });
 
   document.getElementById('chatForm').addEventListener('submit', (e) => {
     e.preventDefault();
     const val = (chatInput.value || '').trim();
     if (!val) return;
     chatInput.value = '';
-    captionText.textContent = 'Running: ' + val;
+    captionText.textContent = 'You: ' + val;
+    previewText.textContent = 'Thinking...';
+    previewText.classList.add('show');
     window.electronAPI?.notchAction?.('send_text', val);
   });
 
@@ -283,25 +321,33 @@
   });
 
   window.electronAPI?.onNotchState?.((st = {}) => {
-    const mode = st.orbState || 'idle';
-    island.classList.remove('state-idle', 'state-listening', 'state-thinking', 'state-speaking', 'active');
+    const mode = st.error ? 'error' : (st.orbState || 'idle');
+    island.classList.remove('state-idle', 'state-listening', 'state-thinking', 'state-speaking', 'state-error', 'active');
     island.classList.add('state-' + mode);
-    if (mode !== 'idle') island.classList.add('active');
+    if (mode !== 'idle' || st.userMessage || st.replyText) island.classList.add('active');
     if (st.visible || st.standby) island.classList.add('visible');
     else island.classList.remove('visible');
 
     aiLabel.textContent = (st.aiName || 'JEEVA') + ' AI';
     statusText.textContent =
+      mode === 'error' ? 'Error' :
       mode === 'listening' ? 'Listening...' :
       mode === 'thinking' ? 'Thinking...' :
       mode === 'speaking' ? 'Speaking' : 'Standby';
 
-    const txt = st.transcript || st.replyText || (mode === 'listening' ? 'Sun raha hoon... Boliye' : 'Say "Hey ' + (st.aiName || 'Jeeva') + '"...');
-    captionText.textContent = txt;
+    const mainLine = st.error || st.transcript || (st.userMessage ? 'You: ' + st.userMessage : '') || (mode === 'listening' ? 'Sun raha hoon... Boliye' : 'Say "Hey ' + (st.aiName || 'Jeeva') + '"...');
+    captionText.textContent = mainLine;
+
+    if (st.replyText) {
+      previewText.textContent = (st.aiName || 'Jeeva') + ': ' + st.replyText;
+      previewText.classList.add('show');
+    } else {
+      previewText.classList.remove('show');
+    }
 
     const bands = Array.isArray(st.freqBands) && st.freqBands.length >= 5 ? st.freqBands : [0.2, 0.2, 0.2, 0.2, 0.2];
     bars.forEach((bar, i) => {
-      const mag = mode === 'idle' ? 0.15 : Math.max(0.18, Math.min(1, Number(bands[i]) || 0.25));
+      const mag = mode === 'idle' ? 0.14 : Math.max(0.18, Math.min(1, Number(bands[i]) || 0.25));
       bar.style.height = Math.round(6 + mag * 16) + 'px';
     });
   });

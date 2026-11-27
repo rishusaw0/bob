@@ -160,6 +160,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   updateNotchState: (state) => ipcRenderer.invoke('notch:update', state),
   notchAction: (action, payload) => ipcRenderer.invoke('notch:action', action, payload),
+  getWindowPrefs: () => ipcRenderer.invoke('window:getPrefs'),
+  saveWindowPrefs: (patch) => ipcRenderer.invoke('window:savePrefs', patch),
+  getDisplays: () => ipcRenderer.invoke('window:getDisplays'),
   onNotchState: (cb) => {
     const handler = (_, state) => cb(state);
     ipcRenderer.on('notch:state', handler);

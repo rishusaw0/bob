@@ -708,6 +708,16 @@ const { startLiveVoiceCall } = await import(pathToFileURL(path.join(ROOT, 'src/s
 setStrictOfflineMode(true);
 await assert.rejects(() => startLiveVoiceCall(), /Strict Offline Mode/);
 setStrictOfflineMode(false);
+
+// Regression tests for Bugs A-F (Notch hide persistence, Startup separation, Voice crash recovery, Duplicate Settings, Hide label)
+const settingsSrc = fs.readFileSync(path.join(ROOT, 'src/components/SettingsPanel.jsx'), 'utf8');
+assert.equal((settingsSrc.match(/Custom Voice Activation Phrase/g) || []).length, 1, 'Duplicate Custom Voice Activation Phrase must be removed');
+const notchHtml = fs.readFileSync(path.join(ROOT, 'electron/notch-overlay.html'), 'utf8');
+assert.ok(!notchHtml.includes('Minimize to Standby Notch') && notchHtml.includes('Hide Camera Notch'));
+const wmSrc = fs.readFileSync(path.join(ROOT, 'electron/window-manager.cjs'), 'utf8');
+assert.ok(wmSrc.includes('notchUserHidden') && wmSrc.includes('did-finish-load') && wmSrc.includes('isStartupLaunch'));
+const voiceHookSrc = fs.readFileSync(path.join(ROOT, 'src/services/useVoiceEngine.js'), 'utf8');
+assert.ok(voiceHookSrc.includes('if (notchHiddenRef.current)'), 'Idle timer must not re-show hidden notch');
 assert.ok(fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8').includes("In.Peek() -eq -1) {\r\n        break") || fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8').includes("In.Peek() -eq -1) {\n        break"));
 assert.ok(computeAdaptiveSilenceMs(500, 740) <= 540);
 assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'), 'english');

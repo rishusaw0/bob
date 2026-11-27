@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import {
   LuX,
   LuKey,
@@ -13,7 +13,7 @@ import {
   LuMic,
   LuCpu,
 } from 'react-icons/lu';
-import { clearSessionPermissions, testGeminiConnection, createReplicatedVoice } from '../services/gemini';
+import { clearSessionPermissions, isUsingServerProxy, testGeminiConnection, createReplicatedVoice } from '../services/gemini';
 import { getBrainMode, setBrainMode, getBrainStats, resetBrainStats } from '../services/brainRouter';
 import {
   speakText,
@@ -87,12 +87,21 @@ export default function SettingsPanel({
   onCustomInstructionsChange,
   onExportChat,
   onClearHistory,
+  canInstallPWA,
+  onInstallPWA,
   onOpenWizard,
+  serverConfig,
+  onUnlockOwner,
   onClose,
 }) {
   const isElectron = Boolean(window.electronAPI);
   const [activeTab, setActiveTab] = useState('assistant'); // 'assistant' | 'permissions' | 'audit'
+  const [ownerPin, setOwnerPin] = useState('');
+  const [unlockBusy, setUnlockBusy] = useState(false);
   const [key, setKey] = useState(apiKey);
+  const [cloudUrl, setCloudUrl] = useState(
+    () => localStorage.getItem('jeeva_cloud_api_url') || 'https://jeeva-ai-mjr1.onrender.com'
+  );
   const [assistantName, setAssistantName] = useState(() => getAiName());
   const [wakeTrigger, setWakeTrigger] = useState(() => getWakeTriggerPhrase());
   const [docSummaryPref, setDocSummaryPrefState] = useState(() => getDocSummaryPref());
@@ -133,8 +142,13 @@ export default function SettingsPanel({
   const [voiceprintLevel, setVoiceprintLevelState] = useState(() => getVoiceprintSecurityLevel());
   const [testingVoiceprint, setTestingVoiceprint] = useState(false);
   const [lastVoiceMatch, setLastVoiceMatch] = useState(null);
-  const [audioDiagnosticBusy, setAudioDiagnosticBusy] = useState(false);
-  const [audioDiagnostic, setAudioDiagnostic] = useState(null);
+  const [windowPrefs, setWindowPrefs] = useState({
+    startupBehavior: 'notch_standby',
+    notchDisplayId: null,
+    notchPosition: 'top-center',
+    notchUserHidden: false,
+  });
+  const [displays, setDisplays] = useState([]);
 
   // Own Voice Cloning (Gemini 3.8 Voice Replication)
   const [customVoices, setCustomVoices] = useState(() => getCustomClonedVoices());
@@ -155,41 +169,6 @@ export default function SettingsPanel({
     return () => clearTimeout(t);
   }, []);
 
-  const handleAudioDiagnostics = async () => {
-    if (audioDiagnosticBusy) return;
-    setAudioDiagnosticBusy(true);
-    setAudioDiagnostic(null);
-    let stream;
-    try {
-      toast.info('Allow microphone access, then speak clearly while the mic level is measured.');
-      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone diagnostics are not supported by this device.');
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) throw new Error('Audio diagnostics are not supported by this browser.');
-      const ctx = new Ctx();
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048;
-      source.connect(analyser);
-      const samples = new Float32Array(analyser.fftSize);
-      await new Promise((resolve) => setTimeout(resolve, 1600));
-      analyser.getFloatTimeDomainData(samples);
-      let sum = 0, peak = 0;
-      for (const sample of samples) { sum += sample * sample; peak = Math.max(peak, Math.abs(sample)); }
-      const rms = Math.sqrt(sum / samples.length);
-      source.disconnect();
-      await ctx.close().catch(() => {});
-      setAudioDiagnostic({ rms, peak, device: stream.getAudioTracks()[0]?.label || 'Default microphone' });
-      toast.success(rms < 0.006 ? 'Mic connected, but input is very quiet. Check microphone level.' : 'Microphone check complete.');
-      speakText('Audio output test. JEEVA ki awaaz clear sunai de rahi hai? Main Hindi aur English dono natural tareeke se bol sakta hoon.', { label: 'Speaker & Voice Test' });
-    } catch (err) {
-      setAudioDiagnostic({ error: err?.message || 'Audio diagnostics failed' });
-      toast.error(err?.message || 'Audio diagnostics failed');
-    } finally {
-      stream?.getTracks?.().forEach((track) => track.stop());
-      setAudioDiagnosticBusy(false);
-    }
-  };
   const handleEnrollVoiceprint = async () => {
     if (enrollingVoice) return;
     setEnrollingVoice(true);
@@ -351,6 +330,8 @@ export default function SettingsPanel({
         if (hostRules) setPermRules(savePermissionRules(hostRules));
       }).catch(() => {});
       window.electronAPI?.getAutoLaunch?.().then((v) => setAutoLaunch(Boolean(v))).catch(() => {});
+      window.electronAPI?.getWindowPrefs?.().then((wp) => wp && setWindowPrefs(wp)).catch(() => {});
+      window.electronAPI?.getDisplays?.().then((ds) => Array.isArray(ds) && setDisplays(ds)).catch(() => {});
       window.electronAPI?.localBrainStatus?.().then(setLocalBrain).catch(() => {});
       window.electronAPI?.getUpdaterState?.().then(setUpdaterState).catch(() => {});
       const unsubUp = window.electronAPI?.onUpdaterStatus?.(setUpdaterState);
@@ -403,7 +384,15 @@ export default function SettingsPanel({
     setTestingConn(true);
     setConnStatus(null);
     const trimmedKey = key.trim();
-    const res = await testGeminiConnection({ apiKey: trimmedKey, model });
+    const cleanCloud = cloudUrl.trim().replace(/\/+$/, '');
+    const appToken = localStorage.getItem('jeeva_app_token') || '';
+    const res = await testGeminiConnection({
+      apiKey: trimmedKey,
+      useServerProxy: !trimmedKey && Boolean(isElectron ? cleanCloud : serverConfig?.serverManagedKey),
+      proxyBaseUrl: isElectron ? cleanCloud : undefined,
+      appToken,
+      model,
+    });
     setTestingConn(false);
     setConnStatus(res);
     if (res.ok) {
@@ -420,9 +409,13 @@ export default function SettingsPanel({
 
   const handleCheckUpdates = async () => {
     if (!window.electronAPI?.checkForUpdates) return;
-    const cleanRepo = updateRepo.trim() || 'rishusaw0/bob';
+    const cleanRepo = updateRepo.trim();
     localStorage.setItem('jeeva_update_repo', cleanRepo);
-    await window.electronAPI.checkForUpdates({ githubRepo: cleanRepo });
+    const cleanCloud = cloudUrl.trim().replace(/\/+$/, '');
+    await window.electronAPI.checkForUpdates({
+      githubRepo: cleanRepo.includes('/') ? cleanRepo : '',
+      feedUrl: !cleanRepo && cleanCloud ? `${cleanCloud}/api/config` : '',
+    });
   };
 
   useEffect(() => {
@@ -446,6 +439,12 @@ export default function SettingsPanel({
     setReplyStyle(replyStyle);
     setWakeWordEnabled(wakeWordOn);
     setStrictVoiceMode(strictVoice);
+    if (isElectron) {
+      const cleanCloud = cloudUrl.trim().replace(/\/+$/, '');
+      if (cleanCloud) localStorage.setItem('jeeva_cloud_api_url', cleanCloud);
+      else localStorage.removeItem('jeeva_cloud_api_url');
+      window.dispatchEvent(new CustomEvent('jeeva-cloud-url-updated', { detail: cleanCloud }));
+    }
     setSaved(true);
     toast.success('Preferences saved');
     setTimeout(() => setSaved(false), 1800);
@@ -554,7 +553,12 @@ export default function SettingsPanel({
                     Create Gemini API Key →
                   </button>
                 </div>
-remove hosted key badge                <p className="text-[11px] text-obsidian-muted mb-2">
+                {isUsingServerProxy() && (
+                  <div className="mb-2 px-2.5 py-2 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-[11px] text-emerald-300">
+                    Server-protected Render key is active. Leave blank to keep using it, or enter a personal override key.
+                  </div>
+                )}
+                <p className="text-[11px] text-obsidian-muted mb-2">
                   Apna personal Gemini API key banakar yahan paste karein (optional).
                 </p>
                 <div className="relative">
@@ -599,7 +603,57 @@ remove hosted key badge                <p className="text-[11px] text-obsidian-m
                   )}
                 </div>
 
-remove owner PIN & hosted server URL              </div>
+                {!isElectron && serverConfig?.serverManagedKey && serverConfig?.requiresPin && !serverConfig?.authorized && onUnlockOwner && (
+                  <div className="mt-2.5 p-2.5 rounded-lg bg-obsidian-bg border border-obsidian-border space-y-1.5">
+                    <p className="text-[11px] text-obsidian-secondary">
+                      Host Owner? Unlock server-hosted Gemini key with Admin PIN:
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="password"
+                        value={ownerPin}
+                        onChange={(e) => setOwnerPin(e.target.value)}
+                        placeholder="Owner Access PIN..."
+                        className="flex-1 bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1 text-xs font-mono text-obsidian-text"
+                      />
+                      <button
+                        type="button"
+                        disabled={unlockBusy || !ownerPin.trim()}
+                        onClick={async () => {
+                          setUnlockBusy(true);
+                          try {
+                            await onUnlockOwner(ownerPin.trim());
+                            setOwnerPin('');
+                            toast.success('Owner server key unlocked!');
+                          } catch (err) {
+                            toast.error(err?.message || 'Invalid PIN');
+                          } finally {
+                            setUnlockBusy(false);
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded bg-zinc-100 text-zinc-950 text-xs font-semibold hover:bg-white disabled:opacity-40"
+                      >
+                        {unlockBusy ? '...' : 'Unlock'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {isElectron && (
+                  <div className="mt-3">
+                    <label className="block text-[11px] font-medium text-obsidian-secondary mb-1">
+                      Or Cloud AI Server URL (No Personal API Key Needed)
+                    </label>
+                    <input
+                      type="url"
+                      value={cloudUrl}
+                      onChange={(e) => setCloudUrl(e.target.value)}
+                      placeholder="https://jeeva-ai-mjr1.onrender.com"
+                      className="w-full bg-obsidian-bg border border-obsidian-border rounded-lg px-3 py-1.5 text-xs font-mono text-obsidian-text placeholder:text-obsidian-muted focus:outline-none focus:border-zinc-600"
+                    />
+                  </div>
+                )}
+              </div>
 
               {/* Model */}
               <div>
@@ -724,22 +778,6 @@ remove owner PIN & hosted server URL              </div>
                     <option value="full">Full Workstation Window</option>
                     <option value="speaker">Mini Speaker Pill</option>
                   </select>
-                  <div className="pt-2 border-t border-obsidian-border/60">
-                    <label className="block text-xs font-medium text-obsidian-text mb-1">
-                      Custom Voice Activation Phrase
-                    </label>
-                    <p className="text-[10px] text-obsidian-muted mb-1.5">
-                      Apne hisab se activation phrase set karein (jaise &quot;Hey Jeeva&quot;, &quot;Sun Bhai&quot;, &quot;Ok Jarvis&quot;)
-                    </p>
-                    <input
-                      type="text"
-                      maxLength={36}
-                      value={wakeTrigger}
-                      onChange={(e) => setWakeTrigger(e.target.value)}
-                      placeholder={`Hey ${assistantName || 'Jeeva'}`}
-                      className="w-full bg-obsidian-surface border border-obsidian-border rounded-lg px-3 py-1.5 text-xs text-obsidian-text focus:outline-none focus:border-zinc-500"
-                    />
-                  </div>
                 </div>
 
                 <div className="flex items-center justify-between pt-1 border-t border-obsidian-border/60">
@@ -885,12 +923,12 @@ remove owner PIN & hosted server URL              </div>
 
           {activeTab === 'permissions' && (
             <div className="space-y-4">
-              {(
+              {isElectron ? (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border">
                     <div>
-                      <p className="text-xs font-medium text-obsidian-text">Start with Windows (Background Tray)</p>
-                      <p className="text-[11px] text-obsidian-muted">Keeps JEEVA desktop assistant ready after Windows starts</p>
+                      <p className="text-xs font-medium text-obsidian-text">Start with Windows</p>
+                      <p className="text-[11px] text-obsidian-muted">Manual launch always opens the main window; Windows startup uses your preference below</p>
                     </div>
                     <button
                       type="button"
@@ -908,6 +946,65 @@ remove owner PIN & hosted server URL              </div>
                         }`}
                       />
                     </button>
+                  </div>
+
+                  {/* Startup Behavior & Multi-Monitor Camera Notch Settings */}
+                  <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div>
+                      <label className="block text-[10px] font-mono text-obsidian-muted mb-1">Windows Startup Mode</label>
+                      <select
+                        value={windowPrefs.startupBehavior}
+                        onChange={async (e) => {
+                          const startupBehavior = e.target.value;
+                          const next = await window.electronAPI?.saveWindowPrefs?.({ startupBehavior });
+                          if (next) setWindowPrefs(next);
+                          setAutoLaunch(startupBehavior !== 'disabled');
+                          toast.success(`Startup mode updated`);
+                        }}
+                        className="w-full bg-obsidian-surface border border-obsidian-border rounded px-2 py-1.5 text-[11px] text-obsidian-text"
+                      >
+                        <option value="notch_standby">Show Camera Notch on startup</option>
+                        <option value="tray_minimized">Start minimized to tray</option>
+                        <option value="open_window">Open main window on startup</option>
+                        <option value="disabled">Disable auto-start</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-mono text-obsidian-muted mb-1">Camera Notch Monitor</label>
+                      <select
+                        value={windowPrefs.notchDisplayId ?? ''}
+                        onChange={async (e) => {
+                          const val = e.target.value ? Number(e.target.value) : null;
+                          const next = await window.electronAPI?.saveWindowPrefs?.({ notchDisplayId: val });
+                          if (next) setWindowPrefs(next);
+                          toast.success('Notch display updated');
+                        }}
+                        className="w-full bg-obsidian-surface border border-obsidian-border rounded px-2 py-1.5 text-[11px] text-obsidian-text"
+                      >
+                        <option value="">Primary Display (Auto)</option>
+                        {displays.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.label} {d.primary ? '· Primary' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-mono text-obsidian-muted mb-1">Notch Position</label>
+                      <select
+                        value={windowPrefs.notchPosition}
+                        onChange={async (e) => {
+                          const next = await window.electronAPI?.saveWindowPrefs?.({ notchPosition: e.target.value });
+                          if (next) setWindowPrefs(next);
+                          toast.success('Notch position updated');
+                        }}
+                        className="w-full bg-obsidian-surface border border-obsidian-border rounded px-2 py-1.5 text-[11px] text-obsidian-text"
+                      >
+                        <option value="top-center">Top Center (Dynamic Island)</option>
+                        <option value="top-left">Top Left</option>
+                        <option value="top-right">Top Right</option>
+                      </select>
+                    </div>
                   </div>
 
                   {/* Low-End Friendly Local AI Brain */}
@@ -1037,7 +1134,7 @@ remove owner PIN & hosted server URL              </div>
                       <div>
                         <p className="text-xs font-medium text-obsidian-text">App Auto-Updater</p>
                         <p className="text-[10px] text-obsidian-muted">
-                          Checks GitHub Releases for Windows desktop updates
+                          Checks GitHub Releases (owner/repo) or connected Render server feed
                         </p>
                       </div>
                       <button
@@ -1053,7 +1150,7 @@ remove owner PIN & hosted server URL              </div>
                       type="text"
                       value={updateRepo}
                       onChange={(e) => setUpdateRepo(e.target.value)}
-                      placeholder="GitHub repo: rishusaw0/bob"
+                      placeholder="GitHub repo: rishusaw0/bob (blank = use Render URL)"
                       className="w-full bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1 text-[11px] font-mono text-obsidian-text placeholder:text-obsidian-muted focus:outline-none"
                     />
                     {updaterState?.lastError && (
@@ -1090,6 +1187,31 @@ remove owner PIN & hosted server URL              </div>
                     >
                       Open PC Setup &amp; Permission Wizard
                     </button>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-medium text-obsidian-text">Install JEEVA App</p>
+                      <p className="text-[11px] text-obsidian-muted">
+                        Install as a standalone app on Android, Windows Edge/Chrome, or iOS Home Screen
+                      </p>
+                    </div>
+                    {canInstallPWA && (
+                      <button
+                        type="button"
+                        onClick={onInstallPWA}
+                        className="px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-950 text-xs font-semibold hover:bg-white flex-shrink-0"
+                      >
+                        Install App
+                      </button>
+                    )}
+                  </div>
+                  {!canInstallPWA && (
+                    <p className="text-[11px] text-obsidian-muted">
+                      Browser menu -&gt; &quot;Install JEEVA AI&quot; (or Share -&gt; Add to Home Screen on iOS). For Windows PC installer, run <code className="text-obsidian-secondary">npm run build:desktop</code> on PC to generate the <code className="text-obsidian-secondary">release/*.exe</code> installer.
+                    </p>
                   )}
                 </div>
               )}
@@ -1181,17 +1303,6 @@ remove owner PIN & hosted server URL              </div>
                   </select>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-obsidian-border/50">
-                  <button type="button" disabled={audioDiagnosticBusy} onClick={handleAudioDiagnostics}
-                    className="px-2.5 py-1.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 text-[11px] disabled:opacity-50">
-                    {audioDiagnosticBusy ? 'Checking microphone…' : 'Run Mic + Speaker Test'}
-                  </button>
-                  <button type="button" onClick={() => speakText('Namaste! Main JEEVA hoon. Aapka kaam dhyan se aur saaf awaaz mein karunga. How can I help you today?', { label: 'Hindi and English Voice Preview' })}
-                    className="px-2.5 py-1.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px]">
-                    Preview Hindi + English
-                  </button>
-                  {audioDiagnostic && <p className="w-full text-[10px] text-obsidian-muted">{audioDiagnostic.error || `Mic: ${audioDiagnostic.device} · RMS ${audioDiagnostic.rms.toFixed(3)} · Peak ${audioDiagnostic.peak.toFixed(3)}`}</p>}
-                </div>
                 <div className="flex items-center justify-between gap-2 pt-1 border-t border-obsidian-border/50">
                   <span className="text-[10px] text-obsidian-muted">Mic Noise &amp; VAD Sensitivity:</span>
                   <select

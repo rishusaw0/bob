@@ -1,77 +1,117 @@
-// Extracted Window, Overlay, Click-Reticle & System Tray Manager for clean Electron modularity
+// Extracted Window, Multi-Monitor, Camera Notch, Click-Reticle & System Tray Manager
 const fs = require('fs');
 const path = require('path');
 
 function createWindowManager({
   app,
-  shell,
   BrowserWindow,
   Menu,
   Tray,
   screen,
+  powerMonitor,
   actions,
   resolveUnpackedPath,
+  getCloudRelay,
   getAutoLaunchManager,
   emitRendererEvent,
   getWatchdogAlert,
 }) {
   let mainWindow = null;
   let notchWindow = null;
+  let notchLoaded = false;
   let notchHideTimer = null;
   let reticleWindow = null;
   let tray = null;
   let trayRefreshTimer = null;
   let currentWindowMode = 'full';
 
-  function hardenWebContents(contents) {
-    contents.setWindowOpenHandler(({ url }) => {
-      try {
-        const u = new URL(url);
-        if (['https:', 'http:', 'mailto:'].includes(u.protocol)) {
-          Promise.resolve(shell?.openExternal?.(url)).catch(() => {});
-        }
-      } catch {}
-      return { action: 'deny' };
-    });
-
-    const guardNavigation = (event, targetUrl) => {
-      const currentUrl = contents.getURL();
-      if (!currentUrl) return;
-      let current;
-      let target;
-      try { current = new URL(currentUrl); target = new URL(targetUrl); }
-      catch { event.preventDefault(); return; }
-      const sameFile = current.protocol === 'file:' && target.protocol === 'file:' &&
-        decodeURIComponent(current.pathname) === decodeURIComponent(target.pathname);
-      const sameDevOrigin = !app.isPackaged && current.origin === target.origin &&
-        ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname) &&
-        Number(target.port || (target.protocol === 'https:' ? 443 : 80)) === 5173;
-      if (sameFile || sameDevOrigin) return;
-      event.preventDefault();
-      if (['https:', 'http:', 'mailto:'].includes(target.protocol)) {
-        Promise.resolve(shell?.openExternal?.(targetUrl)).catch(() => {});
-      }
-    };
-    contents.on('will-navigate', guardNavigation);
-    contents.on('will-redirect', guardNavigation);
-    contents.on('will-attach-webview', (event) => event.preventDefault());
+  const prefsPath = path.join(app.getPath('userData'), 'window-prefs.json');
+  function loadPrefs() {
+    try {
+      const raw = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
+      return {
+        notchUserHidden: Boolean(raw.notchUserHidden),
+        notchDisplayId: raw.notchDisplayId ?? null,
+        notchPosition: ['top-center', 'top-left', 'top-right'].includes(raw.notchPosition)
+          ? raw.notchPosition
+          : 'top-center',
+        startupBehavior: ['open_window', 'tray_minimized', 'notch_standby', 'disabled'].includes(raw.startupBehavior)
+          ? raw.startupBehavior
+          : 'notch_standby',
+      };
+    } catch {
+      return {
+        notchUserHidden: false,
+        notchDisplayId: null,
+        notchPosition: 'top-center',
+        startupBehavior: 'notch_standby',
+      };
+    }
+  }
+  let prefs = loadPrefs();
+  function savePrefs(patch = {}) {
+    prefs = { ...prefs, ...patch };
+    try {
+      fs.mkdirSync(path.dirname(prefsPath), { recursive: true });
+      fs.writeFileSync(prefsPath, JSON.stringify(prefs, null, 2), 'utf8');
+    } catch {}
+    return { ...prefs };
   }
 
+  let latestNotchState = {
+    visible: false,
+    standby: false,
+    orbState: 'idle',
+    aiName: 'Jeeva',
+    transcript: '',
+    userMessage: '',
+    replyText: '',
+    error: '',
+    freqBands: [0.15, 0.15, 0.15, 0.15, 0.15],
+  };
+
+  function getTargetDisplay() {
+    const displays = screen.getAllDisplays();
+    if (prefs.notchDisplayId !== null) {
+      const matched = displays.find((d) => String(d.id) === String(prefs.notchDisplayId));
+      if (matched) return matched;
+    }
+    return screen.getPrimaryDisplay();
+  }
+
+  function computeNotchBounds(width = 436) {
+    const display = getTargetDisplay();
+    const b = display.workArea || display.bounds;
+    const rawBounds = display.bounds || b;
+    let x = rawBounds.x + Math.round((rawBounds.width - width) / 2);
+    if (prefs.notchPosition === 'top-left') x = b.x + 16;
+    else if (prefs.notchPosition === 'top-right') x = b.x + b.width - width - 16;
+    const minX = b.x;
+    const maxX = Math.max(b.x, b.x + b.width - width);
+    x = Math.max(minX, Math.min(maxX, x));
+    const y = Math.max(rawBounds.y, b.y);
+    return { x, y, width, height: 168 };
+  }
+
+  function repositionNotch() {
+    if (!notchWindow || notchWindow.isDestroyed()) return;
+    try {
+      const nb = computeNotchBounds(436);
+      notchWindow.setBounds(nb, false);
+      notchWindow.setAlwaysOnTop(true, 'screen-saver');
+    } catch {}
+  }
 
   function createNotchWindow() {
     if (notchWindow && !notchWindow.isDestroyed()) return notchWindow;
-    const primary = screen.getPrimaryDisplay();
-    const b = primary.bounds;
-    const width = 424;
-    const height = 142;
-    const x = b.x + Math.round((b.width - width) / 2);
-    const y = b.y;
+    const nb = computeNotchBounds(436);
+    notchLoaded = false;
 
     notchWindow = new BrowserWindow({
-      width,
-      height,
-      x,
-      y,
+      width: nb.width,
+      height: nb.height,
+      x: nb.x,
+      y: nb.y,
       frame: false,
       transparent: true,
       alwaysOnTop: true,
@@ -84,35 +124,60 @@ function createWindowManager({
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
-        backgroundThrottling: false,
         sandbox: true,
-        webSecurity: true,
-        allowRunningInsecureContent: false,
-        webviewTag: false,
+        backgroundThrottling: false,
       },
     });
-    hardenWebContents(notchWindow.webContents);
     notchWindow.setAlwaysOnTop(true, 'screen-saver');
     notchWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    notchWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    notchWindow.webContents.on('will-navigate', (ev) => ev.preventDefault());
+    notchWindow.webContents.once('did-finish-load', () => {
+      notchLoaded = true;
+      try {
+        if (notchWindow && !notchWindow.isDestroyed()) {
+          notchWindow.webContents.send('notch:state', latestNotchState);
+        }
+      } catch {}
+    });
+    notchWindow.on('closed', () => {
+      notchWindow = null;
+      notchLoaded = false;
+    });
     notchWindow.loadFile(path.join(__dirname, 'notch-overlay.html')).catch(() => {});
     return notchWindow;
   }
 
-  function updateNotchState(state = {}) {
+  function setNotchUserHidden(hidden) {
+    savePrefs({ notchUserHidden: Boolean(hidden) });
+    if (hidden) {
+      updateNotchState({ visible: false, standby: false, orbState: 'idle' }, { force: true });
+    }
+    return prefs.notchUserHidden;
+  }
+
+  function updateNotchState(state = {}, opts = {}) {
     try {
+      const merged = { ...latestNotchState, ...state };
+      // Never allow background idle/standby updates to override an explicit user-hide
+      if (prefs.notchUserHidden && !opts.explicitShow && !opts.force) {
+        merged.visible = false;
+        merged.standby = false;
+      } else if (opts.explicitShow) {
+        savePrefs({ notchUserHidden: false });
+      }
+      latestNotchState = merged;
+
       const nw = createNotchWindow();
       if (!nw || nw.isDestroyed()) return false;
       clearTimeout(notchHideTimer);
 
-      const primary = screen.getPrimaryDisplay();
-      const b = primary.bounds;
-      const width = 416;
-      const x = b.x + Math.round((b.width - width) / 2);
-      nw.setPosition(x, b.y, false);
-      nw.setAlwaysOnTop(true, 'screen-saver');
-      nw.webContents.send('notch:state', state);
+      repositionNotch();
+      if (notchLoaded) {
+        nw.webContents.send('notch:state', latestNotchState);
+      }
 
-      if (state.visible) {
+      if (latestNotchState.visible) {
         if (!nw.isVisible()) nw.showInactive();
       } else {
         notchHideTimer = setTimeout(() => {
@@ -159,15 +224,28 @@ function createWindowManager({
       setTimeout(() => {
         if (!win.isDestroyed()) win.close();
         if (reticleWindow === win) reticleWindow = null;
-      }, 320);
+      }, 220);
     } catch {}
   }
 
+  function isStartupLaunch() {
+    const argv = process.argv || [];
+    if (argv.includes('--startup') || argv.includes('--hidden')) return true;
+    try {
+      if (process.platform === 'win32' && typeof app.getLoginItemSettings === 'function') {
+        const loginSettings = app.getLoginItemSettings();
+        if (loginSettings?.wasOpenedAtLogin || loginSettings?.wasOpenedAsHidden) return true;
+      }
+    } catch {}
+    return false;
+  }
+
   function createWindow() {
-    const autoFlagPath = path.join(app.getPath('userData'), 'auto-launch-init.done');
-    const startHidden =
-      process.argv.includes('--hidden') ||
-      (app.isPackaged && fs.existsSync(autoFlagPath));
+    // Separate manual launch from Windows startup launch:
+    // Manual launch ALWAYS opens the main window; startup launch respects user's startupBehavior preference.
+    const launchedAtStartup = isStartupLaunch();
+    const startHidden = launchedAtStartup && prefs.startupBehavior !== 'open_window';
+
     mainWindow = new BrowserWindow({
       width: 1200,
       height: 800,
@@ -181,19 +259,20 @@ function createWindowManager({
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
+        sandbox: false,
         backgroundThrottling: true,
-        sandbox: true,
-        webSecurity: true,
-        allowRunningInsecureContent: false,
-        webviewTag: false,
       },
       icon: path.join(__dirname, '..', 'public', 'icon.png'),
     });
 
-    hardenWebContents(mainWindow.webContents);
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\//i.test(url)) {
+        try { require('electron').shell.openExternal(url); } catch {}
+      }
+      return { action: 'deny' };
+    });
 
     mainWindow.on('close', (event) => {
-      // Keep JEEVA alive in System Tray + Camera Notch by default
       if (!app.isQuitting) {
         event.preventDefault();
         mainWindow.hide();
@@ -201,11 +280,13 @@ function createWindowManager({
     });
 
     mainWindow.on('hide', () => {
-      updateNotchState({ visible: true, standby: true, orbState: 'idle' });
+      if (!prefs.notchUserHidden) {
+        updateNotchState({ visible: true, standby: true, orbState: 'idle' });
+      }
     });
 
     mainWindow.on('show', () => {
-      updateNotchState({ visible: false });
+      updateNotchState({ visible: false, standby: false }, { force: true });
     });
 
     const editMenu = Menu.buildFromTemplate([
@@ -243,13 +324,20 @@ function createWindowManager({
     } else {
       mainWindow.loadFile(distFile);
     }
+
+    // Reposition notch cleanly on display/resolution/sleep-resume changes
+    screen.on('display-added', repositionNotch);
+    screen.on('display-removed', repositionNotch);
+    screen.on('display-metrics-changed', repositionNotch);
+    powerMonitor?.on?.('resume', repositionNotch);
+
     return mainWindow;
   }
 
   function applyWindowMode(mode) {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     currentWindowMode = mode === 'speaker' ? 'speaker' : mode === 'cortana' ? 'cortana' : 'full';
-    const { workArea } = screen.getPrimaryDisplay();
+    const { workArea } = getTargetDisplay();
 
     if (currentWindowMode === 'speaker') {
       const width = 332;
@@ -289,14 +377,20 @@ function createWindowManager({
 
   function wakeCortanaOverlay() {
     if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-    updateNotchState({ visible: true, orbState: 'listening', transcript: 'Listening...' });
+    updateNotchState(
+      { visible: true, orbState: 'listening', transcript: 'Listening...' },
+      { explicitShow: true }
+    );
     emitRendererEvent('hotkey:wake');
   }
 
   function wakeRestore(preferredMode = 'notch') {
     if (!mainWindow || mainWindow.isDestroyed()) createWindow();
     if (preferredMode === 'notch') {
-      updateNotchState({ visible: true, orbState: 'listening', transcript: 'Listening...' });
+      updateNotchState(
+        { visible: true, orbState: 'listening', transcript: 'Listening...' },
+        { explicitShow: true }
+      );
       return 'notch';
     }
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -327,53 +421,26 @@ function createWindowManager({
       { label: statLine, enabled: false },
       ...(wdAlert ? [{ label: `Alert: ${wdAlert.title}`, enabled: false }] : []),
       { type: 'separator' },
-      { label: 'Open Full Chat', click: () => applyWindowMode('full') },
-      { label: 'Hide to Camera Notch (Background)', click: () => mainWindow?.hide?.() },
-      { label: 'Show Camera Notch Pill (Alt+Space)', click: () => wakeCortanaOverlay() },
+      { label: 'Open Main Window', click: () => applyWindowMode('full') },
+      {
+        label: 'Show Camera Notch (Alt+Space)',
+        click: () => {
+          savePrefs({ notchUserHidden: false });
+          updateNotchState({ visible: true, standby: true, orbState: 'idle' }, { explicitShow: true });
+        },
+      },
+      {
+        label: 'Hide Camera Notch',
+        click: () => setNotchUserHidden(true),
+      },
       { label: 'Mini Speaker Mode (Floating Pill)', click: () => applyWindowMode('speaker') },
-      { label: 'Cortana Voice Panel', click: () => applyWindowMode('cortana') },
+      { label: 'Voice Panel', click: () => applyWindowMode('cortana') },
       {
         label: 'Open PC Control Center',
         click: () => {
           applyWindowMode('full');
           setTimeout(() => emitRendererEvent('ui:openPcControl', 'clipboard'), 120);
         },
-      },
-      { type: 'separator' },
-      {
-        label: 'Workstation Quick Presets',
-        submenu: [
-          {
-            label: 'Coding Mode (High Perf + VS Code)',
-            click: async () => {
-              await actions.powerProfile('high_performance').catch(() => {});
-              await actions.openApp('vscode').catch(() => {});
-            },
-          },
-          {
-            label: 'Night Focus (Dark Mode + Balanced)',
-            click: async () => {
-              await actions.theme('dark').catch(() => {});
-              await actions.powerProfile('balanced').catch(() => {});
-            },
-          },
-          {
-            label: 'Sort Downloads by File Type',
-            click: async () => {
-              await actions.filePro('organize_folder', 'downloads').catch(() => {});
-            },
-          },
-          {
-            label: 'Clean Temporary Files',
-            click: async () => {
-              await actions.filePro('clean_temp', '').catch(() => {});
-            },
-          },
-          {
-            label: 'Mute System Volume',
-            click: () => actions.volume('mute').catch(() => {}),
-          },
-        ],
       },
       { type: 'separator' },
       {
@@ -413,6 +480,10 @@ function createWindowManager({
 
   function disposeTray() {
     clearTimeout(notchHideTimer);
+    screen.removeListener('display-added', repositionNotch);
+    screen.removeListener('display-removed', repositionNotch);
+    screen.removeListener('display-metrics-changed', repositionNotch);
+    powerMonitor?.removeListener?.('resume', repositionNotch);
     if (notchWindow && !notchWindow.isDestroyed()) {
       try { notchWindow.destroy(); } catch {}
       notchWindow = null;
@@ -428,6 +499,18 @@ function createWindowManager({
     getNotchWindow: () => notchWindow,
     createNotchWindow,
     updateNotchState,
+    setNotchUserHidden,
+    getPrefs: () => ({ ...prefs }),
+    savePrefs,
+    getDisplays: () =>
+      screen.getAllDisplays().map((d, idx) => ({
+        id: d.id,
+        label: d.label || `Display ${idx + 1} (${d.bounds.width}x${d.bounds.height})`,
+        primary: d.id === screen.getPrimaryDisplay().id,
+        bounds: d.bounds,
+      })),
+    repositionNotch,
+    isStartupLaunch,
     getCurrentMode: () => currentWindowMode,
     showClickReticle,
     createWindow,

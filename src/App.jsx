@@ -9,8 +9,10 @@ import AudioPlayerBar from './components/AudioPlayerBar';
 import CommandPalette from './components/CommandPalette';
 import CortanaView from './components/CortanaView';
 import SpeakerPill from './components/SpeakerPill';
+import LandingPage from './components/LandingPage';
 
 const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
+const MobileConnectModal = lazy(() => import('./components/MobileConnectModal'));
 const OnboardingWizard = lazy(() => import('./components/OnboardingWizard'));
 const PcControlCenterModal = lazy(() => import('./components/PcControlCenterModal'));
 import {
@@ -30,6 +32,7 @@ import {
   buildLocalizedPermissionQuestion,
   parseVoiceConfirmation,
 } from './services/voicePermissionPrompt';
+import { refreshRenderRelayDevices, setPairToken, getAuthHeaders } from './services/bridge';
 import { getAiName, getStrictVoiceMode, getWakeOpenMode } from './services/voiceRouter';
 import { getDocSummaryPref, setDocSummaryPref, getReplyStyle, setReplyStyle } from './services/userPrefs';
 import { runLocalQuickBrain, buildLocalTitle } from './services/localQuickBrain';
@@ -48,12 +51,24 @@ import { useWatchdogAndStats } from './hooks/useWatchdogAndMemory';
 import ToastContainer from './components/ToastContainer';
 import { toast } from './services/toast';
 
+function getInitialRouteView() {
+  if (typeof window === 'undefined' || window.electronAPI) return 'app';
+  const path = window.location.pathname;
+  const params = new URLSearchParams(window.location.search);
+  const isStandalone = window.matchMedia?.('(display-mode: standalone)')?.matches;
+  if (path.startsWith('/app') || path.startsWith('/chat') || params.has('pair') || isStandalone) {
+    return 'app';
+  }
+  return 'landing';
+}
+
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSidebar, setShowSidebar] = useState(() => window.innerWidth >= 900);
   const [showPalette, setShowPalette] = useState(false);
+  const [showMobileModal, setShowMobileModal] = useState(false);
   const [showPcControl, setShowPcControl] = useState(false);
   const [pcControlTab, setPcControlTab] = useState('clipboard');
   const [windowMode, setWindowMode] = useState('full'); // Always start in Full Chat Workstation
@@ -84,6 +99,21 @@ export default function App() {
   const [aiName, setAiNameState] = useState(() => getAiName());
   const [brainMode, setBrainModeState] = useState(() => getBrainMode());
   const [permissionRequest, setPermissionRequest] = useState(null);
+  const [serverConfig, setServerConfig] = useState({
+    checked: Boolean(window.electronAPI),
+    serverManagedKey: false,
+    requiresPin: false,
+    authorized: false,
+  });
+  const [appToken, setAppToken] = useState(() => localStorage.getItem('jeeva_app_token') || '');
+  const [cloudApiUrl, setCloudApiUrl] = useState(
+    () => (localStorage.getItem('jeeva_cloud_api_url') || import.meta.env.VITE_RENDER_URL || 'https://jeeva-ai-mjr1.onrender.com').trim().replace(/\/+$/, '')
+  );
+  const [pinEntry, setPinEntry] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [routeView, setRouteView] = useState(() => getInitialRouteView());
   const [showWizard, setShowWizard] = useState(
     () => Boolean(window.electronAPI) && localStorage.getItem('jeeva_onboarding_done') !== 'true'
   );
@@ -94,8 +124,28 @@ export default function App() {
   const voiceprintMismatchRef = useRef(false);
   const lastUserPromptRef = useRef('');
 
-  // Desktop-only startup events and local reminder catch-up.
+  const updateCloudApiUrl = useCallback((url) => {
+    const clean = String(url || '').trim().replace(/\/+$/, '');
+    if (clean) localStorage.setItem('jeeva_cloud_api_url', clean);
+    else localStorage.removeItem('jeeva_cloud_api_url');
+    setCloudApiUrl(clean);
+  }, []);
+
+  const navigateToApp = useCallback(() => {
+    setRouteView('app');
+    if (!window.electronAPI && window.location.pathname === '/') {
+      window.history.pushState({}, '', '/app');
+    }
+  }, []);
+
+  // Handle browser back/forward navigation & ?pair= auto-pairing URL + Electron jeeva:// deep links
   useEffect(() => {
+    const onPopState = () => setRouteView(getInitialRouteView());
+    window.addEventListener('popstate', onPopState);
+
+    const onCloudUrlEvent = (ev) => {
+      if (ev?.detail !== undefined) setCloudApiUrl(String(ev.detail || '').trim().replace(/\/+$/, ''));
+    };
     const onAiNameEvent = (ev) => {
       if (ev?.detail) {
         setAiNameState(ev.detail);
@@ -103,7 +153,34 @@ export default function App() {
       }
     };
     setAiNamePrompt(aiName);
+    window.addEventListener('jeeva-cloud-url-updated', onCloudUrlEvent);
     window.addEventListener('jeeva-ai-name-updated', onAiNameEvent);
+
+    if (!window.electronAPI) {
+      const params = new URLSearchParams(window.location.search);
+      const urlPair = (params.get('pair') || '').trim();
+      if (urlPair.length >= 12) {
+        setPairToken(urlPair);
+        setRouteView('app');
+        params.delete('pair');
+        const nextSearch = params.toString();
+        window.history.replaceState({}, '', `/app${nextSearch ? '?' + nextSearch : ''}`);
+        toast.success('PC Pair Key linked to this browser!');
+        refreshRenderRelayDevices();
+      }
+    } else {
+      window.electronAPI?.relayStatus?.().then((s) => {
+        if (s?.renderUrl && !localStorage.getItem('jeeva_cloud_api_url')) {
+          updateCloudApiUrl(s.renderUrl);
+        }
+      }).catch(() => {});
+    }
+
+    const unsubDeep = window.electronAPI?.onDeepLinked?.((data) => {
+      if (data?.renderUrl) updateCloudApiUrl(data.renderUrl);
+      toast.success(`1-Click linked to ${data?.renderUrl || 'Render'}!`);
+      setShowMobileModal(true);
+    });
 
     const unsubSched = window.electronAPI?.onSchedulerFired?.((item) => {
       const label = item?.message || item?.description || 'Scheduled PC task completed';
@@ -170,13 +247,68 @@ export default function App() {
 
     return () => {
       clearTimeout(agendaTimer);
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('jeeva-cloud-url-updated', onCloudUrlEvent);
       window.removeEventListener('jeeva-ai-name-updated', onAiNameEvent);
+      unsubDeep?.();
       unsubSched?.();
       unsubEmergency?.();
     };
-  }, [aiName]);
+  }, [updateCloudApiUrl]);
 
-  // Load API key from OS-encrypted safeStorage vault on Electron startup
+  // Capture browser PWA install prompt (Chrome / Edge / Android)
+  useEffect(() => {
+    const onBeforeInstall = (e) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+    };
+    const onInstalled = () => {
+      setInstallPrompt(null);
+      toast.success('JEEVA AI App installed!');
+    };
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, []);
+
+  // Check Render Cloud AI / proxy config (works both on Browser/PWA and on Desktop .exe via cloudApiUrl)
+  useEffect(() => {
+    const isDesktop = Boolean(window.electronAPI);
+    if (isDesktop && !cloudApiUrl) {
+      setServerConfig((prev) => ({ ...prev, checked: true, serverManagedKey: false }));
+      return;
+    }
+    const base = isDesktop ? cloudApiUrl : '';
+    const savedToken = localStorage.getItem('jeeva_app_token') || '';
+    fetch(`${base}/api/config`, {
+      headers: getAuthHeaders(),
+    })
+      .then(async (res) => {
+        if (!res.ok) return null;
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) return null;
+        return res.json();
+      })
+      .then((cfg) => {
+        if (cfg && typeof cfg.serverManagedKey === 'boolean') {
+          setServerConfig({ checked: true, ...cfg });
+          if (cfg.requiresPin && !cfg.authorized && savedToken) {
+            localStorage.removeItem('jeeva_app_token');
+            setAppToken('');
+          }
+          if (!isDesktop) refreshRenderRelayDevices();
+        } else {
+          setServerConfig((prev) => ({ ...prev, checked: true }));
+        }
+      })
+      .catch(() => {
+        setServerConfig((prev) => ({ ...prev, checked: true }));
+      });
+  }, [cloudApiUrl]);
+
   // Load API key from OS-encrypted safeStorage vault on Electron startup
   useEffect(() => {
     if (!window.electronAPI?.vaultGetKey) return;
@@ -190,21 +322,81 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!apiKey) {
-      setIsReady(false);
-      localStorage.removeItem('jeeva_api_key');
+    if (apiKey) {
+      try {
+        initGemini(apiKey);
+        localStorage.setItem('jeeva_api_key', apiKey);
+        window.electronAPI?.vaultSaveKey?.(apiKey);
+        setIsReady(true);
+      } catch (err) {
+        console.error('Failed to init Gemini:', err);
+        setIsReady(false);
+      }
       return;
     }
-    try {
-      initGemini(apiKey);
-      localStorage.setItem('jeeva_api_key', apiKey);
-      window.electronAPI?.vaultSaveKey?.(apiKey);
-      setIsReady(true);
-    } catch (err) {
-      console.error('Failed to initialize desktop Gemini client:', err);
+
+    localStorage.removeItem('jeeva_api_key');
+
+    if (
+      serverConfig.serverManagedKey &&
+      (!serverConfig.requiresPin || serverConfig.authorized)
+    ) {
+      try {
+        initGemini('server-proxy', {
+          useServerProxy: true,
+          proxyBaseUrl: window.electronAPI ? cloudApiUrl : undefined,
+          appToken,
+        });
+        setIsReady(true);
+      } catch (err) {
+        console.error('Failed to init Gemini proxy:', err);
+        setIsReady(false);
+      }
+    } else {
       setIsReady(false);
     }
-  }, [apiKey]);
+  }, [apiKey, serverConfig, appToken, cloudApiUrl]);
+
+  const unlockOwnerKey = useCallback(async (pinValue) => {
+    const base = window.electronAPI ? cloudApiUrl : '';
+    const res = await fetch(`${base}/api/unlock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin: String(pinValue || '').trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || 'Invalid PIN');
+    }
+    localStorage.setItem('jeeva_app_token', data.token);
+    setAppToken(data.token);
+    setServerConfig((prev) => ({ ...prev, authorized: true }));
+    if (!window.electronAPI) refreshRenderRelayDevices();
+  }, [cloudApiUrl]);
+
+  const handleUnlockApp = async (e) => {
+    e.preventDefault();
+    if (!pinEntry.trim()) return;
+    setPinError('');
+    setUnlocking(true);
+    try {
+      await unlockOwnerKey(pinEntry.trim());
+      setPinEntry('');
+    } catch (err) {
+      setPinError(err.message || 'Unlock failed');
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  const handleInstallPWA = useCallback(async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice?.outcome === 'accepted') {
+      setInstallPrompt(null);
+    }
+  }, [installPrompt]);
 
   useEffect(() => {
     setGeminiModel(model);
@@ -579,6 +771,13 @@ export default function App() {
           toolsUsed: tools.map((t) => t.name),
         }).catch(() => {});
       }
+      if (typeof document !== 'undefined' && document.hidden && window.electronAPI?.updateNotchState) {
+        window.electronAPI.updateNotchState({
+          userMessage: String(promptText || '').slice(0, 80),
+          replyText: String(replyText || 'Done.').replace(/\s+/g, ' ').slice(0, 120),
+          error: '',
+        }).catch(() => {});
+      }
       if (shouldSpeak && replyText) {
         speakText(replyText, { label: speakLabel, instant: tier !== 'cloud' });
       }
@@ -777,6 +976,16 @@ export default function App() {
         throw cloudErr;
       }
     } catch (err) {
+      if (
+        !apiKey &&
+        serverConfig.serverManagedKey &&
+        serverConfig.requiresPin &&
+        /401|Workspace locked|Access PIN/i.test(err?.message || '')
+      ) {
+        localStorage.removeItem('jeeva_app_token');
+        setAppToken('');
+        setServerConfig(prev => ({ ...prev, authorized: false }));
+      }
       setMessages(prev =>
         prev.map(m =>
           m.id === typingId
@@ -794,17 +1003,28 @@ export default function App() {
       voiceprintMismatchRef.current = false;
       setIsLoading(false);
     }
-  }, [isReady, brainMode, liveStats, ttsEnabled, requestPermission, apiKey, switchWindowMode, messages]);
+  }, [isReady, brainMode, liveStats, ttsEnabled, requestPermission, apiKey, serverConfig.serverManagedKey, serverConfig.requiresPin, switchWindowMode, messages]);
 
   // Persistent Always-On Wake Word & Mic Engine:
   // - On Electron Desktop: active 24/7 across Full, Minimized, Tray, Speaker & Cortana modes once API/Cloud is ready
+  // - On Web/Mobile: only listens inside /app Voice modes (never triggers unprompted mic popup on Landing Page)
+  const isLockedScreen =
+    serverConfig.checked &&
+    serverConfig.requiresFullLock &&
+    serverConfig.requiresPin &&
+    !serverConfig.authorized &&
+    !apiKey;
   const voiceEngine = useVoiceEngine({
     aiName,
     onSend: handleSend,
     isLoading,
     autoListenSignal,
     requestPermission,
-    enabled: Boolean(isReady || brainMode !== 'cloud'),
+    enabled: Boolean(
+      !isLockedScreen &&
+      ((window.electronAPI && (isReady || brainMode !== 'cloud')) ||
+        (isReady && routeView === 'app' && windowMode !== 'full'))
+    ),
     onWakeOpen: (mode) => {
       if (mode && mode !== 'notch') setWindowMode(mode);
     },
@@ -829,7 +1049,12 @@ export default function App() {
       await window.electronAPI.saveDesktopFile(`jeeva-thread-${Date.now()}.md`, md);
       toast.success('Thread exported to Desktop!');
     } else {
-      toast.error('Desktop file save is unavailable.');
+      const blob = new Blob([md], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `jeeva-thread-${Date.now()}.md`;
+      a.click();
     }
   }, [messages]);
 
@@ -887,7 +1112,64 @@ export default function App() {
 
   const lastAssistantMessage = [...messages].reverse().find((m) => m.role === 'assistant' && !m.isTyping);
 
-  if (!window.electronAPI) return null;
+  if (!window.electronAPI && routeView === 'landing') {
+    return (
+      <>
+        <LandingPage
+          installerUrl={serverConfig.installerUrl}
+          canInstallPWA={Boolean(installPrompt)}
+          onInstallPWA={handleInstallPWA}
+          onEnterWorkspace={navigateToApp}
+        />
+        <ToastContainer />
+      </>
+    );
+  }
+
+  const isServerLocked =
+    serverConfig.checked &&
+    serverConfig.requiresFullLock &&
+    serverConfig.requiresPin &&
+    !serverConfig.authorized &&
+    !apiKey;
+
+  if (isServerLocked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-obsidian-bg text-obsidian-text p-4">
+        <div className="w-full max-w-sm bg-obsidian-surface border border-obsidian-border rounded-2xl p-6 shadow-2xl">
+          <div className="w-11 h-11 rounded-xl bg-obsidian-bg border border-obsidian-border flex items-center justify-center mb-4">
+            <svg className="w-5 h-5 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </div>
+          <h1 className="text-base font-semibold text-obsidian-text">JEEVA AI Workspace</h1>
+          <p className="text-xs text-obsidian-muted mt-1 mb-5">
+            Enter your Access PIN to unlock your Render-hosted AI workspace.
+          </p>
+          <form onSubmit={handleUnlockApp} className="space-y-3">
+            <input
+              type="password"
+              inputMode="numeric"
+              autoFocus
+              value={pinEntry}
+              onChange={(e) => setPinEntry(e.target.value)}
+              placeholder="Enter Access PIN..."
+              className="w-full bg-obsidian-bg border border-obsidian-border rounded-xl px-3.5 py-2.5 text-sm font-mono tracking-widest text-obsidian-text placeholder:text-obsidian-muted placeholder:tracking-normal focus:outline-none focus:border-zinc-500"
+            />
+            {pinError && <p className="text-xs text-red-400">{pinError}</p>}
+            <button
+              type="submit"
+              disabled={unlocking || !pinEntry.trim()}
+              className="w-full py-2.5 rounded-xl bg-zinc-100 text-zinc-950 text-xs font-semibold hover:bg-white transition-colors disabled:opacity-40"
+            >
+              {unlocking ? 'Verifying...' : 'Unlock Workspace'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   if (windowMode === 'speaker') {
     return (
@@ -921,6 +1203,7 @@ export default function App() {
           onExpandToChat={() => switchWindowMode('full')}
           onSwitchSpeaker={() => switchWindowMode('speaker')}
           onOpenSettings={() => setShowSettings(true)}
+          onOpenMobileModal={() => setShowMobileModal(true)}
           voiceMode={voiceMode}
           onVoiceModeChange={setVoiceMode}
           autoListenSignal={autoListenSignal}
@@ -941,15 +1224,25 @@ export default function App() {
               onCustomInstructionsChange={setCustomInstructions}
               onExportChat={handleExportChat}
               onClearHistory={handleClearHistory}
+              canInstallPWA={Boolean(installPrompt)}
+              onInstallPWA={handleInstallPWA}
               onOpenWizard={() => setShowWizard(true)}
+              serverConfig={serverConfig}
+              onUnlockOwner={unlockOwnerKey}
               onClose={() => setShowSettings(false)}
             />
           )}
 
+          {showMobileModal && (
+            <MobileConnectModal isOpen={showMobileModal} onClose={() => setShowMobileModal(false)} />
+          )}
           {showWizard && window.electronAPI && (
             <OnboardingWizard
               initialApiKey={apiKey}
+              initialCloudUrl={cloudApiUrl}
               onSaveApiKey={setApiKey}
+              onSaveCloudUrl={updateCloudApiUrl}
+              onUnlockOwner={unlockOwnerKey}
               onComplete={() => setShowWizard(false)}
             />
           )}
@@ -969,12 +1262,15 @@ export default function App() {
         onSettingsClick={() => setShowSettings(true)}
         onNewChat={handleNewChat}
         onOpenPalette={() => setShowPalette(true)}
+        onOpenMobileModal={() => setShowMobileModal(true)}
         onOpenPcControl={openPcControlCenter}
         onSwitchCortana={() => switchWindowMode('cortana')}
         onSwitchSpeaker={() => switchWindowMode('speaker')}
         wakeEnabled={voiceEngine.wakeEnabled}
         orbState={voiceEngine.orbState}
         onToggleWake={voiceEngine.toggleWake}
+        canInstallPWA={Boolean(installPrompt)}
+        onInstallPWA={handleInstallPWA}
         model={model}
         onModelChange={setModel}
         liveStats={liveStats}
@@ -1075,11 +1371,18 @@ export default function App() {
             onCustomInstructionsChange={setCustomInstructions}
             onExportChat={handleExportChat}
             onClearHistory={handleClearHistory}
+            canInstallPWA={Boolean(installPrompt)}
+            onInstallPWA={handleInstallPWA}
             onOpenWizard={() => setShowWizard(true)}
+            serverConfig={serverConfig}
+            onUnlockOwner={unlockOwnerKey}
             onClose={() => setShowSettings(false)}
           />
         )}
 
+        {showMobileModal && (
+          <MobileConnectModal isOpen={showMobileModal} onClose={() => setShowMobileModal(false)} />
+        )}
 
         {showPcControl && (
           <PcControlCenterModal
@@ -1095,7 +1398,10 @@ export default function App() {
         {showWizard && window.electronAPI && (
           <OnboardingWizard
             initialApiKey={apiKey}
+            initialCloudUrl={cloudApiUrl}
             onSaveApiKey={setApiKey}
+            onSaveCloudUrl={updateCloudApiUrl}
+            onUnlockOwner={unlockOwnerKey}
             onComplete={() => setShowWizard(false)}
           />
         )}
