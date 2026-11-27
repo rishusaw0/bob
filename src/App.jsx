@@ -723,7 +723,7 @@ export default function App() {
       const userAskedSpeech = /\b(read aloud|speak|sunao|bolkar|bol kar|awaz mein)\b/i.test(promptText);
       // Tier-0 & Layer-1: Zero-API Deterministic + Slot Extractor + Episodic Date + Semantic Intent Local Brain
       if (!forceCloud && (!routing.forceCloud || routing.strictNoApi) && !attachment) {
-        const quick = await runLocalQuickBrain(promptText, { requestPermission });
+        const quick = await runLocalQuickBrain(promptText, { requestPermission, historyMessages: messages });
         if (quick?.handled) {
           finalizeReply({
             replyText: quick.replyText || 'Done.',

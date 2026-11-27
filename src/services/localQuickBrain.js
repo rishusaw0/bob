@@ -208,38 +208,53 @@ async function tryDirectMemoryRag(text, lang) {
   const clean = String(text || '').trim();
   const lower = clean.toLowerCase();
 
-  // Save fact locally without LLM
-  const rememberMatch = clean.match(/^(?:yaad rakho|yaad rakhna|remember that|remember|note kar lo)\s+(?:ki\s+)?(.{5,300})$/i);
+  // Save explicit or natural personal intro facts locally without LLM
+  const rememberMatch =
+    clean.match(/^(?:yaad rakho|yaad rakhna|remember that|remember|note kar lo)\s+(?:ki\s+)?(.{4,300})$/i) ||
+    clean.match(/^(?:mera naam|my name is|i am called)\s+([a-z\u0900-\u097f][a-z\u0900-\u097f\s]{1,40}?)(?:\s+hai)?$/i) ||
+    clean.match(/^(?:main|i live in)\s+([a-z\u0900-\u097f][a-z\u0900-\u097f\s,]{1,45}?)(?:\s+(?:mein|me)\s+rehta\s+(?:hoon|hu|hun))?$/i);
   if (rememberMatch) {
-    const fact = rememberMatch[1].trim();
+    const isNameIntro = /\b(mera naam|my name is|i am called)\b/i.test(lower);
+    const isCityIntro = /\b(i live in|rehta hoon|rehta hu|rehta hun)\b/i.test(lower);
+    const rawFact = rememberMatch[1].trim();
+    const fact = isNameIntro
+      ? `User's name is ${rawFact}`
+      : isCityIntro
+        ? `User lives in ${rawFact}`
+        : rawFact;
     const res = await rememberUserMemory(fact, 'preference');
     if (res?.success || res?.ok) {
       return {
         replyText: replyByLang(
           lang,
-          `Got it — saved to your local memory: "${fact}"`,
-          `Samajh gaya — maine local memory me save kar liya: "${fact}"`,
-          `समझ गया — मैंने लोकल मेमोरी में सेव कर लिया: "${fact}"`
+          `Got it — I'll remember that: "${fact}"`,
+          `Samajh gaya — maine yaad rakh liya: "${fact}"`,
+          `समझ गया — मैंने याद रख लिया: "${fact}"`
         ),
         tools: [{ name: 'memory_rag', status: 'done', args: { action: 'remember', content: fact } }],
       };
     }
   }
 
-  // Recall fact locally without LLM
+  // Recall fact locally without LLM (supports natural questions like "mera naam kya hai?", "main kahan rehta hoon?")
   if (
-    /\b(memory|yaad kiya|remember|project path|kahan rakha|kahan hai|mera folder|my preference)\b/i.test(lower) &&
+    /\b(memory|yaad kiya|remember|project path|kahan rakha|kahan hai|mera folder|my preference|mera naam|my name|kahan rehta|where do i live)\b/i.test(lower) &&
     clean.length < 110
   ) {
-    const items = await recallRelevantMemories(clean, 3);
-    if (Array.isArray(items) && items.length > 0 && (items[0].score === undefined || items[0].score >= 0.22)) {
+    const recallQuery = /\b(mera naam|my name)\b/i.test(lower)
+      ? 'user name'
+      : /\b(kahan rehta|where do i live)\b/i.test(lower)
+        ? 'user lives in'
+        : clean;
+    const items = await recallRelevantMemories(recallQuery, 3);
+    if (Array.isArray(items) && items.length > 0 && (items[0].score === undefined || items[0].score >= 0.16)) {
       const topList = items.map((m, idx) => `${idx + 1}. ${m.content}`).join('\n');
       return {
         replyText: replyByLang(
           lang,
-          `Here is what I remember locally:\n${topList}`,
-          `Local memory me mujhe ye mila:\n${topList}`,
-          `लोकल मेमोरी में यह जानकारी मिली:\n${topList}`
+          `Here is what I remember:\n${topList}`,
+          `Mujhe yeh yaad hai:\n${topList}`,
+          `मुझे यह याद है:\n${topList}`
         ),
         tools: [{ name: 'memory_rag', status: 'done', args: { action: 'recall', query: clean } }],
       };
@@ -375,11 +390,43 @@ async function tryLocalScreenReader(text, lang, requestPermission) {
 }
 
 /**
+ * Resolves follow-up app pronouns ("isko band karo", "isme hello likho", "close it") from recent history.
+ */
+function resolvePronounFollowUp(text, historyMessages = []) {
+  const raw = String(text || '').trim();
+  if (!raw || !/\b(isko|isme|is\s+mein|is\s+app|usko|usme|it|this\s+app|this\s+window)\b/i.test(raw)) {
+    return raw;
+  }
+  let lastApp = '';
+  for (let i = historyMessages.length - 1; i >= Math.max(0, historyMessages.length - 6); i--) {
+    const msg = historyMessages[i];
+    if (msg?.role !== 'assistant' || !Array.isArray(msg.tools)) continue;
+    for (let j = msg.tools.length - 1; j >= 0; j--) {
+      const t = msg.tools[j];
+      const appName = t?.args?.app_name;
+      if (appName && typeof appName === 'string') {
+        lastApp = appName.trim();
+        break;
+      }
+    }
+    if (lastApp) break;
+  }
+  if (!lastApp) return raw;
+
+  return raw
+    .replace(/\b(?:isme|is\s+mein|usme)\b/gi, `${lastApp} mein`)
+    .replace(/\b(?:isko|usko|is\s+app\s+ko|this\s+app|this\s+window|\bit\b)\b/gi, lastApp)
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Unified Tier-0 + Tier-1 Local Execution Engine.
  * Works identically for BOTH typed Chat messages and Voice commands.
  */
-export async function runLocalQuickBrain(text, { requestPermission = null } = {}) {
-  const clean = repairVoiceTranscript(text);
+export async function runLocalQuickBrain(text, { requestPermission = null, historyMessages = [] } = {}) {
+  const repaired = repairVoiceTranscript(text);
+  const clean = resolvePronounFollowUp(repaired, historyMessages);
   if (!clean) return { handled: false };
   const lang = detectCommandLanguage(clean);
 
@@ -471,7 +518,7 @@ export async function runLocalQuickBrain(text, { requestPermission = null } = {}
     /\b(explain|write|draft|code|story|essay|why|samjhao|kya hota|difference between|compare|banao ek)\b/i.test(clean);
   if (!looksConversational) {
     const intent = classifyIntent(clean);
-    if (intent && intent.confidence >= 0.72) {
+    if (intent && intent.confidence >= 0.56) {
       const result = await executeFunctionCall(intent.tool, intent.args, requestPermission, {
         fromVoice: false,
         userPrompt: clean,

@@ -440,6 +440,24 @@ assert.equal(btHit.handled, true);
 assert.equal(btHit.tools[0].name, 'open_windows_setting');
 assert.equal(btHit.tools[0].args.setting, 'bluetooth');
 
+// Intelligence upgrades: natural memory intro/recall + pronoun follow-up resolution
+const nameSave = await runLocalQuickBrain('Mera naam Roushan hai');
+assert.equal(nameSave.handled, true);
+assert.equal(nameSave.tools[0].name, 'memory_rag');
+const nameRecall = await runLocalQuickBrain('Mera naam kya hai?');
+assert.equal(nameRecall.handled, true);
+assert.ok(nameRecall.replyText.includes('Roushan'));
+
+const followUpClose = await runLocalQuickBrain('isko band karo', {
+  historyMessages: [
+    { role: 'user', text: 'Notepad kholo' },
+    { role: 'assistant', text: 'Maine notepad khol diya hai.', tools: [{ name: 'open_application', args: { app_name: 'notepad' } }] },
+  ],
+});
+assert.equal(followUpClose.handled, true);
+assert.equal(followUpClose.tools[0].name, 'close_application');
+assert.equal(followUpClose.tools[0].args.app_name, 'notepad');
+
 const volAur = await tryFastVoiceAction('volume thoda aur badhao');
 assert.equal(volAur.handled, true);
 assert.equal(volAur.tools[0].args.action, 'up');

@@ -63,8 +63,17 @@ export async function runLocalSlmTurn({
     }
   } catch {}
 
-  const systemPrompt = `You are JEEVA Local Brain running on the user's Windows PC. Reply in the exact same language (English, Romanized Hinglish, or Hindi).
-Keep answers helpful, clear, and concise.
+  const nowStr = new Date().toLocaleString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const systemPrompt = `You are JEEVA Local Brain running on the user's Windows PC. Current local date/time: ${nowStr}.
+Reply in the exact same language (English, Romanized Hinglish, or Hindi) in plain everyday words.
+Keep answers helpful, accurate, and concise.
 Available PC tools: ${topToolNames.join(', ')}.
 If you need to execute a PC tool directly and native tool_calls aren't used, respond ONLY with JSON: {"tool":"<name>","args":{...}}.
 If the task requires live internet info, complex coding, or screen image vision you cannot do locally, respond ONLY with JSON: {"escalate":true,"reason":"<short reason>"}.${memSnippet}`;
@@ -102,12 +111,14 @@ If the task requires live internet info, complex coding, or screen image vision 
     const toolCalls = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
     const content = String(msg.content || '').trim();
     const jsonHint = toolCalls.length === 0 ? tryExtractJsonAction(content) : null;
+    const hintedToolName = jsonHint?.tool || jsonHint?.name || '';
+    const hintedToolArgs = jsonHint?.args || jsonHint?.arguments || {};
 
     if (jsonHint?.escalate) {
       return { handled: false, escalatedBySlm: true, reason: jsonHint.reason || 'Requires Gemini Cloud' };
     }
 
-    if (toolCalls.length > 0 || jsonHint?.tool) {
+    if (toolCalls.length > 0 || hintedToolName) {
       const targetCalls =
         toolCalls.length > 0
           ? toolCalls.map((tc) => ({
@@ -117,7 +128,7 @@ If the task requires live internet info, complex coding, or screen image vision 
                   ? JSON.parse(tc.function.arguments || '{}')
                   : tc.function?.arguments || {},
             }))
-          : [{ name: jsonHint.tool, args: jsonHint.args || {} }];
+          : [{ name: hintedToolName, args: typeof hintedToolArgs === 'string' ? JSON.parse(hintedToolArgs || '{}') : hintedToolArgs }];
 
       const toolOutputs = [];
       for (const tc of targetCalls) {

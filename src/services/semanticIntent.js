@@ -45,6 +45,13 @@ const SYNONYM_MAP = {
   waqt: 'time',
   tareekh: 'date',
   tarikh: 'date',
+  chal: 'open',
+  khula: 'running',
+  bata: 'batao',
+  dikha: 'show',
+  jagah: 'space',
+  charge: 'battery',
+  charging: 'battery',
 };
 
 export function normalizeHinglishQuery(text) {

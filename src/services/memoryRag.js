@@ -52,7 +52,8 @@ export async function rememberUserMemory(content, category = 'fact') {
   }
   const clean = String(content || '').trim();
   if (!clean) return null;
-  const list = loadLocalMemories();
+  const norm = clean.toLowerCase();
+  const list = loadLocalMemories().filter((x) => String(x?.content || '').trim().toLowerCase() !== norm);
   const item = { id: `m_${Date.now()}`, content: clean, category, vector: buildVec(clean), updatedAt: Date.now() };
   list.unshift(item);
   saveLocalMemories(list);
