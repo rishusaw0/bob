@@ -2,7 +2,7 @@
 // 1. 16 kHz Mono PCM Pre-Roll Ring Buffer + Goertzel Vocal-Band Speech Scoring + WAV Capture
 // 2. Adaptive Utterance Silence Grace (snappy for short cmds, patient for multi-step sentences)
 // 3. Real-Time Barge-In Monitor during TTS / Audio Playback
-import { transcribeAudio } from './gemini.js';
+import { transcribeAudio, getGeminiConnectionInfo } from './gemini.js';
 import { matchWakePhrase, getAiName } from './voiceRouter.js';
 
 let speechApiBrokenInRuntime = false;
@@ -609,7 +609,33 @@ export function startVoiceCapture({
       startPcmCommandCapture();
     }
   } else {
-    startPcmCommandCapture();
+    // If offline or no Gemini Cloud STT configured, try Windows SAPI dictation directly first so user doesn't speak twice
+    const conn = getGeminiConnectionInfo?.() || {};
+    const canUseCloudStt =
+      (typeof navigator === 'undefined' || navigator.onLine !== false) &&
+      Boolean(conn.apiKey || conn.useServerProxy);
+    const api = typeof window !== 'undefined' ? window.electronAPI : null;
+    if (!canUseCloudStt && api?.offlineVoiceDictate) {
+      onStatus('offline-dictating');
+      onInterim('Listening (offline speech engine)...');
+      api.offlineVoiceDictate(7)
+        .then((dict) => {
+          if (stopped) return;
+          const offText = cleanSttTranscript(dict?.text || '');
+          if (offText) {
+            stopped = true;
+            cleanup();
+            onResult(offText, { pcm16k: null });
+          } else {
+            startPcmCommandCapture();
+          }
+        })
+        .catch(() => {
+          if (!stopped) startPcmCommandCapture();
+        });
+    } else {
+      startPcmCommandCapture();
+    }
   }
 
   return {

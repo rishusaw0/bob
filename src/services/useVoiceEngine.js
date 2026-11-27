@@ -178,40 +178,49 @@ export function useVoiceEngine({
       setPhase('listening');
       if (!isFollowUp) playWakeChime();
 
-      captureRef.current = startVoiceCapture({
-        lang: 'hi-IN',
-        autoStopOnSilence: true,
-        silenceMs: 740,
-        noSpeechTimeoutMs,
-        onInterim: (txt) => setLiveTranscript(txt),
-        onLevel: (lvl, bands) => {
-          setMicLevel(lvl);
-          if (bands) setMicBands(bands);
-        },
-        onResult: (finalCmd, info) => {
-          captureRef.current = null;
-          setMicLevel(0);
-          setMicBands([0, 0, 0, 0, 0]);
-          if (finalCmd && finalCmd.trim()) {
-            submitVoiceCommand(finalCmd, { pcm16k: info?.pcm16k || null });
-          } else {
-            if (isFollowUp) setLiveTranscript('');
+      const beginMicCapture = () => {
+        if (phaseRef.current !== 'listening') return;
+        captureRef.current = startVoiceCapture({
+          lang: 'hi-IN',
+          autoStopOnSilence: true,
+          silenceMs: 740,
+          noSpeechTimeoutMs,
+          onInterim: (txt) => setLiveTranscript(txt),
+          onLevel: (lvl, bands) => {
+            setMicLevel(lvl);
+            if (bands) setMicBands(bands);
+          },
+          onResult: (finalCmd, info) => {
+            captureRef.current = null;
+            setMicLevel(0);
+            setMicBands([0, 0, 0, 0, 0]);
+            if (finalCmd && finalCmd.trim()) {
+              submitVoiceCommand(finalCmd, { pcm16k: info?.pcm16k || null });
+            } else {
+              if (isFollowUp) setLiveTranscript('');
+              setPhase('idle');
+            }
+          },
+          onError: (errMsg) => {
+            captureRef.current = null;
+            setMicLevel(0);
+            setMicBands([0, 0, 0, 0, 0]);
+            setLiveTranscript(isFollowUp ? '' : errMsg || 'Could not hear audio');
             setPhase('idle');
-          }
-        },
-        onError: (errMsg) => {
-          captureRef.current = null;
-          setMicLevel(0);
-          setMicBands([0, 0, 0, 0, 0]);
-          setLiveTranscript(isFollowUp ? '' : errMsg || 'Could not hear audio');
-          setPhase('idle');
-          if (!isFollowUp) {
-            setTimeout(() => {
-              setLiveTranscript((cur) => (cur === (errMsg || 'Could not hear audio') ? '' : cur));
-            }, 2800);
-          }
-        },
-      });
+            if (!isFollowUp) {
+              setTimeout(() => {
+                setLiveTranscript((cur) => (cur === (errMsg || 'Could not hear audio') ? '' : cur));
+              }, 2800);
+            }
+          },
+        });
+      };
+
+      if (!isFollowUp) {
+        setTimeout(beginMicCapture, 130);
+      } else {
+        beginMicCapture();
+      }
     },
     [stopWakeListener, stopBargeIn, stopCommandCapture, submitVoiceCommand]
   );

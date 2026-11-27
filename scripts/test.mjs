@@ -393,6 +393,30 @@ const copyCmd = await tryFastVoiceAction('copy karo');
 assert.equal(copyCmd.handled, true);
 assert.equal(copyCmd.tools[0].args.shortcut, 'ctrl+c');
 
+// Regression tests for diagnosed voice bugs (chala do, app mein likho <text>, chained type/play)
+const songChalaDo = await tryFastVoiceAction('kesariya chala do');
+assert.equal(songChalaDo.handled, true);
+assert.equal(songChalaDo.tools[0].name, 'open_url');
+assert.ok(songChalaDo.tools[0].args.url.includes('youtube.com/results?search_query=kesariya'));
+
+const appLikho = await tryFastVoiceAction('notepad mein likho hello world');
+assert.equal(appLikho.handled, true);
+assert.equal(appLikho.tools[0].name, 'open_application');
+assert.equal(appLikho.tools[1].name, 'type_text');
+assert.equal(appLikho.tools[1].args.text, 'hello world');
+
+const chainedOpenAndType = await tryFastVoiceAction('Notepad kholo aur hello world type karo');
+assert.equal(chainedOpenAndType.handled, true);
+assert.equal(chainedOpenAndType.chained, true);
+assert.equal(chainedOpenAndType.tools[0].name, 'open_application');
+assert.equal(chainedOpenAndType.tools[1].name, 'type_text');
+
+const chainedOpenAndPlay = await tryFastVoiceAction('Chrome kholo aur YouTube par Kesariya play karo');
+assert.equal(chainedOpenAndPlay.handled, true);
+assert.equal(chainedOpenAndPlay.chained, true);
+assert.equal(chainedOpenAndPlay.tools[0].name, 'open_application');
+assert.equal(chainedOpenAndPlay.tools[1].name, 'open_url');
+
 // Streaming TTS & fast speech exports check
 const spUrl = pathToFileURL(path.join(ROOT, 'src/services/speech.js')).href;
 const { createStreamingSpeaker, splitIntoChunks } = await import(spUrl);

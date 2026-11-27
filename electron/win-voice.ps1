@@ -99,6 +99,7 @@ $offlineCmds = @(
   "new tab", "close tab", "next tab", "previous tab", "skip ad",
   "coding mode", "night mode", "power saver mode", "high performance mode",
   "play music", "pause music", "next track", "previous track", "stop",
+  "scroll down", "scroll up", "copy", "paste", "undo", "save", "press enter", "lock pc", "active reminders",
   "what time is it", "what is the date", "what did i ask yesterday"
 )
 foreach ($c in $offlineCmds) { $cmdChoices.Add($c) }

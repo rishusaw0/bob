@@ -294,7 +294,7 @@ const PHONETIC_SYNONYMS = [
   [/\b(?:wi-fi|wai-fai|waifi|wify|vi\s*fi|why\s*fi)\b/gi, 'wifi'],
   [/\b(?:spotfy|spotifi)\b/gi, 'spotify'],
   [/\b(?:vs\s*code|v\s*s\s*code|we\s*s\s*code)\b/gi, 'vscode'],
-  [/\b(?:khol\s*do|chala\s*do)\b/gi, 'kholo'],
+  [/\bkhol\s*do\b/gi, 'kholo'],
 ];
 
 export function normalizePhoneticVoiceText(text) {
@@ -359,18 +359,110 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   return await trySingleFastVoiceAction(normalizedRaw, requestPermission);
 }
 
-function cleanClause(raw) {
+function stripWakeOnly(raw) {
   const wake = matchWakePhrase(raw);
-  return (wake.matched && wake.command ? wake.command : String(raw || ''))
+  return (wake.matched && wake.command ? wake.command : String(raw || '')).trim();
+}
+
+function cleanClause(raw) {
+  return stripWakeOnly(raw)
     .replace(/\b(please|plz|zara|thoda|abhi|jaldi|bhai|yaar|karo|karde|krde|kardo|kar do|ho jaye)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+function parseTypeCommand(rawClause) {
+  const raw = stripWakeOnly(rawClause);
+  const lower = raw.toLowerCase();
+  if (!raw) return null;
+  if (/\b(?:write|likho)\s+(?:an?\s+)?(?:essay|story|poem|letter|email|code|program|script|paragraph|article|blog|notes)\b/i.test(lower)) {
+    return null;
+  }
+
+  const appBeforeText =
+    raw.match(/^(?:in\s+)?([a-z0-9][a-z0-9\s._-]{1,22}?)\s+(?:mein|me|pe|par)\s+(?:type|likho|likh)(?:\s+(?:karo|kr|kar\s+do|do))?\s*[:,-]?\s*(.+)$/i) ||
+    raw.match(/^(?:in\s+)?([a-z0-9][a-z0-9\s._-]{1,22}?)\s+(?:mein|me|pe|par)\s+(.+?)\s+(?:type|likho|likh)(?:\s+(?:karo|kr|kar\s+do|do))?$/i) ||
+    raw.match(/^(?:type|likho|likh)(?:\s+(?:karo|kr|kar\s+do|do))?\s+(?:in|into|on)\s+([a-z0-9][a-z0-9\s._-]{1,22}?)\s+(?:mein|me|pe|par)?\s*[:,-]?\s*(.+)$/i);
+  const directType =
+    raw.match(/^(?:please\s+)?(?:type\s+karo|type\s+kr|type\s+kar\s+do|type|likho|likh\s+do)\s*[:,-]?\s*(.+)$/i) ||
+    raw.match(/^(.+?)\s+(?:type\s+karo|type\s+kr|type\s+kar\s+do|type\s+do|likho|likh\s+do)$/i);
+
+  let targetApp = '';
+  let textToType = '';
+  if (appBeforeText && appBeforeText[1] && appBeforeText[2]) {
+    targetApp = appBeforeText[1].trim();
+    textToType = appBeforeText[2].trim();
+  } else if (directType && directType[1]) {
+    textToType = directType[1].trim();
+  }
+  if (!textToType) return null;
+  if (targetApp && /\b(screen|yahan|here|box|field|search)\b/i.test(targetApp)) targetApp = '';
+  return { kind: 'type_text', targetApp, textToType };
+}
+
+function parseNamedPlayCommand(rawClause) {
+  const raw = stripWakeOnly(rawClause);
+  const lower = raw.toLowerCase();
+  if (!raw || /\b(why|how|explain|install|uninstall|pdf|reminder|timer|alarm|lock|sleep|shutdown|restart|organize|downloads|desktop|settings|volume|brightness|wifi|bluetooth|screenshot)\b/i.test(lower)) {
+    return null;
+  }
+
+  const namedPlayMatch =
+    raw.match(/^(?:on\s+youtube|youtube\s+(?:par|pe|mein|me)|on\s+spotify|spotify\s+(?:par|pe))\s+(.+?)\s+(?:play|chalao|chala\s*do|chala|bajao|lagao|dekho)(?:\s+(?:karo|kar\s+do|do))?$/i) ||
+    raw.match(/^(?:please\s+)?(?:play|chalao|bajao|lagao)\s+(?:a\s+|the\s+)?(?:video|song|track|gaana|gaane|gana|music)?\s*(?:of\s+|called\s+|named\s+)?(.+?)(?:\s+(?:on\s+youtube|youtube\s+(?:par|pe)|on\s+spotify|spotify\s+(?:par|pe)|song|video|gaana|gaane|gana))?$/i) ||
+    raw.match(/^(.+?)\s+(?:song|video|gaana|gaane|gana)?\s*(?:play\s*karo|chalao|chala\s*do|bajao|lagao)(?:\s+(?:karo|kar\s+do|do))?$/i);
+
+  if (!namedPlayMatch || !namedPlayMatch[1]) return null;
+  const rawQuery = namedPlayMatch[1]
+    .replace(/^(?:on\s+youtube|on\s+spotify|youtube\s+(?:par|pe)|spotify\s+(?:par|pe)|play|karo|kar\s+do)\s+/i, '')
+    .replace(/\s+(?:on\s+youtube|on\s+spotify|youtube\s+(?:par|pe)|spotify\s+(?:par|pe)|karo|kar\s+do|play|song|video|gaana|gaane|gana)$/i, '')
+    .trim();
+  const genericOnly = /^(?:music|song|songs|gaana|gaane|gana|track|video|media|pause|next|previous|prev|stop|youtube|spotify|it|this)$/i.test(rawQuery);
+  if (rawQuery.length < 2 || genericOnly) return null;
+
+  const useSpotify = /\bspotify\b/i.test(lower);
+  const url = useSpotify
+    ? `spotify:search:${encodeURIComponent(rawQuery)}`
+    : `https://www.youtube.com/results?search_query=${encodeURIComponent(rawQuery)}`;
+  return { kind: 'named_play', query: rawQuery, useSpotify, url };
+}
+
+function parseScrollOrHotkeyCommand(cleaned) {
+  const lower = String(cleaned || '').toLowerCase();
+  if (/\b(scroll down|niche scroll|neeche scroll|scroll niche|neeche jao|scroll up|upar scroll|scroll upar|upar jao)\b/i.test(lower)) {
+    const dir = /\b(up|upar)\b/i.test(lower) ? 'up' : 'down';
+    return { kind: 'scroll', direction: dir };
+  }
+  if (/^(?:copy(?:\s+this|\s+that)?|paste(?:\s+here)?|save(?:\s+file|\s+this)?|undo|select all|press enter|enter dabao|hit enter)$/i.test(lower)) {
+    const combo = lower.includes('copy')
+      ? 'ctrl+c'
+      : lower.includes('paste')
+        ? 'ctrl+v'
+        : lower.includes('save')
+          ? 'ctrl+s'
+          : lower.includes('undo')
+            ? 'ctrl+z'
+            : lower.includes('select all')
+              ? 'ctrl+a'
+              : 'enter';
+    return { kind: 'hotkey', combo };
+  }
+  return null;
+}
+
 function planSingleFastClause(clauseText) {
+  const typePlan = parseTypeCommand(clauseText);
+  if (typePlan) return typePlan;
+
+  const playPlan = parseNamedPlayCommand(clauseText);
+  if (playPlan) return playPlan;
+
   const cleaned = cleanClause(clauseText);
   const lower = cleaned.toLowerCase();
   if (!lower) return null;
+
+  const scrollHotkeyPlan = parseScrollOrHotkeyCommand(cleaned);
+  if (scrollHotkeyPlan) return scrollHotkeyPlan;
 
   const isReadStatusCheck = /\b(top process|top processes|cpu status|ram status|pc health|system health|disk space|battery|clipboard history|active tab|wifi status)\b/i.test(lower);
   const isHindiMoreModifier = /\baur\s+(badhao|badha|kam|ghatao|tez|dheema|dhima|up|down|high|low)\b/i.test(lower);
@@ -536,6 +628,83 @@ async function executePlannedClause(plan, api, runFast, userLang) {
     };
   }
 
+  if (plan.kind === 'type_text') {
+    const ranTools = [];
+    if (plan.targetApp && typeof api.openApp === 'function') {
+      const appOut = await runFast('open_application', { app_name: plan.targetApp }, () => api.openApp(plan.targetApp, ''));
+      ranTools.push({ name: 'open_application', status: appOut.ok ? 'done' : 'error', args: { app_name: plan.targetApp } });
+      if (!appOut.ok) return { replyText: appOut.error, tools: ranTools };
+      await new Promise((r) => setTimeout(r, process?.env?.NODE_ENV ? 25 : 420));
+    }
+    if (typeof api.typeClipboard !== 'function') return { replyText: 'Typing is not available.', tools: ranTools };
+    const typeOut = await runFast('type_text', { text: plan.textToType }, () => api.typeClipboard(plan.textToType));
+    ranTools.push({ name: 'type_text', status: typeOut.ok ? 'done' : 'error', args: { text: plan.textToType } });
+    return {
+      replyText: typeOut.ok
+        ? plan.targetApp
+          ? reply(
+              `I opened ${plan.targetApp} and typed "${plan.textToType}".`,
+              `${plan.targetApp} mein "${plan.textToType}" type kar diya hai.`,
+              `${plan.targetApp} में "${plan.textToType}" टाइप कर दिया है।`
+            )
+          : reply(
+              `I have typed "${plan.textToType}".`,
+              `"${plan.textToType}" type kar diya hai.`,
+              `"${plan.textToType}" टाइप कर दिया है।`
+            )
+        : typeOut.error,
+      tools: ranTools,
+    };
+  }
+
+  if (plan.kind === 'named_play') {
+    if (typeof api.openURL !== 'function') return { replyText: 'URL opener unavailable.', tools: [] };
+    const out = await runFast('open_url', { url: plan.url }, () => api.openURL(plan.url));
+    return {
+      replyText: out.ok
+        ? plan.useSpotify
+          ? reply(
+              `Opening "${plan.query}" on Spotify.`,
+              `Spotify par "${plan.query}" khol diya hai.`,
+              `Spotify पर "${plan.query}" खोल दिया है।`
+            )
+          : reply(
+              `Playing "${plan.query}" on YouTube.`,
+              `YouTube par "${plan.query}" play kar diya hai.`,
+              `YouTube पर "${plan.query}" चला दिया है।`
+            )
+        : out.error,
+      tools: [{ name: 'open_url', status: out.ok ? 'done' : 'error', args: { url: plan.url } }],
+    };
+  }
+
+  if (plan.kind === 'scroll') {
+    if (typeof api.mouseAction !== 'function') return { replyText: 'Scroll unavailable.', tools: [] };
+    const delta = plan.direction === 'up' ? 480 : -480;
+    const out = await runFast('scroll_screen', { direction: plan.direction }, () =>
+      api.mouseAction('scroll', null, null, null, null, delta, 'pixels')
+    );
+    return {
+      replyText: out.ok
+        ? plan.direction === 'up'
+          ? reply('Scrolled up.', 'Upar scroll kar diya hai.', 'ऊपर स्क्रॉल कर दिया है।')
+          : reply('Scrolled down.', 'Neeche scroll kar diya hai.', 'नीचे स्क्रॉल कर दिया है।')
+        : out.error,
+      tools: [{ name: 'scroll_screen', status: out.ok ? 'done' : 'error', args: { direction: plan.direction } }],
+    };
+  }
+
+  if (plan.kind === 'hotkey') {
+    if (typeof api.sendHotkey !== 'function') return { replyText: 'Shortcut unavailable.', tools: [] };
+    const out = await runFast('press_shortcut', { shortcut: plan.combo }, () => api.sendHotkey(plan.combo));
+    return {
+      replyText: out.ok
+        ? reply(`Pressed ${plan.combo.toUpperCase()}.`, `${plan.combo.toUpperCase()} kar diya hai.`, `${plan.combo.toUpperCase()} कर दिया है।`)
+        : out.error,
+      tools: [{ name: 'press_shortcut', status: out.ok ? 'done' : 'error', args: { shortcut: plan.combo } }],
+    };
+  }
+
   if (plan.kind === 'open_app') {
     const out = await runFast('open_application', { app_name: plan.appTarget }, () => api.openApp(plan.appTarget, ''));
     return {
@@ -571,93 +740,21 @@ async function trySingleFastVoiceAction(rawText, requestPermission = null) {
 
   const hasCompoundConjunction = /\b(and|then|phir)\b/i.test(lower);
 
-  // A. Universal Type Anywhere ("type hello world", "notepad me hello world type karo", "likho ...")
-  const isLongCreativeWrite =
-    /\b(?:write|likho)\s+(?:an?\s+)?(?:essay|story|poem|letter|email|code|program|script|paragraph|article|blog|notes)\b/i.test(lower);
-  if (!hasCompoundConjunction && !isLongCreativeWrite) {
-    const appThenText =
-      cleaned.match(/^(?:in\s+)?([a-z0-9][a-z0-9\s._-]{1,22}?)\s+(?:mein|me|pe|par)\s+(.+?)\s+(?:type|likho|likh)(?:\s+(?:karo|kr|kar\s+do|do))?$/i) ||
-      cleaned.match(/^(?:type|likho|likh)(?:\s+(?:karo|kr|kar\s+do|do))?\s+(?:in|into|on)\s+([a-z0-9][a-z0-9\s._-]{1,22}?)\s+(?:mein|me|pe|par)?\s*[:,-]?\s*(.+)$/i);
-    const directType = cleaned.match(/^(?:please\s+)?(?:type\s+karo|type\s+kr|type\s+kar\s+do|type|likho|likh\s+do)\s*[:,-]?\s*(.+)$/i);
-
-    let targetApp = '';
-    let textToType = '';
-    if (appThenText && appThenText[1] && appThenText[2]) {
-      targetApp = appThenText[1].trim();
-      textToType = appThenText[2].trim();
-    } else if (directType && directType[1]) {
-      textToType = directType[1].trim();
-    }
-
-    if (textToType && typeof api.typeClipboard === 'function') {
-      const ranTools = [];
-      if (targetApp && !/\b(screen|yahan|here|box|field|search)\b/i.test(targetApp) && typeof api.openApp === 'function') {
-        const appOut = await runFast('open_application', { app_name: targetApp }, () => api.openApp(targetApp, ''));
-        ranTools.push({ name: 'open_application', status: appOut.ok ? 'done' : 'error', args: { app_name: targetApp } });
-        if (!appOut.ok) {
-          return { handled: true, replyText: appOut.error, tools: ranTools };
-        }
-        await new Promise((r) => setTimeout(r, process?.env?.NODE_ENV ? 25 : 420));
-      }
-      const typeOut = await runFast('type_text', { text: textToType }, () => api.typeClipboard(textToType));
-      ranTools.push({ name: 'type_text', status: typeOut.ok ? 'done' : 'error', args: { text: textToType } });
-      return {
-        handled: true,
-        replyText: typeOut.ok
-          ? targetApp
-            ? reply(
-                `I opened ${targetApp} and typed "${textToType}".`,
-                `${targetApp} mein "${textToType}" type kar diya hai.`,
-                `${targetApp} में "${textToType}" टाइप कर दिया है।`
-              )
-            : reply(
-                `I have typed "${textToType}".`,
-                `"${textToType}" type kar diya hai.`,
-                `"${textToType}" टाइप कर दिया है।`
-              )
-          : typeOut.error,
-        tools: ranTools,
-      };
+  // A. Universal Type Anywhere ("type hello world", "notepad mein likho hello world", "notepad me hello type karo")
+  if (!hasCompoundConjunction) {
+    const typePlan = parseTypeCommand(rawText);
+    if (typePlan && typeof api.typeClipboard === 'function') {
+      const res = await executePlannedClause(typePlan, api, runFast, userLang);
+      return { handled: true, ...res };
     }
   }
 
-  // B. Named Video / Song Playback ("play kesariya", "youtube par arijit singh play karo", "play video...")
-  if (!hasCompoundConjunction && !/\b(why|how|explain|install|uninstall|pdf)\b/i.test(lower)) {
-    const namedPlayMatch =
-      cleaned.match(/^(?:on\s+youtube|youtube\s+(?:par|pe|mein|me)|on\s+spotify|spotify\s+(?:par|pe))\s+(.+?)\s+(?:play|chalao|chala|bajao|lagao|dekho)(?:\s+(?:karo|kar\s+do|do))?$/i) ||
-      cleaned.match(/^(?:please\s+)?(?:play|chalao|bajao|lagao)\s+(?:a\s+|the\s+)?(?:video|song|track|gaana|gana|music)?\s*(?:of\s+|called\s+|named\s+)?(.+?)(?:\s+(?:on\s+youtube|youtube\s+(?:par|pe)|on\s+spotify|spotify\s+(?:par|pe)|song|video|gaana|gana))?$/i) ||
-      cleaned.match(/^(.+?)\s+(?:song|video|gaana|gana)\s+(?:play|chalao|chala|bajao|lagao)(?:\s+(?:karo|kar\s+do|do))?$/i);
-
-    if (namedPlayMatch && namedPlayMatch[1]) {
-      const rawQuery = namedPlayMatch[1]
-        .replace(/^(?:on\s+youtube|on\s+spotify|youtube\s+(?:par|pe)|spotify\s+(?:par|pe)|play|karo|kar\s+do)\s+/i, '')
-        .replace(/\s+(?:on\s+youtube|on\s+spotify|youtube\s+(?:par|pe)|spotify\s+(?:par|pe)|karo|kar\s+do|play)$/i, '')
-        .trim();
-      const genericOnly = /^(?:music|song|songs|gaana|gana|track|video|media|pause|next|previous|prev|stop|youtube|spotify|it|this)$/i.test(rawQuery);
-      if (rawQuery.length >= 2 && !genericOnly && typeof api.openURL === 'function') {
-        const useSpotify = /\bspotify\b/i.test(lower);
-        const url = useSpotify
-          ? `spotify:search:${encodeURIComponent(rawQuery)}`
-          : `https://www.youtube.com/results?search_query=${encodeURIComponent(rawQuery)}`;
-        const out = await runFast('open_url', { url }, () => api.openURL(url));
-        return {
-          handled: true,
-          replyText: out.ok
-            ? useSpotify
-              ? reply(
-                  `Opening "${rawQuery}" on Spotify.`,
-                  `Spotify par "${rawQuery}" khol diya hai.`,
-                  `Spotify पर "${rawQuery}" खोल दिया है।`
-                )
-              : reply(
-                  `Playing "${rawQuery}" on YouTube.`,
-                  `YouTube par "${rawQuery}" play kar diya hai.`,
-                  `YouTube पर "${rawQuery}" चला दिया है।`
-                )
-            : out.error,
-          tools: [{ name: 'open_url', status: out.ok ? 'done' : 'error', args: { url } }],
-        };
-      }
+  // B. Named Video / Song Playback ("play kesariya", "kesariya chala do", "youtube par arijit singh play karo")
+  if (!hasCompoundConjunction) {
+    const playPlan = parseNamedPlayCommand(rawText);
+    if (playPlan && typeof api.openURL === 'function') {
+      const res = await executePlannedClause(playPlan, api, runFast, userLang);
+      return { handled: true, ...res };
     }
   }
 
@@ -673,40 +770,10 @@ async function trySingleFastVoiceAction(rawText, requestPermission = null) {
   }
 
   // C. Universal Active-App Scroll & Quick Hotkeys (Copy, Paste, Undo, Save, Select All, Enter)
-  if (/\b(scroll down|niche scroll|neeche scroll|scroll niche|neeche jao|scroll up|upar scroll|scroll upar|upar jao)\b/i.test(lower) && typeof api.mouseAction === 'function') {
-    const dir = /\b(up|upar)\b/i.test(lower) ? 'up' : 'down';
-    const delta = dir === 'up' ? 480 : -480;
-    const out = await runFast('scroll_screen', { direction: dir }, () => api.mouseAction('scroll', null, null, null, null, delta, 'pixels'));
-    return {
-      handled: true,
-      replyText: out.ok
-        ? dir === 'up'
-          ? reply('Scrolled up.', 'Upar scroll kar diya hai.', 'ऊपर स्क्रॉल कर दिया है।')
-          : reply('Scrolled down.', 'Neeche scroll kar diya hai.', 'नीचे स्क्रॉल कर दिया है।')
-        : out.error,
-      tools: [{ name: 'scroll_screen', status: out.ok ? 'done' : 'error', args: { direction: dir } }],
-    };
-  }
-  if (/^(?:please\s+)?(?:copy(?:\s+karo|\s+this|\s+that)?|paste(?:\s+karo|\s+here)?|save(?:\s+karo|\s+file|\s+this)?|undo(?:\s+karo)?|select all|press enter|enter dabao|hit enter)$/i.test(lower) && typeof api.sendHotkey === 'function') {
-    const combo = lower.includes('copy')
-      ? 'ctrl+c'
-      : lower.includes('paste')
-        ? 'ctrl+v'
-        : lower.includes('save')
-          ? 'ctrl+s'
-          : lower.includes('undo')
-            ? 'ctrl+z'
-            : lower.includes('select all')
-              ? 'ctrl+a'
-              : 'enter';
-    const out = await runFast('press_shortcut', { shortcut: combo }, () => api.sendHotkey(combo));
-    return {
-      handled: true,
-      replyText: out.ok
-        ? reply(`Pressed ${combo.toUpperCase()}.`, `${combo.toUpperCase()} kar diya hai.`, `${combo.toUpperCase()} कर दिया है।`)
-        : out.error,
-      tools: [{ name: 'press_shortcut', status: out.ok ? 'done' : 'error', args: { shortcut: combo } }],
-    };
+  const scrollHotkeyPlan = parseScrollOrHotkeyCommand(cleaned);
+  if (scrollHotkeyPlan) {
+    const res = await executePlannedClause(scrollHotkeyPlan, api, runFast, userLang);
+    return { handled: true, ...res };
   }
 
   // 0. Presets & Wi-Fi single commands
