@@ -757,7 +757,7 @@ export function startWakeWordListener({
         }
       };
 
-      pcmSession = await createPcmStreamMonitor({
+      const session = await createPcmStreamMonitor({
         preRollSeconds: 1.15,
         gainBoost: 3.8,
         onFrame: (pcm16k, metrics, getPreRoll) => {
@@ -798,8 +798,13 @@ export function startWakeWordListener({
           }
         },
       });
+      if (cancelled) {
+        session.close();
+        return;
+      }
+      pcmSession = session;
     } catch (err) {
-      onError('Wake mic error: ' + (err?.message || err));
+      if (!cancelled) onError('Wake mic error: ' + (err?.message || err));
     }
   };
 
