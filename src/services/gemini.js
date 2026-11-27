@@ -486,13 +486,13 @@ async function getRegionalVoices(accent = 'indian', persona = 'natural_warm') {
 
 export const VOICE_STYLE_HINTS = {
   english:
-    'Professional Indian English studio speaker (en-IN). Use crisp consonants, clean vowel articulation, confident warm delivery and natural emphasis. Keep sentence-boundary pauses short and consistent; do not add long dramatic silences.',
+    'Professional Indian English studio speaker (en-IN). Use crisp consonants, clean vowel articulation, confident warm delivery and natural word stress. Keep syllables distinct but connected, and sentence-boundary pauses short and consistent; do not add long dramatic silences.',
   english_global:
     'Professional human studio narrator with precise consonants, clear vowels, warm articulate delivery and natural inflection. Keep pauses concise and conversational, never theatrical.',
   hindi:
     'Native Indian Hindi speaker. Use standard, accurate Hindi pronunciation, crisp consonants, clear vowel sounds and natural matra pronunciation. Speak warmly and confidently with short conversational sentence pauses.',
   hinglish:
-    'Fluent bilingual Indian Hinglish speaker. Pronounce Hindi words written in Latin letters as natural Hindi (not as English spelling); pronounce English words in clear Indian English. Switch languages smoothly without changing or dropping words. Use crisp consonants, distinct syllables, steady pacing and short natural pauses after full stops; avoid long gaps or exaggerated breaths.',
+    'Fluent bilingual Indian Hinglish speaker. Pronounce Hindi words written in Latin letters as natural Hindi (not as English spelling); pronounce English words in clear Indian English. Switch languages smoothly without changing or dropping words. Use crisp consonants, distinct syllables, correct Hindi matras, natural lexical stress on meaningful words and gentle syllable separation without spelling out letters. Keep a steady speaking pace and a short 120 ms transition between completed sentence clips; do not add dramatic pauses or exaggerated breaths.',
 };
 
 export async function createReplicatedVoice({
