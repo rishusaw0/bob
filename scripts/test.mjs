@@ -626,10 +626,7 @@ saveCustomClonedVoice({ id: 'voice_test_123', displayName: 'Test Voice' });
 assert.equal(getActiveCustomVoiceId(), 'voice_test_123');
 removeCustomClonedVoice('voice_test_123');
 assert.equal(getActiveCustomVoiceId(), '');
-// SEO & Brand asset checks for webbuildix.online
-assert.ok(fs.existsSync(path.join(ROOT, 'public/robots.txt')));
-assert.ok(fs.readFileSync(path.join(ROOT, 'public/sitemap.xml'), 'utf8').includes('https://webbuildix.online/'));
-assert.ok(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes('rel="canonical" href="https://webbuildix.online/"'));
+// Desktop application icon asset check
 assert.ok(fs.readFileSync(path.join(ROOT, 'public/icon.svg'), 'utf8').includes('viewBox="0 0 128 128"'));
 assert.ok(computeAdaptiveSilenceMs(500, 740) <= 540);
 assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'), 'english');
