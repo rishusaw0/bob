@@ -161,6 +161,7 @@ export default function SettingsPanel({
     setAudioDiagnostic(null);
     let stream;
     try {
+      toast.info('Allow microphone access, then speak clearly while the mic level is measured.');
       if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone diagnostics are not supported by this device.');
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false });
       const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -171,7 +172,7 @@ export default function SettingsPanel({
       analyser.fftSize = 2048;
       source.connect(analyser);
       const samples = new Float32Array(analyser.fftSize);
-      await new Promise((resolve) => setTimeout(resolve, 900));
+      await new Promise((resolve) => setTimeout(resolve, 1600));
       analyser.getFloatTimeDomainData(samples);
       let sum = 0, peak = 0;
       for (const sample of samples) { sum += sample * sample; peak = Math.max(peak, Math.abs(sample)); }
