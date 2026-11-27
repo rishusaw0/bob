@@ -10,13 +10,28 @@ export function useWatchdogAndStats({ isElectron, onOpenControlTab }) {
   useEffect(() => {
     if (!isElectron) return;
     let active = true;
+    let timerId = null;
+
+    const scheduleNext = () => {
+      clearTimeout(timerId);
+      if (!active) return;
+      // Low-CPU adaptive interval: 20s when visible, 60s when hidden in background tray/notch
+      const delayMs = typeof document !== 'undefined' && document.hidden ? 60000 : 20000;
+      timerId = setTimeout(poll, delayMs);
+    };
+
     const poll = () => {
+      if (!active) return;
       window.electronAPI?.liveStats?.().then((s) => {
         if (active && s) setLiveStats(s);
-      }).catch(() => {});
+      }).catch(() => {}).finally(scheduleNext);
     };
+
+    const onVisChange = () => {
+      if (active && !document.hidden) poll();
+    };
+    document.addEventListener('visibilitychange', onVisChange);
     poll();
-    const id = setInterval(poll, 7000);
 
     const unsubWd = window.electronAPI?.onWatchdogAlert?.((alert) => {
       if (!active || !alert) return;
@@ -26,7 +41,8 @@ export function useWatchdogAndStats({ isElectron, onOpenControlTab }) {
 
     return () => {
       active = false;
-      clearInterval(id);
+      clearTimeout(timerId);
+      document.removeEventListener('visibilitychange', onVisChange);
       unsubWd?.();
     };
   }, [isElectron]);

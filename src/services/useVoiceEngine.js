@@ -271,7 +271,13 @@ export function useVoiceEngine({
     } else if (!voiceFollowUpPendingRef.current) {
       clearTimeout(notchHideTimerRef.current);
       notchHideTimerRef.current = setTimeout(() => {
-        api.updateNotchState({ visible: false, orbState: 'idle', aiName }).catch(() => {});
+        const keepStandby = typeof document !== 'undefined' && document.hidden;
+        api.updateNotchState({
+          visible: keepStandby,
+          standby: keepStandby,
+          orbState: 'idle',
+          aiName,
+        }).catch(() => {});
       }, 900);
     }
   }, [orbState, aiName, liveTranscript, activeFreqBands]);

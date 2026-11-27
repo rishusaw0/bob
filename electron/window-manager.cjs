@@ -124,7 +124,10 @@ function createWindowManager({
   }
 
   function createWindow() {
-    const startHidden = process.argv.includes('--hidden');
+    const autoFlagPath = path.join(app.getPath('userData'), 'auto-launch-init.done');
+    const startHidden =
+      process.argv.includes('--hidden') ||
+      (app.isPackaged && fs.existsSync(autoFlagPath));
     mainWindow = new BrowserWindow({
       width: 1200,
       height: 800,
@@ -138,17 +141,25 @@ function createWindowManager({
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
-        backgroundThrottling: false,
+        backgroundThrottling: true,
       },
       icon: path.join(__dirname, '..', 'public', 'icon.png'),
     });
 
     mainWindow.on('close', (event) => {
-      // Keep JEEVA alive in System Tray by default so Always-On Voice & Camera Notch stay ready 24/7
+      // Keep JEEVA alive in System Tray + Camera Notch by default
       if (!app.isQuitting) {
         event.preventDefault();
         mainWindow.hide();
       }
+    });
+
+    mainWindow.on('hide', () => {
+      updateNotchState({ visible: true, standby: true, orbState: 'idle' });
+    });
+
+    mainWindow.on('show', () => {
+      updateNotchState({ visible: false });
     });
 
     const editMenu = Menu.buildFromTemplate([
@@ -340,7 +351,8 @@ function createWindowManager({
         tray.setContextMenu(await buildTrayMenuTemplate());
       };
       refreshTrayMenu();
-      trayRefreshTimer = setInterval(refreshTrayMenu, 15000);
+      tray.on('right-click', refreshTrayMenu);
+      trayRefreshTimer = setInterval(refreshTrayMenu, 60000);
       if (typeof trayRefreshTimer.unref === 'function') trayRefreshTimer.unref();
 
       tray.on('click', () => {

@@ -297,6 +297,12 @@ app.whenReady().then(() => {
   windowManager.setupTray();
   cloudRelay.initAutoConnect();
 
+  if (mainWin && !mainWin.isVisible()) {
+    setTimeout(() => {
+      windowManager.updateNotchState({ visible: true, standby: true, orbState: 'idle' });
+    }, 350);
+  }
+
   // Auto-enable background startup on first launch so JEEVA is always listening after PC boot
   try {
     const autoFlagPath = path.join(app.getPath('userData'), 'auto-launch-init.done');
@@ -517,6 +523,12 @@ ipcMain.handle('notch:action', (_, action) => {
   if (act === 'open_chat') {
     windowManager.updateNotchState({ visible: false });
     windowManager.applyWindowMode('full');
+    return { ok: true };
+  }
+  if (act === 'open_dashboard') {
+    windowManager.updateNotchState({ visible: false });
+    windowManager.applyWindowMode('full');
+    setTimeout(() => emitRendererEvent('ui:openPcControl', 'system'), 120);
     return { ok: true };
   }
   if (act === 'toggle_mic') {

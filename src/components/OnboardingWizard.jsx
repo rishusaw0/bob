@@ -55,7 +55,14 @@ export default function OnboardingWizard({
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    window.electronAPI?.getAutoLaunch?.().then((v) => setAutoLaunch(Boolean(v))).catch(() => {});
+    window.electronAPI?.getAutoLaunch?.().then((v) => {
+      if (v) {
+        setAutoLaunch(true);
+      } else if (window.electronAPI?.setAutoLaunch) {
+        // Auto-enable Start with Windows during setup so background Camera Notch stays ready
+        window.electronAPI.setAutoLaunch(true).then((ok) => setAutoLaunch(Boolean(ok))).catch(() => {});
+      }
+    }).catch(() => {});
     window.electronAPI?.relayStatus?.().then((s) => {
       if (s?.pairToken) setPairToken(s.pairToken);
       if (s?.renderUrl) {
