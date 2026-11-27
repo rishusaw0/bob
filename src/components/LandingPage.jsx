@@ -147,15 +147,25 @@ export default function LandingPage({
       <header className="border-b border-white/10 bg-[#090a0f]/75 backdrop-blur-xl sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-15 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-400 to-sky-400 text-zinc-950 flex items-center justify-center font-mono text-xs font-extrabold shadow-lg shadow-emerald-500/20">
-              JV
+            <div className="relative group flex items-center justify-center w-9 h-9 rounded-xl shadow-lg shadow-emerald-500/20">
+              <div className="absolute -inset-0.5 rounded-xl bg-gradient-to-br from-emerald-400/50 via-sky-400/40 to-violet-500/50 blur-sm opacity-75 group-hover:opacity-100 transition-opacity" />
+              <img
+                src="./icon.svg"
+                alt="JEEVA AI Logo"
+                className="relative w-9 h-9 rounded-xl"
+              />
             </div>
             <div>
-              <span className="text-sm font-semibold tracking-tight text-white">JEEVA AI</span>
-              <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-mono text-emerald-300 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full ml-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                HYBRID OS AGENT
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold tracking-tight text-white">JEEVA <span className="text-gradient-futuristic">AI</span></span>
+                <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-mono text-emerald-300 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  HYBRID OS AGENT
+                </span>
+              </div>
+              <p className="text-[10px] font-mono text-zinc-500 hidden sm:block leading-none mt-0.5">
+                by WebBuildix · webbuildix.online
+              </p>
             </div>
           </div>
 
