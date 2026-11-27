@@ -13,7 +13,7 @@ import {
   LuMic,
   LuCpu,
 } from 'react-icons/lu';
-import { clearSessionPermissions, isUsingServerProxy, testGeminiConnection } from '../services/gemini';
+import { clearSessionPermissions, isUsingServerProxy, testGeminiConnection, createReplicatedVoice } from '../services/gemini';
 import { getBrainMode, setBrainMode, getBrainStats, resetBrainStats } from '../services/brainRouter';
 import {
   speakText,
@@ -22,6 +22,11 @@ import {
   setVoiceAccent,
   getVoicePersona,
   setVoicePersona,
+  getActiveCustomVoiceId,
+  setActiveCustomVoiceId,
+  getCustomClonedVoices,
+  saveCustomClonedVoice,
+  removeCustomClonedVoice,
   getPreferredNativeVoice,
   setPreferredNativeVoice,
   getAvailableSpeechVoices,
@@ -29,11 +34,16 @@ import {
   setSpeechSpeedMode,
 } from '../services/speech';
 import { startVoiceCapture, getVadSensitivity, setVadSensitivity } from '../services/voiceCapture';
+import { startWavRecording } from '../services/wavRecorder';
 import {
+  VOICEPRINT_LEVELS,
   getVoiceprintStatus,
   enrollVoiceprintSamples,
   clearVoiceprint,
   setVoiceprintGuardEnabled,
+  getVoiceprintSecurityLevel,
+  setVoiceprintSecurityLevel,
+  verifySpeakerVoiceprint,
 } from '../services/speakerVerify';
 import {
   getAiName,
@@ -129,6 +139,21 @@ export default function SettingsPanel({
   const [availableVoices, setAvailableVoices] = useState(() => getAvailableSpeechVoices());
   const [speechSpeedMode, setSpeechSpeedModeState] = useState(() => getSpeechSpeedMode());
   const [vadSensitivity, setVadSensitivityState] = useState(() => getVadSensitivity());
+  const [voiceprintLevel, setVoiceprintLevelState] = useState(() => getVoiceprintSecurityLevel());
+  const [testingVoiceprint, setTestingVoiceprint] = useState(false);
+  const [lastVoiceMatch, setLastVoiceMatch] = useState(null);
+
+  // Own Voice Cloning (Gemini 3.8 Voice Replication)
+  const [customVoices, setCustomVoices] = useState(() => getCustomClonedVoices());
+  const [activeCustomVoiceId, setActiveCustomVoiceIdState] = useState(() => getActiveCustomVoiceId());
+  const [cloneName, setCloneName] = useState('My Own Voice');
+  const [sampleRec, setSampleRec] = useState(null);
+  const [consentRec, setConsentRec] = useState(null);
+  const [recordingKind, setRecordingKind] = useState(null); // 'sample' | 'consent' | null
+  const [recSec, setRecSec] = useState(0);
+  const [recLevel, setRecLevel] = useState(0);
+  const [cloningBusy, setCloningBusy] = useState(false);
+  const activeRecorderRef = useRef(null);
 
   useEffect(() => {
     const refresh = () => setAvailableVoices(getAvailableSpeechVoices());
@@ -142,8 +167,13 @@ export default function SettingsPanel({
     setEnrollingVoice(true);
     try {
       const samples = [];
-      for (let i = 0; i < 2; i++) {
-        toast.info(`Voiceprint Sample ${i + 1}/2: Boliye "Hey ${assistantName || 'Jeeva'}, confirm my voice"`);
+      const prompts = [
+        `Hey ${assistantName || 'Jeeva'}, confirm my voice`,
+        `Open VS Code and check status`,
+        `Aaj ka schedule aur reminders batao`,
+      ];
+      for (let i = 0; i < 3; i++) {
+        toast.info(`Offline Voiceprint ${i + 1}/3: Boliye "${prompts[i]}"`);
         const pcm = await new Promise((resolve, reject) => {
           let settled = false;
           const cap = startVoiceCapture({
@@ -163,18 +193,127 @@ export default function SettingsPanel({
           });
           setTimeout(() => {
             if (!settled) cap.stop();
-          }, 3400);
+          }, 3600);
         });
-        if (pcm && pcm.length >= 2400) samples.push(pcm);
+        if (pcm && pcm.length >= 2000) samples.push(pcm);
       }
       enrollVoiceprintSamples(samples);
       setVoiceprintGuardEnabled(true);
       setVoiceprintStatus(getVoiceprintStatus());
-      toast.success('Speaker voiceprint enrolled & protection enabled!');
+      setLastVoiceMatch(null);
+      toast.success('3-sample Owner Voiceprint enrolled & offline protection ON!');
     } catch (err) {
       toast.error(err?.message || 'Could not enroll voiceprint');
     } finally {
       setEnrollingVoice(false);
+    }
+  };
+
+  const handleTestVoiceprint = async () => {
+    if (testingVoiceprint) return;
+    setTestingVoiceprint(true);
+    try {
+      toast.info('Test Voiceprint: Kuch bhi 2 second bolein...');
+      const pcm = await new Promise((resolve, reject) => {
+        let settled = false;
+        const cap = startVoiceCapture({
+          skipStt: true,
+          autoStopOnSilence: true,
+          silenceMs: 700,
+          onResult: (_, info) => {
+            if (settled) return;
+            settled = true;
+            resolve(info?.pcm16k || null);
+          },
+          onError: (e) => {
+            if (settled) return;
+            settled = true;
+            reject(new Error(e || 'Mic capture failed'));
+          },
+        });
+        setTimeout(() => {
+          if (!settled) cap.stop();
+        }, 3200);
+      });
+      const res = verifySpeakerVoiceprint(pcm);
+      setLastVoiceMatch(res);
+      const pct = Math.round((res.score || 0) * 100);
+      if (res.verified) {
+        toast.success(`Owner Verified (${pct}% match)`);
+      } else {
+        toast.error(`Not Owner (${pct}% match — blocked!)`);
+      }
+    } catch (err) {
+      toast.error(err?.message || 'Voiceprint test failed');
+    } finally {
+      setTestingVoiceprint(false);
+    }
+  };
+
+  const toggleCloneRecording = async (kind) => {
+    if (recordingKind === kind && activeRecorderRef.current) {
+      const result = activeRecorderRef.current.stop();
+      activeRecorderRef.current = null;
+      setRecordingKind(null);
+      setRecLevel(0);
+      if (result) {
+        if (kind === 'sample') setSampleRec(result);
+        else setConsentRec(result);
+        toast.success(`${kind === 'sample' ? 'Voice sample' : 'Consent'} recorded (${result.durationSec}s)`);
+      }
+      return;
+    }
+    if (activeRecorderRef.current) {
+      activeRecorderRef.current.stop();
+      activeRecorderRef.current = null;
+    }
+    try {
+      setRecSec(0);
+      setRecordingKind(kind);
+      const maxSeconds = kind === 'sample' ? 25 : 10;
+      activeRecorderRef.current = await startWavRecording({
+        maxSeconds,
+        onLevel: setRecLevel,
+        onTick: (sec) => {
+          setRecSec(sec);
+          if (sec >= maxSeconds && activeRecorderRef.current) {
+            const res = activeRecorderRef.current.stop();
+            activeRecorderRef.current = null;
+            setRecordingKind(null);
+            setRecLevel(0);
+            if (res) {
+              if (kind === 'sample') setSampleRec(res);
+              else setConsentRec(res);
+            }
+          }
+        },
+      });
+    } catch (err) {
+      setRecordingKind(null);
+      toast.error(err?.message || 'Microphone start failed');
+    }
+  };
+
+  const handleCreateClonedVoice = async () => {
+    if (!sampleRec?.base64 || !consentRec?.base64 || cloningBusy) return;
+    setCloningBusy(true);
+    try {
+      const created = await createReplicatedVoice({
+        displayName: cloneName.trim() || 'My Cloned Voice',
+        sourceWavBase64: sampleRec.base64,
+        consentWavBase64: consentRec.base64,
+      });
+      const updated = saveCustomClonedVoice(created);
+      setCustomVoices(updated);
+      setActiveCustomVoiceIdState(created.id);
+      toast.success(`Aapki apni voice "${created.displayName}" ready aur active hai!`);
+      speakText(`Namaste! Ab main aapki apni cloned voice mein bol raha hoon.`, {
+        label: 'Cloned Voice Ready',
+      });
+    } catch (err) {
+      toast.error(err?.message || 'Voice clone failed — check Gemini API key');
+    } finally {
+      setCloningBusy(false);
     }
   };
 
@@ -1130,35 +1269,201 @@ export default function SettingsPanel({
                 </div>
               </div>
 
-              {/* Lightweight Acoustic Voiceprint Security */}
-              <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2">
+              {/* Clone My Own Voice (Gemini 3.8 Voice Replication) */}
+              <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-medium text-obsidian-text flex items-center gap-1.5">
+                      <LuVolume2 className="w-3.5 h-3.5 text-sky-400" />
+                      Clone My Own Voice (Gemini 3.8 Studio)
+                    </p>
+                    <p className="text-[10px] text-obsidian-muted mt-0.5">
+                      Apni khud ki aawaz record karke JEEVA AI ko apni voice mein bulwayein (Gemini API key required).
+                    </p>
+                  </div>
+                  {activeCustomVoiceId && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveCustomVoiceId('');
+                        setActiveCustomVoiceIdState('');
+                        toast.info('Switched back to built-in Studio persona');
+                      }}
+                      className="px-2 py-1 rounded bg-obsidian-surface hover:bg-obsidian-elevated border border-obsidian-border text-[10px] text-obsidian-secondary"
+                    >
+                      Use Built-in
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <input
+                    type="text"
+                    value={cloneName}
+                    onChange={(e) => setCloneName(e.target.value)}
+                    placeholder="Voice Name (e.g. Roushan)"
+                    className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] text-obsidian-text"
+                  />
+                  <button
+                    type="button"
+                    disabled={recordingKind === 'consent' || cloningBusy}
+                    onClick={() => toggleCloneRecording('sample')}
+                    className={`px-2.5 py-1.5 rounded border text-[11px] font-medium transition-colors ${
+                      recordingKind === 'sample'
+                        ? 'bg-red-500/20 border-red-500/50 text-red-300'
+                        : sampleRec
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                          : 'bg-obsidian-surface hover:bg-obsidian-elevated border-obsidian-border text-obsidian-text'
+                    }`}
+                  >
+                    {recordingKind === 'sample'
+                      ? `Stop Sample (${recSec}s / 25s)`
+                      : sampleRec
+                        ? `Sample Ready (${sampleRec.durationSec}s) · Redo`
+                        : '1. Record Sample (10-20s)'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={recordingKind === 'sample' || cloningBusy}
+                    onClick={() => toggleCloneRecording('consent')}
+                    className={`px-2.5 py-1.5 rounded border text-[11px] font-medium transition-colors ${
+                      recordingKind === 'consent'
+                        ? 'bg-red-500/20 border-red-500/50 text-red-300'
+                        : consentRec
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                          : 'bg-obsidian-surface hover:bg-obsidian-elevated border-obsidian-border text-obsidian-text'
+                    }`}
+                  >
+                    {recordingKind === 'consent'
+                      ? `Stop Consent (${recSec}s / 10s)`
+                      : consentRec
+                        ? `Consent Ready (${consentRec.durationSec}s) · Redo`
+                        : '2. Record Consent (5s)'}
+                  </button>
+                </div>
+
+                {recordingKind && (
+                  <div className="space-y-1">
+                    <p className="text-[10px] text-sky-300">
+                      {recordingKind === 'sample'
+                        ? 'Shant kamre mein apni natural aawaz mein 10-20 second kuch bolein...'
+                        : 'Boliye: "I am the speaker and I consent to clone my voice for JEEVA AI."'}
+                    </p>
+                    <div className="h-1.5 w-full rounded bg-obsidian-surface overflow-hidden">
+                      <div
+                        className="h-full bg-emerald-400 transition-all duration-75"
+                        style={{ width: `${Math.min(100, Math.round(recLevel * 100))}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    {sampleRec?.previewUrl && (
+                      <audio controls src={sampleRec.previewUrl} className="h-7 max-w-[160px]" />
+                    )}
+                    {consentRec?.previewUrl && (
+                      <audio controls src={consentRec.previewUrl} className="h-7 max-w-[160px]" />
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={!sampleRec?.base64 || !consentRec?.base64 || cloningBusy || Boolean(recordingKind)}
+                    onClick={handleCreateClonedVoice}
+                    className="px-3 py-1.5 rounded bg-sky-500 hover:bg-sky-400 text-zinc-950 text-[11px] font-semibold disabled:opacity-40"
+                  >
+                    {cloningBusy ? 'Creating Voice...' : '3. Create & Activate My Voice'}
+                  </button>
+                </div>
+
+                {customVoices.length > 0 && (
+                  <div className="pt-2 border-t border-obsidian-border/60 space-y-1.5">
+                    <p className="text-[10px] font-mono uppercase text-obsidian-muted">Saved Cloned Voices</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {customVoices.map((cv) => {
+                        const isAct = activeCustomVoiceId === cv.id;
+                        return (
+                          <div
+                            key={cv.id}
+                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] ${
+                              isAct
+                                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                                : 'bg-obsidian-surface border-obsidian-border text-obsidian-secondary'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveCustomVoiceId(cv.id);
+                                setActiveCustomVoiceIdState(cv.id);
+                                toast.success(`Active voice: ${cv.displayName}`);
+                              }}
+                              className="font-medium hover:text-white"
+                            >
+                              {isAct ? '● ' : ''}{cv.displayName}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nextList = removeCustomClonedVoice(cv.id);
+                                setCustomVoices(nextList);
+                                setActiveCustomVoiceIdState(getActiveCustomVoiceId());
+                                toast.info('Cloned voice removed');
+                              }}
+                              className="text-red-400 hover:text-red-300 ml-1"
+                              title="Delete cloned voice"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Advanced Offline Owner Voice Biometric Protection */}
+              <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-xs font-medium text-obsidian-text flex items-center gap-1.5">
                       <LuMic className="w-3.5 h-3.5 text-emerald-400" />
-                      Speaker Voiceprint Guard (Beta)
+                      Offline Owner Voice Protection (Anti-Stranger Guard)
                     </p>
                     <p className="text-[10px] text-obsidian-muted mt-0.5">
                       {voiceprintStatus.enrolled
-                        ? `Enrolled (${voiceprintStatus.samples} samples · Pitch ~${voiceprintStatus.pitchHz || '?'} Hz) — blocks hands-free voice approval on high-risk actions from other voices`
-                        : 'Enroll your voice so sensitive voice confirmations require your voiceprint'}
+                        ? `Enrolled (${voiceprintStatus.samples} samples · Pitch ~${voiceprintStatus.pitchHz || '?'} Hz) — 100% offline. Sirf owner ki aawaz par voice commands chalenge.`
+                        : 'Bina Gemini API ke offline owner voice lock lagayein — dusre ki aawaz par command block ho jayega.'}
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
                       type="button"
-                      disabled={enrollingVoice}
+                      disabled={enrollingVoice || testingVoiceprint}
                       onClick={handleEnrollVoiceprint}
                       className="px-2.5 py-1 rounded bg-obsidian-surface hover:bg-obsidian-elevated border border-obsidian-border text-[11px] font-medium text-obsidian-text disabled:opacity-50"
                     >
-                      {enrollingVoice ? 'Listening...' : voiceprintStatus.enrolled ? 'Re-Enroll' : 'Enroll Voice'}
+                      {enrollingVoice ? 'Listening (3x)...' : voiceprintStatus.enrolled ? 'Re-Enroll (3x)' : 'Enroll Owner (3x)'}
                     </button>
+                    {voiceprintStatus.enrolled && (
+                      <button
+                        type="button"
+                        disabled={testingVoiceprint || enrollingVoice}
+                        onClick={handleTestVoiceprint}
+                        className="px-2.5 py-1 rounded bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-[11px] font-medium text-emerald-300 disabled:opacity-50"
+                      >
+                        {testingVoiceprint ? 'Testing...' : 'Test Match %'}
+                      </button>
+                    )}
                     {voiceprintStatus.enrolled && (
                       <button
                         type="button"
                         onClick={() => {
                           clearVoiceprint();
                           setVoiceprintStatus(getVoiceprintStatus());
+                          setLastVoiceMatch(null);
                           toast.info('Voiceprint removed');
                         }}
                         className="px-2 py-1 rounded text-[11px] text-red-400 hover:bg-red-950/30"
@@ -1169,26 +1474,53 @@ export default function SettingsPanel({
                   </div>
                 </div>
                 {voiceprintStatus.enrolled && (
-                  <div className="flex items-center justify-between pt-2 border-t border-obsidian-border/60">
-                    <span className="text-[11px] text-obsidian-secondary">Require voiceprint match for high-risk voice actions</span>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={voiceprintStatus.enabled}
-                      onClick={() => {
-                        setVoiceprintGuardEnabled(!voiceprintStatus.enabled);
-                        setVoiceprintStatus(getVoiceprintStatus());
-                      }}
-                      className={`w-9 h-4.5 rounded-full transition-colors p-0.5 ${
-                        voiceprintStatus.enabled ? 'bg-emerald-500' : 'bg-zinc-700'
-                      }`}
-                    >
-                      <div
-                        className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
-                          voiceprintStatus.enabled ? 'translate-x-4' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
+                  <div className="space-y-2 pt-2 border-t border-obsidian-border/60">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] text-obsidian-secondary">
+                        Block non-owner voice commands offline
+                        {lastVoiceMatch && (
+                          <span className={`ml-2 font-mono ${lastVoiceMatch.verified ? 'text-emerald-400' : 'text-red-400'}`}>
+                            (Last test: {Math.round((lastVoiceMatch.score || 0) * 100)}%)
+                          </span>
+                        )}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={voiceprintLevel}
+                          onChange={(e) => {
+                            const next = setVoiceprintSecurityLevel(e.target.value);
+                            setVoiceprintLevelState(next);
+                            setVoiceprintStatus(getVoiceprintStatus());
+                            toast.success(`Voice protection level: ${VOICEPRINT_LEVELS[next]?.label}`);
+                          }}
+                          className="bg-obsidian-surface border border-obsidian-border rounded px-2 py-1 text-[10px] font-mono text-obsidian-text"
+                        >
+                          {Object.values(VOICEPRINT_LEVELS).map((lvl) => (
+                            <option key={lvl.id} value={lvl.id}>
+                              {lvl.label}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={voiceprintStatus.enabled}
+                          onClick={() => {
+                            setVoiceprintGuardEnabled(!voiceprintStatus.enabled);
+                            setVoiceprintStatus(getVoiceprintStatus());
+                          }}
+                          className={`w-9 h-4.5 rounded-full transition-colors p-0.5 ${
+                            voiceprintStatus.enabled ? 'bg-emerald-500' : 'bg-zinc-700'
+                          }`}
+                        >
+                          <div
+                            className={`w-3.5 h-3.5 rounded-full bg-white transition-transform ${
+                              voiceprintStatus.enabled ? 'translate-x-4' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

@@ -17,6 +17,8 @@ export const VOICE_PERSONAS = {
 
 const VOICE_ACCENT_KEY = 'jeeva_voice_accent';
 const VOICE_PERSONA_KEY = 'jeeva_voice_persona';
+const CUSTOM_VOICE_ID_KEY = 'jeeva_custom_voice_id';
+const CUSTOM_VOICES_LIST_KEY = 'jeeva_custom_voices_list';
 const PREFERRED_NATIVE_VOICE_KEY = 'jeeva_native_voice';
 const SPEECH_SPEED_MODE_KEY = 'jeeva_speech_speed';
 
@@ -69,6 +71,47 @@ export function setVoicePersona(persona) {
   writeStorage(VOICE_PERSONA_KEY, clean);
   resetRegionalVoiceCache();
   return clean;
+}
+
+export function getActiveCustomVoiceId() {
+  return readStorage(CUSTOM_VOICE_ID_KEY, '');
+}
+
+export function setActiveCustomVoiceId(voiceId) {
+  const clean = String(voiceId || '').trim();
+  writeStorage(CUSTOM_VOICE_ID_KEY, clean);
+  return clean;
+}
+
+export function getCustomClonedVoices() {
+  try {
+    const raw = readStorage(CUSTOM_VOICES_LIST_KEY, '[]');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomClonedVoice({ id, displayName }) {
+  const list = getCustomClonedVoices().filter((v) => v.id !== id);
+  list.unshift({
+    id,
+    displayName: displayName || 'My Cloned Voice',
+    createdAt: new Date().toLocaleString('en-IN'),
+  });
+  writeStorage(CUSTOM_VOICES_LIST_KEY, JSON.stringify(list.slice(0, 8)));
+  setActiveCustomVoiceId(id);
+  return list;
+}
+
+export function removeCustomClonedVoice(voiceId) {
+  const list = getCustomClonedVoices().filter((v) => v.id !== voiceId);
+  writeStorage(CUSTOM_VOICES_LIST_KEY, JSON.stringify(list));
+  if (getActiveCustomVoiceId() === voiceId) {
+    setActiveCustomVoiceId('');
+  }
+  return list;
 }
 
 export function getPreferredNativeVoice() {
@@ -678,11 +721,12 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
 function fetchStudioChunkAudio(chunkText, profile, timeoutMs = 2400) {
   const accent = getVoiceAccent();
   const persona = getVoicePersona();
-  const cacheKey = `${accent}:${persona}:${profile}:${chunkText}`;
+  const customVoiceId = getActiveCustomVoiceId();
+  const cacheKey = `${customVoiceId || 'default'}:${accent}:${persona}:${profile}:${chunkText}`;
   if (ttsAudioCache.has(cacheKey)) {
     return Promise.resolve({ url: ttsAudioCache.get(cacheKey), profile });
   }
-  const ttsPromise = textToSpeech(chunkText, profile, { accent, persona }).then((url) => {
+  const ttsPromise = textToSpeech(chunkText, profile, { accent, persona, customVoiceId }).then((url) => {
     if (ttsAudioCache.size >= 24) {
       const firstKey = ttsAudioCache.keys().next().value;
       ttsAudioCache.delete(firstKey);

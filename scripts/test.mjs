@@ -315,9 +315,9 @@ assert.equal(vocalMetrics.bands.length, 5);
 assert.ok(computeAdaptiveSilenceMs(500) < computeAdaptiveSilenceMs(3000));
 assert.ok(pcmFloat32ToInt16Base64(synthVoice.subarray(0, 160)).length > 20);
 
-// Acoustic speaker voiceprint tests
+// Acoustic speaker voiceprint tests (22-dim Mel + spectral slope + pitch F0 + ZCR)
 const fpSelf = extractVoiceprint(synthVoice, 16000);
-assert.ok(fpSelf?.vector?.length === 13);
+assert.ok(fpSelf?.vector?.length === 22);
 assert.ok(compareVoiceprints(fpSelf, fpSelf) >= 0.99);
 enrollVoiceprintSamples([synthVoice]);
 setVoiceprintGuardEnabled(true);

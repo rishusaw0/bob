@@ -149,6 +149,18 @@ export function useVoiceEngine({
         ? verifySpeakerVoiceprint(opts.pcm16k)
         : { active: false, verified: true, score: 1 };
 
+      if (speakerCheck.active && !speakerCheck.verified) {
+        const pct = Math.round((speakerCheck.score || 0) * 100);
+        setLiveTranscript(`Voice blocked (${pct}% match — Owner only)`);
+        toast.error(`Voice Protection: Owner voice match nahi hui (${pct}%). Command blocked.`);
+        speakText(
+          'Access denied. Yeh owner ki aawaz match nahi hui, isliye command block kar diya gaya hai.',
+          { instant: true }
+        ).catch(() => {});
+        setPhase('idle');
+        return;
+      }
+
       try {
         const ctxSnap = await captureVoiceContextSnapshot(cleaned);
         await onSend(ctxSnap.enrichedPrompt, ctxSnap.attachment, {
