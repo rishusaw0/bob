@@ -424,6 +424,10 @@ assert.equal(typeof createStreamingSpeaker, 'function');
 const spChunks = splitIntoChunks('First short answer sentence. Second longer explanation sentence right after it.', 220, 100);
 assert.ok(spChunks.length >= 1 && spChunks[0].length <= 100);
 
+// Speech decimal splitting regression test
+const decChunks = splitIntoChunks('Your laptop has 3.8 GB free RAM and 85.5% battery. Everything looks healthy!', 220, 100);
+assert.ok(decChunks[0].includes('3.8 GB') && decChunks[0].includes('85.5 percent'));
+
 // Layer-1 slot action verification (0 Gemini API calls)
 const { runLocalQuickBrain } = await import(pathToFileURL(path.join(ROOT, 'src/services/localQuickBrain.js')).href);
 
@@ -589,6 +593,8 @@ assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'),
 assert.equal(detectVoiceProfile('Bhai laptop bohot slow ho raha hai'), 'hinglish');
 const spokenClean = cleanTextForSpeech('Check **C:\\Users\\Demo\\report.pdf** -> 45% CPU & high_performance');
 assert.ok(spokenClean.includes('report.pdf') && spokenClean.includes('45 percent') && spokenClean.includes('high performance') && !spokenClean.includes('C:\\Users'));
+const tableClean = cleanTextForSpeech('| App | RAM |\n|---|---|\n| Chrome | 500 MB |\nPrice Rs. 500');
+assert.ok(!tableClean.includes('---') && tableClean.includes('500 rupees'));
 
 // Auto-Switch Offline Policy & Date-Indexed Episodic Memory tests
 const offlineRoute = assessQueryRouting('Chrome ke baare me explain karo', null, 'auto', { online: false });

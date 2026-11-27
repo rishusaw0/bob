@@ -99,6 +99,8 @@ const HINGLISH_WORDS = new Set([
 ]);
 
 let selectedMode = readStorage('jeeva_voice_mode', 'auto');
+const savedRate = Number(readStorage('jeeva_speech_rate', '1'));
+const initialRate = [0.85, 1, 1.25, 1.5].includes(savedRate) ? savedRate : 1;
 
 let currentState = {
   isPlaying: false,
@@ -106,7 +108,7 @@ let currentState = {
   isLoading: false,
   currentChunk: 0,
   totalChunks: 0,
-  rate: 1,
+  rate: initialRate,
   label: '',
   voiceMode: selectedMode,
   detectedProfile: 'hinglish',
@@ -117,6 +119,7 @@ let currentState = {
 
 let listeners = new Set();
 let activeAudio = null;
+let activeUtterance = null;
 let activeGain = null;
 let activeAudioCtx = null;
 let activeMeterTimer = null;
@@ -190,10 +193,13 @@ export function cleanTextForSpeech(text) {
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .replace(/https?:\/\/\S+/gi, ' web link ')
     .replace(/[A-Za-z]:\\(?:[^\s\\/:*?"<>|]+\\)+([^\s\\/:*?"<>|]+)/g, '$1')
+    .replace(/^\s*\|?[-:\s|]{3,}\|?\s*$/gm, ' ')
     .replace(/\n{2,}/g, '. ')
     .replace(/\n\s*[-*•]\s+/g, ', ')
     .replace(/\n/g, '. ')
     .replace(/([a-z])_([a-z])/gi, '$1 $2')
+    .replace(/₹\s*([\d,]+(?:\.\d+)?)/g, '$1 rupees')
+    .replace(/\bRs\.?\s*([\d,]+(?:\.\d+)?)/gi, '$1 rupees')
     .replace(/(\d+)\s*%/g, '$1 percent')
     .replace(/(\d+)\s*°\s*C\b/gi, '$1 degrees Celsius')
     .replace(/(\d+)\s*°\s*F\b/gi, '$1 degrees Fahrenheit')
@@ -209,11 +215,37 @@ export function cleanTextForSpeech(text) {
     .trim();
 }
 
-// Split with quick ~100 char first chunk and <=220 char chunks so speech starts immediately on Sentence 1
+function findNextSentenceEnd(text) {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '।' || ch === '!' || ch === '?' || ch === '\n') return i;
+    if (ch === '.') {
+      const prev = i > 0 ? text[i - 1] : '';
+      const next = i + 1 < text.length ? text[i + 1] : '';
+      // Do NOT split on decimals (3.8, 1.0.0) or dotted abbreviations (Dr., Mr., e.g.)
+      if (/\d/.test(prev) && /\d/.test(next)) continue;
+      if (next && !/\s/.test(next)) continue;
+      return i;
+    }
+  }
+  return -1;
+}
+
+// Split with quick ~100 char first chunk and <=220 char chunks without breaking decimal numbers
 export function splitIntoChunks(text, maxLen = 220, firstChunkMax = 100) {
   const clean = cleanTextForSpeech(text);
   if (!clean) return [];
-  const rawSentences = clean.match(/[^।.!?\n]+[।.!?\n]*/g) || [clean];
+  const rawSentences = [];
+  let cursor = clean;
+  while (cursor.length > 0) {
+    const idx = findNextSentenceEnd(cursor);
+    if (idx < 0) {
+      rawSentences.push(cursor);
+      break;
+    }
+    rawSentences.push(cursor.slice(0, idx + 1));
+    cursor = cursor.slice(idx + 1).trimStart();
+  }
   const chunks = [];
   let buffer = '';
 
@@ -332,6 +364,7 @@ function speakChunkNative(text, profile) {
     const finish = () => {
       if (done) return;
       done = true;
+      if (activeUtterance === utterance) activeUtterance = null;
       if (safetyTimer) clearTimeout(safetyTimer);
       if (pulseTimer) {
         clearInterval(pulseTimer);
@@ -341,7 +374,19 @@ function speakChunkNative(text, profile) {
       notify();
       resolve();
     };
-    safetyTimer = setTimeout(finish, safetyMs);
+    const scheduleSafety = () => {
+      if (done) return;
+      safetyTimer = setTimeout(() => {
+        if (done) return;
+        if (currentState.isPaused) {
+          scheduleSafety();
+          return;
+        }
+        finish();
+      }, safetyMs);
+    };
+    scheduleSafety();
+    activeUtterance = utterance;
     utterance.onend = finish;
     utterance.onerror = finish;
     window.speechSynthesis.speak(utterance);
@@ -715,11 +760,11 @@ export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = n
     const slice = raw.slice(consumedLen);
     if ((slice.match(/```/g) || []).length % 2 === 1) return;
 
-    // Extract complete sentences (or a clean word boundary past 95 chars for immediate start)
+    // Extract complete sentences without breaking decimals (or clean word boundary past 105 chars)
     let searchFrom = 0;
     while (searchFrom < slice.length) {
       const rest = slice.slice(searchFrom);
-      const sentEnd = rest.search(/[।.!?\n]/);
+      const sentEnd = findNextSentenceEnd(rest);
       if (sentEnd >= 16) {
         const segment = rest.slice(0, sentEnd + 1);
         consumedLen += sentEnd + 1;
@@ -806,6 +851,7 @@ export function stopSpeech() {
   stopRequested = true;
   duckScale = 1;
   playbackToken++;
+  activeUtterance = null;
   if (activeAudio) {
     activeAudio.pause();
     activeAudio.src = '';
@@ -832,6 +878,7 @@ export function stopSpeech() {
 export function cycleSpeechRate() {
   const rates = [1, 1.25, 1.5, 0.85];
   const next = rates[(rates.indexOf(currentState.rate) + 1) % rates.length];
+  writeStorage('jeeva_speech_rate', String(next));
   currentState = { ...currentState, rate: next };
   if (activeAudio) activeAudio.playbackRate = next;
   notify();
