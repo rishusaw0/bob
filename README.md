@@ -85,6 +85,13 @@ flowchart LR
 - `public/robots.txt` & `public/sitemap.xml`: Configured for search engine indexing (served with proper `text/plain` and `application/xml` MIME headers by `server/index.js`).
 - `public/icon.svg`: Modern geometric JEEVA AI vector emblem & favicon.
 
+### Security deployment notes
+- Configure a persistent Render DATA_DIR; otherwise the automatically generated session secret may be lost when the host is replaced.
+- Set INSTALLER_SHA256 to the 64-character SHA-256 digest of the exact release installer. Updates without HTTPS and a valid digest are intentionally blocked.
+- Read-only guest shares currently expose battery status only; process, file, clipboard, Wi-Fi, diagnostics, and scheduler data remain owner-only.
+- The desktop bridge binds to localhost unless both JEEVA_BRIDGE_TLS_CERT and JEEVA_BRIDGE_TLS_KEY are configured. To use phone-to-PC LAN control, provide a trusted certificate valid for the LAN hostname/IP, install its issuing CA on the phone, and use an https:// bridge URL.
+- Restrict bridge origins with JEEVA_BRIDGE_ALLOWED_ORIGINS when deploying a custom web origin.
+
 ---
 
 ## Environment Variables (Server & Build)
@@ -99,3 +106,8 @@ flowchart LR
 | `GEMINI_RPM_LIMIT` | Per-IP rate limit per minute (default `40`) | Optional |
 | `DATA_DIR` | Persistent directory for SQLite/JSON relay state | Optional |
 | `INSTALLER_DOWNLOAD_URL` | Direct `.exe` download URL advertised by `/api/config` | Optional |
+| `INSTALLER_SHA256` | Exact installer SHA-256 digest; updater refuses unpinned installers | Required for updates |
+| `TRUST_PROXY` | Trust forwarding headers only behind a trusted proxy | Optional |
+| `JEEVA_ALLOWED_ORIGINS` | Comma-separated exact origins permitted to call hosted APIs | Optional |
+| `JEEVA_BRIDGE_TLS_CERT` / `JEEVA_BRIDGE_TLS_KEY` | Certificate/key paths; required for LAN bridge access | Optional |
+| `JEEVA_BRIDGE_ALLOWED_ORIGINS` | Comma-separated exact origins permitted to call the local bridge | Optional |

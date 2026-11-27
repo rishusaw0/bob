@@ -5,6 +5,20 @@ const https = require('https');
 const crypto = require('crypto');
 const { connectRelayWebSocket } = require('./ws-client.cjs');
 
+function normalizeRenderUrl(raw) {
+  let u;
+  try { u = new URL(String(raw || '').trim()); }
+  catch { throw new Error('Invalid Render URL'); }
+  const isLoopback = ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && isLoopback)) {
+    throw new Error('Cloud Relay requires HTTPS. HTTP is allowed only for localhost development.');
+  }
+  if (u.username || u.password || u.search || u.hash || (u.pathname && u.pathname !== '/')) {
+    throw new Error('Enter the base server URL without credentials, path, query, or fragment.');
+  }
+  return u.origin;
+}
+
 function generatePairToken() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = crypto.randomBytes(12);
@@ -84,7 +98,8 @@ function createCloudRelay({ userDataPath, safeStorage, osHostname, onExecuteComm
   }
 
   function saveConfig({ renderUrl, deviceId, autoConnect, pin, pairToken }) {
-    const cleanUrl = String(renderUrl || '').trim().replace(/\/+$/, '');
+    let cleanUrl = '';
+    try { cleanUrl = normalizeRenderUrl(renderUrl); } catch { cleanUrl = ''; }
     const cfg = { renderUrl: cleanUrl, deviceId, autoConnect: Boolean(autoConnect) };
     try {
       fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), 'utf-8');
@@ -326,7 +341,9 @@ function createCloudRelay({ userDataPath, safeStorage, osHostname, onExecuteComm
 
   function connect({ renderUrl, pin, pairToken } = {}) {
     const saved = loadSavedConfig();
-    const cleanUrl = String(renderUrl || saved.renderUrl || '').trim().replace(/\/+$/, '');
+    let cleanUrl;
+    try { cleanUrl = normalizeRenderUrl(renderUrl || saved.renderUrl); }
+    catch (err) { emitStatus({ connected: false, connecting: false, enabled: false, lastError: err.message }); return { ...status }; }
     const usePin = pin !== undefined ? String(pin).trim() : saved.pin;
     const usePairToken = pairToken !== undefined && String(pairToken).trim()
       ? String(pairToken).trim()
@@ -409,4 +426,4 @@ function createCloudRelay({ userDataPath, safeStorage, osHostname, onExecuteComm
   };
 }
 
-module.exports = { createCloudRelay, generatePairToken };
+module.exports = { createCloudRelay, generatePairToken, normalizeRenderUrl };

@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -17,8 +18,62 @@ function getLanIPs() {
 }
 
 function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
-  let failedAttempts = 0;
-  let lockUntil = 0;
+  const tlsKeyPath = String(process.env.JEEVA_BRIDGE_TLS_KEY || '').trim();
+  const tlsCertPath = String(process.env.JEEVA_BRIDGE_TLS_CERT || '').trim();
+  let tlsOptions = null;
+  if (tlsKeyPath || tlsCertPath) {
+    if (!tlsKeyPath || !tlsCertPath) throw new Error('Both JEEVA_BRIDGE_TLS_KEY and JEEVA_BRIDGE_TLS_CERT are required.');
+    try {
+      tlsOptions = {
+        key: fs.readFileSync(path.resolve(tlsKeyPath)),
+        cert: fs.readFileSync(path.resolve(tlsCertPath)),
+      };
+    } catch (err) {
+      console.error('JEEVA bridge TLS could not be loaded; binding to localhost only:', err?.message || err);
+      tlsOptions = null;
+    }
+  }
+  const lanEnabled = Boolean(tlsOptions);
+  const bindHost = lanEnabled ? '0.0.0.0' : '127.0.0.1';
+  const defaultOrigins = [
+    'https://jeeva-ai-mjr1.onrender.com',
+    'https://webbuildix.online',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+  ];
+  const configuredOrigins = String(process.env.JEEVA_BRIDGE_ALLOWED_ORIGINS || '').trim();
+  const allowedOrigins = new Set((configuredOrigins ? configuredOrigins.split(',') : defaultOrigins)
+    .map((value) => value.trim()).filter(Boolean));
+  function isAllowedOrigin(origin) {
+    if (!origin) return true;
+    if (allowedOrigins.has(origin)) return true;
+    return origin === 'http://localhost:5174' || origin === 'http://127.0.0.1:5174' ||
+      origin === 'https://localhost:5174' || origin === 'https://127.0.0.1:5174' ||
+      (lanEnabled && getLanIPs().some((ip) => origin === `https://${ip}:5174`));
+  }
+  const pinAttempts = new Map();
+  function pinState(req) {
+    const ip = req.socket?.remoteAddress || 'unknown';
+    const now = Date.now();
+    const state = pinAttempts.get(ip) || { count: 0, lockUntil: 0, lastAttempt: now };
+    return { ip, state, retryAfter: now < state.lockUntil ? Math.ceil((state.lockUntil - now) / 1000) : 0 };
+  }
+  function recordPinAttempt(req, success) {
+    const { ip, state, retryAfter } = pinState(req);
+    if (retryAfter) return retryAfter;
+    if (success) { pinAttempts.delete(ip); return 0; }
+    state.count += 1;
+    state.lastAttempt = Date.now();
+    if (state.count >= 5) { state.count = 0; state.lockUntil = Date.now() + 30000; }
+    if (pinAttempts.size > 2000) {
+      const cutoff = Date.now() - 10 * 60 * 1000;
+      for (const [key, value] of pinAttempts) {
+        if (value.lastAttempt < cutoff && value.lockUntil < Date.now()) pinAttempts.delete(key);
+      }
+    }
+    pinAttempts.set(ip, state);
+    return state.lockUntil > Date.now() ? Math.ceil((state.lockUntil - Date.now()) / 1000) : 0;
+  }
   const resolvedDist = path.resolve(distDir);
   const mimeTypes = {
     '.html': 'text/html; charset=utf-8',
@@ -29,12 +84,22 @@ function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
     '.json': 'application/json',
   };
 
-  const server = http.createServer((req, res) => {
+  const requestHandler = (req, res) => {
     const reqPath = (req.url || '/').split('?')[0];
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-jeeva-pin');
+    const origin = String(req.headers.origin || '');
+    if (!isAllowedOrigin(origin)) {
+      res.statusCode = 403;
+      res.end(JSON.stringify({ error: 'This website origin is not allowed to access the PC bridge.' }));
+      return;
+    }
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-jeeva-pin');
+      res.setHeader('Access-Control-Max-Age', '600');
+    }
     if (req.method === 'OPTIONS') {
       res.statusCode = 204;
       res.end();
@@ -43,7 +108,7 @@ function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
 
     if (req.method === 'GET' && reqPath === '/api/pc/info') {
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ online: true, hostname: os.hostname(), lanIPs: getLanIPs() }));
+      res.end(JSON.stringify({ online: true, hostname: os.hostname(), protocol: lanEnabled ? 'https' : 'http', lanEnabled, lanIPs: lanEnabled ? getLanIPs() : [] }));
       return;
     }
 
@@ -93,37 +158,38 @@ function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
       }
 
       if (reqPath === '/api/pc/pair') {
-        const now = Date.now();
-        if (now < lockUntil) {
-          const secs = Math.ceil((lockUntil - now) / 1000);
+        const { retryAfter } = pinState(req);
+        if (retryAfter) {
           res.statusCode = 429;
-          res.end(JSON.stringify({ error: `Too many wrong PIN tries. Wait ${secs}s.` }));
+          res.end(JSON.stringify({ error: `Too many wrong PIN tries. Wait ${retryAfter}s.` }));
           return;
         }
         if (String(parsed.pin || '').trim() === pin) {
-          failedAttempts = 0;
+          recordPinAttempt(req, true);
           res.end(JSON.stringify({ ok: true, hostname: os.hostname() }));
         } else {
-          failedAttempts++;
-          if (failedAttempts >= 5) {
-            lockUntil = now + 30000;
-            failedAttempts = 0;
-          }
-          res.statusCode = 403;
-          res.end(JSON.stringify({ error: 'Invalid PIN' }));
+          const retry = recordPinAttempt(req, false);
+          res.statusCode = retry ? 429 : 403;
+          res.end(JSON.stringify({ error: retry ? `Too many wrong PIN tries. Wait ${retry}s.` : 'Invalid PIN' }));
         }
         return;
       }
 
       if (reqPath === '/api/pc/action') {
-        const headerPin = String(req.headers['x-jeeva-pin'] || '').trim();
-        if (headerPin !== pin) {
-          res.statusCode = 401;
-          res.end(
-            JSON.stringify({ error: 'Phone not paired with PC. Enter the 4-digit PIN shown on your PC app.' })
-          );
+        const { retryAfter } = pinState(req);
+        if (retryAfter) {
+          res.statusCode = 429;
+          res.end(JSON.stringify({ error: `Too many wrong PIN tries. Wait ${retryAfter}s.` }));
           return;
         }
+        const headerPin = String(req.headers['x-jeeva-pin'] || '').trim();
+        if (headerPin !== pin) {
+          const retry = recordPinAttempt(req, false);
+          res.statusCode = retry ? 429 : 401;
+          res.end(JSON.stringify({ error: retry ? `Too many wrong PIN tries. Wait ${retry}s.` : 'Phone not paired with PC. Enter the 4-digit PIN shown on your PC app.' }));
+          return;
+        }
+        recordPinAttempt(req, true);
         const fn = actions[parsed.action];
         if (!fn) {
           res.statusCode = 400;
@@ -152,10 +218,11 @@ function startBridgeServer({ pin, actions, getPermissionGuard, distDir }) {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: 'Not found' }));
     });
-  });
+  };
+  const server = lanEnabled ? https.createServer(tlsOptions, requestHandler) : http.createServer(requestHandler);
 
-  server.listen(5174, '0.0.0.0', () => {
-    console.log('JEEVA Phone-to-PC Bridge active on 0.0.0.0:5174');
+  server.listen(5174, bindHost, () => {
+    console.log(`JEEVA Phone-to-PC Bridge active on ${lanEnabled ? 'HTTPS/LAN' : 'localhost only'} at ${bindHost}:5174`);
   });
   server.on('error', (err) => {
     console.log('Bridge server note:', err.message);

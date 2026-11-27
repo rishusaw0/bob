@@ -4,6 +4,7 @@ import https from 'node:https';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenAI } from '@google/genai';
 import { createServerStore } from './store.js';
@@ -19,36 +20,43 @@ const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim();
 const APP_PIN = (process.env.APP_PIN || '').trim();
 const RELAY_SECRET = (process.env.RELAY_SECRET || '').trim();
 const INSTALLER_DOWNLOAD_URL = (process.env.INSTALLER_DOWNLOAD_URL || '').trim();
+const INSTALLER_SHA256 = (process.env.INSTALLER_SHA256 || '').trim().toLowerCase();
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const PRIVATE_LOCK_ALL = process.env.PRIVATE_LOCK_ALL === 'true';
 const GEMINI_RPM_LIMIT = Math.max(5, Number(process.env.GEMINI_RPM_LIMIT) || 40);
-const SESSION_SECRET =
-  process.env.SESSION_SECRET ||
-  crypto
-    .createHash('sha256')
-    .update(`jeeva-v1:${GEMINI_API_KEY}:${APP_PIN || 'open'}`)
-    .digest('hex');
+function loadSessionSecret() {
+  const configured = String(process.env.SESSION_SECRET || '').trim();
+  if (configured) return configured;
+  const dataDir = process.env.DATA_DIR || path.join(os.tmpdir(), 'jeeva-server-data');
+  const secretPath = path.join(dataDir, '.session-secret');
+  try {
+    fs.mkdirSync(dataDir, { recursive: true });
+    const existing = fs.readFileSync(secretPath, 'utf8').trim();
+    if (existing.length >= 64) return existing;
+  } catch {}
+  const generated = crypto.randomBytes(32).toString('hex');
+  try {
+    fs.writeFileSync(secretPath, generated, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    try { fs.chmodSync(secretPath, 0o600); } catch {}
+    return generated;
+  } catch (err) {
+    if (err?.code === 'EEXIST') {
+      try { const concurrent = fs.readFileSync(secretPath, 'utf8').trim(); if (concurrent.length >= 64) return concurrent; } catch {}
+    }
+    console.warn('Could not persist SESSION_SECRET; signed sessions may reset after restart:', err?.message || err);
+    return generated;
+  }
+}
+const SESSION_SECRET = loadSessionSecret();
 
 // Connected PC agents keyed by `${ownerKey}::${deviceId}` for strict multi-user isolation
 const relayAgents = new Map();
 const store = await createServerStore();
 
-const READ_ONLY_ACTIONS = new Set([
-  'liveStats',
-  'systemInfo',
-  'battery',
-  'runningApps',
-  'listInstalledApps',
-  'listFiles',
-  'searchFiles',
-]);
+const READ_ONLY_ACTIONS = new Set(['battery']);
 
-function isActionAllowedForReadOnly(action, args = []) {
-  if (READ_ONLY_ACTIONS.has(action)) return true;
-  if (action === 'wifi' && (!args[0] || args[0] === 'status')) return true;
-  if (action === 'diagnostics' && args[0] !== 'kill_process') return true;
-  if (action === 'clipboardHistory' && (!args[0] || args[0] === 'list')) return true;
-  if (action === 'scheduler' && (!args[0] || args[0] === 'list')) return true;
-  return false;
+function isActionAllowedForReadOnly(action) {
+  return READ_ONLY_ACTIONS.has(action);
 }
 
 const APP_VERSION = (() => {
@@ -80,8 +88,11 @@ function createTimedShareToken({ ownerKey, ttlMinutes = 60, scope = 'full' }) {
 }
 
 function getClientIp(req) {
-  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return fwd || req.socket.remoteAddress || 'unknown';
+  if (TRUST_PROXY) {
+    const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    if (fwd) return fwd;
+  }
+  return req.socket.remoteAddress || 'unknown';
 }
 
 function checkGeminiRateLimit(req) {
@@ -165,19 +176,60 @@ function signToken(pin) {
 function isAuthorized(req) {
   if (!APP_PIN) return true;
   const token = String(req.headers['x-app-token'] || '').trim();
+  const expectedToken = signToken(APP_PIN);
+  if (token.length === expectedToken.length &&
+      crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expectedToken))) return true;
   const pinHeader = String(req.headers['x-app-pin'] || '').trim();
-  if (pinHeader && pinHeader === APP_PIN) return true;
-  if (token && token === signToken(APP_PIN)) return true;
+  if (!pinHeader) return false;
+  const clientIp = getClientIp(req);
+  const now = Date.now();
+  const state = unlockAttempts.get(clientIp) || { count: 0, lockUntil: 0, lastAttempt: now };
+  if (now < state.lockUntil) return false;
+  if (pinHeader.length === APP_PIN.length &&
+      crypto.timingSafeEqual(Buffer.from(pinHeader), Buffer.from(APP_PIN))) {
+    unlockAttempts.delete(clientIp);
+    return true;
+  }
+  state.count += 1;
+  state.lastAttempt = now;
+  if (state.count >= 5) { state.lockUntil = now + 30000; state.count = 0; }
+  if (unlockAttempts.size > 2000) {
+    const cutoff = now - 10 * 60 * 1000;
+    for (const [ip, entry] of unlockAttempts) {
+      if ((entry.lastAttempt || 0) < cutoff && entry.lockUntil < now) unlockAttempts.delete(ip);
+    }
+  }
+  unlockAttempts.set(clientIp, state);
   return false;
 }
 
-function setApiCorsHeaders(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function setApiCorsHeaders(req, res) {
+  const origin = String(req.headers.origin || '');
+  const defaults = [
+    'https://jeeva-ai-mjr1.onrender.com',
+    'https://webbuildix.online',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+  ];
+  const configured = String(process.env.JEEVA_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const allowed = new Set(configured.length ? configured : defaults);
+  if (origin && !allowed.has(origin)) {
+    res.setHeader('Vary', 'Origin');
+    return;
+  }
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'Content-Type, x-app-token, x-app-pin, x-pair-token, x-relay-secret, x-goog-api-key, x-goog-api-client'
   );
+  res.setHeader('Access-Control-Max-Age', '600');
 }
 
 function sendJson(res, statusCode, data) {
@@ -251,7 +303,7 @@ function proxyToGemini(req, res, targetPath) {
         res.setHeader(k, v);
       }
     }
-    setApiCorsHeaders(res);
+    setApiCorsHeaders(req, res);
     upRes.pipe(res);
   });
 
@@ -313,7 +365,7 @@ const server = http.createServer(async (req, res) => {
   const reqPath = urlObj.pathname;
 
   if (reqPath.startsWith('/api/') || reqPath === '/healthz') {
-    setApiCorsHeaders(res);
+    setApiCorsHeaders(req, res);
     if (req.method === 'OPTIONS') {
       res.statusCode = 204;
       res.end();
@@ -351,6 +403,7 @@ const server = http.createServer(async (req, res) => {
       requiresFullLock: Boolean(PRIVATE_LOCK_ALL && APP_PIN),
       authorized: isAuthorized(req),
       installerUrl: INSTALLER_DOWNLOAD_URL,
+      installerSha256: /^[a-f0-9]{64}$/i.test(INSTALLER_SHA256) ? INSTALLER_SHA256 : '',
       latestVersion: UPDATE_LATEST_VERSION,
       relayDevicesCount: countAgentsForOwner(ownerKey),
     });
@@ -398,16 +451,24 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const body = await readJsonBody(req);
-      if (!APP_PIN || String(body.pin || '').trim() === APP_PIN) {
+      const suppliedPin = String(body.pin || '').trim();
+      const pinMatches = !APP_PIN || (suppliedPin.length === APP_PIN.length && crypto.timingSafeEqual(Buffer.from(suppliedPin), Buffer.from(APP_PIN)));
+      if (pinMatches) {
         unlockAttempts.delete(clientIp);
         sendJson(res, 200, { ok: true, token: APP_PIN ? signToken(APP_PIN) : 'open' });
       } else {
         state.count++;
+        state.lastAttempt = now;
         if (state.count >= 5) {
           state.lockUntil = now + 30000;
           state.count = 0;
         }
-        if (unlockAttempts.size > 2000) unlockAttempts.clear();
+        if (unlockAttempts.size > 2000) {
+          const cutoff = now - 10 * 60 * 1000;
+          for (const [ip, entry] of unlockAttempts) {
+            if ((entry.lastAttempt || 0) < cutoff && entry.lockUntil < now) unlockAttempts.delete(ip);
+          }
+        }
         unlockAttempts.set(clientIp, state);
         sendJson(res, 403, { error: 'Invalid Access PIN' });
       }

@@ -4,11 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 import * as luIcons from 'react-icons/lu';
 
 const require = createRequire(import.meta.url);
-const ROOT = path.resolve(import.meta.dirname, '..');
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 function readRel(rel) {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -70,7 +70,8 @@ for (const t of declaredTools) {
 }
 
 const preloadInvokes = [...preloadSrc.matchAll(/ipcRenderer\.invoke\(['"]([^'"]+)['"]/g)].map((m) => m[1]);
-const mainHandles = new Set([...mainSrc.matchAll(/ipcMain\.handle\(['"]([^'"]+)['"]/g)].map((m) => m[1]));
+assert.ok(mainSrc.includes('function registerSecureIpcHandler'), 'IPC handlers must be registered through the trusted-renderer guard');
+const mainHandles = new Set([...mainSrc.matchAll(/registerSecureIpcHandler\(['"]([^'"]+)['"]/g)].map((m) => m[1]));
 for (const ch of preloadInvokes) {
   assert.ok(mainHandles.has(ch), `IPC channel "${ch}" exposed in preload.cjs but missing in main.cjs`);
 }
@@ -223,6 +224,18 @@ assert.equal(fallbackMgr.isEnabled(), true);
 assert.equal(fallbackMgr.setEnabled(false).enabled, false);
 assert.equal(fallbackMgr.isEnabled(), false);
 fs.rmSync(tmpAutoDir, { recursive: true, force: true });
+
+
+// Relay URL policy: plaintext transport is permitted only on loopback.
+const { normalizeRenderUrl } = require(path.join(ROOT, 'electron/cloud-relay.cjs'));
+assert.equal(normalizeRenderUrl('https://relay.example.com'), 'https://relay.example.com');
+assert.equal(normalizeRenderUrl('http://localhost:3000'), 'http://localhost:3000');
+assert.throws(() => normalizeRenderUrl('http://relay.example.com'), /requires HTTPS/i);
+assert.throws(() => normalizeRenderUrl('https://relay.example.com/path'), /base server URL/i);
+
+// Secret paths and empty paths are rejected by the local filesystem guard.
+assert.equal(checkPathSafety('', 'read').allowed, false);
+assert.equal(checkPathSafety(path.win32.join('C:\\\\', 'Users', 'Test', 'AppData', 'Roaming', 'Jeeva-AI', 'api-key.vault'), 'read').allowed, false);
 
 // 4. Voice router verification (including "batao" status exception + battery + browser)
 console.log('[4/6] Testing fast Voice Router rules...');
@@ -571,9 +584,12 @@ const roCtx = getRelayAuthContext({ headers: { 'x-pair-token': tmpRo.shareToken 
 assert.equal(roCtx.ownerKey, ownerKey);
 assert.equal(roCtx.scope, 'read_only');
 assert.equal(isActionAllowedForReadOnly('runCommand', ['echo hack']), false);
-assert.equal(isActionAllowedForReadOnly('liveStats', []), true);
+assert.equal(isActionAllowedForReadOnly('liveStats', []), false);
+assert.equal(isActionAllowedForReadOnly('battery', []), true);
+assert.equal(isActionAllowedForReadOnly('systemInfo', []), false);
 assert.equal(isActionAllowedForReadOnly('diagnostics', ['kill_process', '123']), false);
-assert.equal(isActionAllowedForReadOnly('diagnostics', ['overview']), true);
+assert.equal(isActionAllowedForReadOnly('diagnostics', ['overview']), false);
+assert.equal(isActionAllowedForReadOnly('listFiles', ['C:\\\\']), false);
 
 const fakeTmpCtx = getRelayAuthContext({ headers: { 'x-pair-token': 'JVA-TMP-DOESNOTEXIST' } });
 assert.equal(fakeTmpCtx.ownerKey, null);
