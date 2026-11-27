@@ -108,9 +108,9 @@ export default function LandingPage({
     },
     {
       icon: LuAudioLines,
-      tag: 'INSTANT STREAMING',
-      title: 'Indian-Style Zero-Lag Voice',
-      desc: 'Begins speaking on the very first sentence (<25ms) in crisp Indian English, Hindi, or Hinglish — with real-time voice barge-in.',
+      tag: 'OWN VOICE + HUMAN STUDIO',
+      title: 'Clone Your Voice & Human Personas',
+      desc: 'Speak with realistic human Studio voices in Indian English, Hindi, or Hinglish — or clone your own voice in 20 seconds.',
       accent: 'text-sky-300',
     },
   ];
@@ -380,6 +380,12 @@ export default function LandingPage({
                 <LuCheck className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                 <span>
                   API keys stay inside Windows OS SafeStorage Vault or your own browser — never shared with other users.
+                </span>
+              </li>
+              <li className="flex items-start gap-2">
+                <LuCheck className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                <span>
+                  100% Offline 22-Band Owner Voiceprint Protection blocks unauthorized voices automatically without needing Gemini API.
                 </span>
               </li>
               <li className="flex items-start gap-2">

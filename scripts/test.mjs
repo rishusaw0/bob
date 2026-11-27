@@ -322,6 +322,11 @@ assert.ok(compareVoiceprints(fpSelf, fpSelf) >= 0.99);
 enrollVoiceprintSamples([synthVoice]);
 setVoiceprintGuardEnabled(true);
 assert.equal(verifySpeakerVoiceprint(synthVoice).verified, true);
+const synthStranger = new Float32Array(2048);
+for (let i = 0; i < synthStranger.length; i++) {
+  synthStranger[i] = 0.25 * Math.sin((2 * Math.PI * 240 * i) / 16000) + 0.18 * Math.sin((2 * Math.PI * 3100 * i) / 16000);
+}
+assert.equal(verifySpeakerVoiceprint(synthStranger).verified, false);
 setVoiceprintGuardEnabled(false);
 
 // Deictic context matcher tests
@@ -636,10 +641,31 @@ assert.ok(hw.totalGb > 0 && hw.safeThreads >= 2);
 assert.ok(LOW_END_MODELS.some((m) => m.id === 'qwen2.5:1.5b'));
 assert.ok(compactHistoryForCloud([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }, { role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }], 2).includes('CONVERSATION CONTEXT DIGEST'));
 
-// Indian-style TTS accent default, Fast Hybrid Speed & Speech Clarity text normalizer tests
-const { cleanTextForSpeech, detectVoiceProfile, getVoiceAccent, getSpeechSpeedMode } = await import(pathToFileURL(path.join(ROOT, 'src/services/speech.js')).href);
+// Indian-style TTS accent default, Human Personas, Custom Cloned Voice & Speech Clarity tests
+const {
+  cleanTextForSpeech,
+  detectVoiceProfile,
+  getVoiceAccent,
+  getSpeechSpeedMode,
+  VOICE_PERSONAS,
+  getVoicePersona,
+  getActiveCustomVoiceId,
+  saveCustomClonedVoice,
+  removeCustomClonedVoice,
+} = await import(pathToFileURL(path.join(ROOT, 'src/services/speech.js')).href);
 assert.equal(getVoiceAccent(), 'indian');
 assert.equal(getSpeechSpeedMode(), 'hybrid_fast');
+assert.equal(getVoicePersona(), 'natural_warm');
+assert.ok(VOICE_PERSONAS.calm_pro && VOICE_PERSONAS.crisp_studio);
+saveCustomClonedVoice({ id: 'voice_test_123', displayName: 'Test Voice' });
+assert.equal(getActiveCustomVoiceId(), 'voice_test_123');
+removeCustomClonedVoice('voice_test_123');
+assert.equal(getActiveCustomVoiceId(), '');
+// SEO & Brand asset checks for webbuildix.online
+assert.ok(fs.existsSync(path.join(ROOT, 'public/robots.txt')));
+assert.ok(fs.readFileSync(path.join(ROOT, 'public/sitemap.xml'), 'utf8').includes('https://webbuildix.online/'));
+assert.ok(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes('rel="canonical" href="https://webbuildix.online/"'));
+assert.ok(fs.readFileSync(path.join(ROOT, 'public/icon.svg'), 'utf8').includes('viewBox="0 0 128 128"'));
 assert.ok(computeAdaptiveSilenceMs(500, 740) <= 540);
 assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'), 'english');
 assert.equal(detectVoiceProfile('Bhai laptop bohot slow ho raha hai'), 'hinglish');
