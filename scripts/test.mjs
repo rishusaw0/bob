@@ -717,6 +717,23 @@ assert.ok(Math.max(...Array.from(normOut, Math.abs)) >= 0.55); // Boosted toward
 const repaired = repairVoiceTranscript('Hey Jeeva wollum 50 karo aur crome kholo');
 assert.ok(repaired.toLowerCase().includes('volume 50') && repaired.toLowerCase().includes('chrome'));
 
+
+// NSIS uninstall safety: real uninstall prompts, silent/update paths preserve user data.
+const uninstallNsis = readRel('build/uninstaller.nsh');
+assert.ok(uninstallNsis.includes('!macro customUnInstall'), 'NSIS custom uninstall hook must be present');
+assert.ok(uninstallNsis.includes('${ifNot} ${isUpdated}'), 'Uninstall cleanup must not run during installer-driven updates');
+assert.ok(uninstallNsis.includes('IfSilent jeeva_keep_app_data') && uninstallNsis.includes('/SD IDNO'),
+  'Silent uninstall must preserve app data without a prompt');
+assert.ok(uninstallNsis.includes('MB_YESNO|MB_DEFBUTTON2') && uninstallNsis.includes('/SD IDNO') && uninstallNsis.includes('IDYES jeeva_delete_app_data'),
+  'Interactive uninstall must ask for explicit consent, defaulting to keep data');
+assert.ok(uninstallNsis.includes('${APP_FILENAME}') && uninstallNsis.includes('${APP_PRODUCT_FILENAME}') && uninstallNsis.includes('${APP_PACKAGE_NAME}'),
+  'Data cleanup must cover JEEVA app-data names used by electron-builder');
+assert.ok(uninstallNsis.includes('com.roushan.jeeva-ai') && uninstallNsis.includes('JEEVA AI.lnk'),
+  'Uninstall must remove only JEEVA startup entries');
+const desktopPackage = JSON.parse(readRel('package.json'));
+assert.equal(desktopPackage.version, '1.0.1');
+assert.equal(desktopPackage.build.nsis.include, 'build/uninstaller.nsh');
+
 // 6. PowerShell AST validation on ALL .ps1 scripts
 console.log('[6/6] Checking PowerShell AST across all electron/*.ps1...');
 const psFiles = fs.readdirSync(path.join(ROOT, 'electron')).filter((f) => f.endsWith('.ps1'));

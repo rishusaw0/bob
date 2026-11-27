@@ -45,6 +45,10 @@ The NSIS installer is written to release/.
 
 Publish versioned Windows installers to GitHub Releases. The in-app updater reads the latest release metadata and requires HTTPS plus a SHA-256 digest before allowing an installer to run.
 
+## Uninstall and saved data
+
+The interactive Windows uninstaller always removes JEEVA's own login-start registry entries and Startup-folder shortcut. It then asks whether to also remove JEEVA's saved profile. **No is the default** and keeps the Gemini key, chats, preferences, PC permission policies/audit data, memories, routines and local AI model files for a later reinstall. Choosing **Yes** deletes only JEEVA-specific directories under the current Windows user's AppData; it does not delete personal files, other applications, or change Windows-wide privacy permissions. Silent uninstall and installer-driven updates keep the profile without showing a prompt.
+
 ## Security
 
 The Electron renderer runs with context isolation, sandboxing, and Node integration disabled. Privileged operations are exposed only through the trusted local IPC bridge and permission guard. The development renderer is bound to loopback.
