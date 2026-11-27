@@ -606,6 +606,15 @@ assert.ok(hw.totalGb > 0 && hw.safeThreads >= 2);
 assert.ok(LOW_END_MODELS.some((m) => m.id === 'qwen2.5:1.5b'));
 assert.ok(compactHistoryForCloud([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }, { role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }], 2).includes('CONVERSATION CONTEXT DIGEST'));
 
+// Professional TTS quality and sentence playback regressions
+const { getTtsModelPriority, VOICE_STYLE_HINTS } = await import(pathToFileURL(path.join(ROOT, 'src/services/gemini.js')).href);
+assert.equal(getTtsModelPriority()[0], 'gemini-3.8-flash-tts', 'Full-quality TTS must be preferred over Flash Lite');
+assert.ok(VOICE_STYLE_HINTS.hinglish.includes('Latin letters') && VOICE_STYLE_HINTS.hinglish.includes('short natural pauses'),
+  'Hinglish TTS must guide native Hindi pronunciation and concise sentence pauses');
+const speechSource = readRel('src/services/speech.js');
+assert.ok(speechSource.includes('Reuse one AudioContext across sentence chunks'),
+  'Sentence playback must reuse the audio context to avoid per-sentence startup gaps');
+
 // Indian-style TTS accent default, Human Personas, Custom Cloned Voice & Speech Clarity tests
 const {
   cleanTextForSpeech,
