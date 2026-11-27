@@ -1,5 +1,6 @@
 // Layer-1 Deterministic Bilingual Slot Extractors for PC Commands (0 Gemini API calls)
 import { executeFunctionCall } from './tools.js';
+import { runLocalDocumentPathTurn } from './docExtractor.js';
 
 function replyByLang(lang, en, hiMix, hi) {
   if (lang === 'english') return en;
@@ -60,6 +61,37 @@ export async function tryLocalSlotAction(cleanText, lang, requestPermission = nu
   const clean = String(cleanText || '').trim();
   const lower = clean.toLowerCase();
   if (!clean) return null;
+
+  // 0. Voice/Chat File-Location PDF/DOCX/TXT Reader & Summarizer ("Desktop par notes.pdf padh kar sunao / summarize karo")
+  if (/\b(read|padh|padho|sunao|samjhao|explain|summary|summarize|summarise)\b/i.test(lower)) {
+    const absDocMatch = clean.match(/([A-Za-z]:\\[^\n"']+\.(?:pdf|docx|pptx|xlsx|txt|md))/i);
+    const folderExtMatch =
+      clean.match(/\b(desktop|downloads|documents)\s+(?:par|pe|mein|me|in|on)\s+["']?([a-z0-9\s._-]{2,60}?\.(?:pdf|docx|pptx|xlsx|txt|md))["']?/i) ||
+      clean.match(/["']?([a-z0-9\s._-]{2,60}?\.(?:pdf|docx|pptx|xlsx|txt|md))["']?\s+(?:in|on|from|at|mein|me|par|pe)\s+(desktop|downloads|documents)\b/i);
+    const folderTypeMatch = clean.match(/\b(desktop|downloads|documents)\s+(?:par|pe|mein|me|in|on)\s+["']?([a-z0-9\s._-]{2,40}?)["']?\s+(?:pdf|docx|document|file)\b/i);
+
+    let targetPath = '';
+    if (absDocMatch?.[1]) {
+      targetPath = absDocMatch[1].trim();
+    } else if (folderExtMatch) {
+      const isFolderFirst = /^(desktop|downloads|documents)$/i.test(folderExtMatch[1]);
+      const folder = (isFolderFirst ? folderExtMatch[1] : folderExtMatch[2]).toLowerCase();
+      const file = (isFolderFirst ? folderExtMatch[2] : folderExtMatch[1]).trim();
+      targetPath = `${folder}/${file}`;
+    } else if (folderTypeMatch) {
+      targetPath = `${folderTypeMatch[1].toLowerCase()}/${folderTypeMatch[2].trim()}`;
+    }
+
+    if (targetPath) {
+      const docRes = await runLocalDocumentPathTurn({
+        filePath: targetPath,
+        userPrompt: clean,
+        requestPermission,
+        fromVoice: true,
+      });
+      if (docRes?.handled) return docRes;
+    }
+  }
 
   // 1. Reminders & Timers ("10 minute baad meeting reminder", "remind me in 5 min to stretch", "reminders dikhao")
   if (/\b(active reminders|list reminders|reminders dikhao|scheduled tasks|meri timers)\b/i.test(lower)) {

@@ -124,9 +124,11 @@ export function classifyQueryKind(cleanText, attachment = null) {
     );
 
   const pcActionVerbOrTarget =
-    /\b(open|launch|start|close|quit|exit|kholo|chalao|bajao|lagao|band karo|volume|brightness|awaz|roshni|mute|unmute|wifi|bluetooth|dark mode|light mode|theme|screenshot|screen padh|screen read|read screen|click\b|scroll|copy karo|paste karo|save karo|undo karo|select all|press enter|enter dabao|type\b|likho|reminder|timer|alarm|downloads|desktop|organize|clean temp|temp saaf|installed app|installed software|install\b|uninstall\b|winget|lock pc|sleep pc|restart pc|shutdown|maximize|minimize|snap left|snap right|running apps|clipboard|battery|ram status|cpu status|top process|pc health|system health|new tab|close tab|next tab|previous tab|skip ad|coding mode|night mode|kal maine kya|yaad rakho|remember that|settings kholo)\b/i.test(
+    /\b(open|launch|start|close|quit|exit|kholo|chalao|bajao|lagao|band karo|volume|brightness|awaz|roshni|mute|unmute|wifi|bluetooth|dark mode|light mode|theme|screenshot|screen padh|screen read|read screen|click\b|scroll|copy karo|paste karo|save karo|undo karo|select all|press enter|enter dabao|type\b|likho|reminder|timer|alarm|downloads|desktop|documents|organize|clean temp|temp saaf|installed app|installed software|install\b|uninstall\b|winget|lock pc|sleep pc|restart pc|shutdown|maximize|minimize|snap left|snap right|running apps|clipboard|battery|ram status|cpu status|top process|pc health|system health|new tab|close tab|next tab|previous tab|skip ad|coding mode|night mode|kal maine kya|yaad rakho|remember that|settings kholo)\b/i.test(
       lower
-    ) || /स्क्रीन|वॉल्यूम|ब्राइटनेस|बैटरी|वाईफाई|क्लिक/i.test(cleanText);
+    ) ||
+    /\.(pdf|docx|pptx|xlsx|txt|md)\b/i.test(lower) ||
+    /स्क्रीन|वॉल्यूम|ब्राइटनेस|बैटरी|वाईफाई|क्लिक/i.test(cleanText);
 
   if (pcActionVerbOrTarget && !isQuestionPhrase) {
     return { queryKind: 'pc_command', isPcCommand: true, heavyReason: '' };

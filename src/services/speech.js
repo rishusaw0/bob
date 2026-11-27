@@ -293,9 +293,9 @@ function scoreVoiceCandidate(v, targetLangOrder) {
   let qualityBonus = 0;
   if (/natural|neural|online/i.test(name)) qualityBonus += 45;
   if (/neerja|prabhat|swara|madhur|ravi|heera|kalpana|hemant|veena|rishi|google\s+.*india|google हिन्दी/i.test(name)) {
-    qualityBonus += 35;
+    qualityBonus += 60;
   }
-  if (/india/i.test(name)) qualityBonus += 25;
+  if (/india/i.test(name)) qualityBonus += 40;
   if (/google/i.test(name)) qualityBonus += 15;
   return langScore + qualityBonus;
 }
@@ -313,12 +313,10 @@ function pickNativeVoice(profile) {
   const indianAccent = getVoiceAccent() === 'indian';
   const targetLangOrder =
     profile === 'hindi'
-      ? ['hi-in', 'hi']
-      : profile === 'hinglish'
-        ? ['en-in', 'hi-in', 'en-gb', 'en']
-        : indianAccent
-          ? ['en-in', 'en-gb', 'en-us', 'en']
-          : ['en-us', 'en-gb', 'en-in', 'en'];
+      ? ['hi-in', 'hi', 'en-in']
+      : profile === 'hinglish' || indianAccent
+        ? ['en-in', 'hi-in', 'en-gb', 'en-us', 'en']
+        : ['en-us', 'en-gb', 'en-in', 'en'];
 
   let best = null;
   let bestScore = -1;

@@ -96,14 +96,13 @@ export async function extractAttachmentTextLocally(attachment) {
 /**
  * Handles PDF, DOCX, PPTX, XLSX, and TXT/Code reading or summarizing locally (0 Gemini API calls!).
  */
-export async function runLocalDocumentTurn({
-  attachment,
+async function processExtractedDocument({
+  extracted,
   userPrompt = '',
   historyMessages = [],
   requestPermission = null,
   fromVoice = false,
 } = {}) {
-  const extracted = await extractAttachmentTextLocally(attachment);
   if (!extracted || !extracted.ok) {
     return { handled: false, reason: 'local_extractor_unavailable' };
   }
@@ -191,7 +190,64 @@ export async function runLocalDocumentTurn({
     modelLabel: 'Offline Local Summarizer',
     routeReason: 'Summarized PDF/Text with built-in local extractor (0 Gemini API calls)',
     replyText: `${sumHeader}\n\n${summaryBullets}`,
-    autoSpeak: /sunao|listen|read|speak|audio/i.test(lower),
+    autoSpeak: Boolean(fromVoice || /sunao|listen|read|speak|audio/i.test(lower)),
     tools: [{ name: 'read_document_file', status: 'done', args: { name: fileLabel, engine: 'extractive_local' } }],
   };
+}
+
+/**
+ * Handles uploaded PDF, DOCX, PPTX, XLSX, and TXT/Code attachments locally (0 Gemini API calls!).
+ */
+export async function runLocalDocumentTurn({
+  attachment,
+  userPrompt = '',
+  historyMessages = [],
+  requestPermission = null,
+  fromVoice = false,
+} = {}) {
+  const extracted = await extractAttachmentTextLocally(attachment);
+  return processExtractedDocument({ extracted, userPrompt, historyMessages, requestPermission, fromVoice });
+}
+
+/**
+ * Reads, explains, or summarizes a PDF/document directly from a PC file path or Desktop/Downloads/Documents shortcut.
+ */
+export async function runLocalDocumentPathTurn({
+  filePath,
+  userPrompt = '',
+  historyMessages = [],
+  requestPermission = null,
+  fromVoice = true,
+} = {}) {
+  const api = typeof window !== 'undefined' ? window.electronAPI : null;
+  if (!api?.extractDocText) return { handled: false, reason: 'no_desktop_doc_reader' };
+
+  try {
+    const extracted = await api.extractDocText({ filePath, name: filePath });
+    if (!extracted?.ok) {
+      return {
+        handled: true,
+        tier: 'fast',
+        replyText: extracted?.error || `Could not read document at "${filePath}".`,
+        tools: [{ name: 'read_document_file', status: 'error', args: { path: filePath } }],
+      };
+    }
+    const res = await processExtractedDocument({ extracted, userPrompt, historyMessages, requestPermission, fromVoice });
+    if (res?.needsVisionOcr) {
+      return {
+        handled: true,
+        tier: 'fast',
+        replyText: `${filePath} ek scanned image PDF hai (isme selectable text nahi hai). Isko Chat me attach karke Cloud AI se padhwa sakte hain.`,
+        tools: [{ name: 'read_document_file', status: 'error', args: { path: filePath } }],
+      };
+    }
+    return res;
+  } catch (err) {
+    return {
+      handled: true,
+      tier: 'fast',
+      replyText: err?.message || `File "${filePath}" nahi mili ya open nahi ho saki.`,
+      tools: [{ name: 'read_document_file', status: 'error', args: { path: filePath } }],
+    };
+  }
 }

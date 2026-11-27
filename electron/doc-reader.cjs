@@ -1,8 +1,47 @@
 // Zero-Dependency Local Document Extractor: Digital PDF (zlib FlateDecode), DOCX/PPTX/XLSX (ZIP XML), and Plain Text
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const zlib = require('node:zlib');
 const { checkPathSafety } = require('./security-guardrails.cjs');
+
+function resolveUserDocumentPath(rawPath = '') {
+  const input = String(rawPath || '').trim().replace(/^["']|["']$/g, '');
+  if (!input) return '';
+
+  const home = os.homedir();
+  const folderRoots = {
+    desktop: path.join(home, 'Desktop'),
+    downloads: path.join(home, 'Downloads'),
+    documents: path.join(home, 'Documents'),
+  };
+
+  let candidate = input;
+  const folderMatch = input.match(/^(desktop|downloads|documents)[\\/](.+)$/i);
+  if (folderMatch) {
+    const baseDir = folderRoots[folderMatch[1].toLowerCase()];
+    const rel = folderMatch[2].trim();
+    candidate = path.join(baseDir, rel);
+
+    if (!fs.existsSync(candidate) && fs.existsSync(baseDir)) {
+      const targetNorm = rel.toLowerCase().replace(/\.(pdf|docx|pptx|xlsx|txt|md)$/i, '').trim();
+      const wantedExt = path.extname(rel).toLowerCase();
+      try {
+        const files = fs.readdirSync(baseDir);
+        const docExts = new Set(['.pdf', '.docx', '.pptx', '.xlsx', '.txt', '.md', '.csv']);
+        const best = files.find((f) => {
+          const ext = path.extname(f).toLowerCase();
+          if (!docExts.has(ext)) return false;
+          if (wantedExt && ext !== wantedExt) return false;
+          const base = path.basename(f, ext).toLowerCase();
+          return base === targetNorm || base.includes(targetNorm);
+        });
+        if (best) candidate = path.join(baseDir, best);
+      } catch {}
+    }
+  }
+  return candidate;
+}
 
 function decodePdfLiteralString(raw) {
   let out = '';
@@ -239,13 +278,15 @@ function extractDocumentContent({ filePath = '', base64 = '', name = '' } = {}) 
   let resolvedName = name || (filePath ? path.basename(filePath) : 'document');
 
   if (filePath) {
-    const safety = checkPathSafety(filePath, 'read');
+    const resolvedTarget = resolveUserDocumentPath(filePath);
+    const safety = checkPathSafety(resolvedTarget, 'read');
     if (!safety.allowed) throw new Error(safety.reason);
-    const stats = fs.statSync(filePath);
+    const stats = fs.statSync(resolvedTarget);
     if (stats.size > 15 * 1024 * 1024) {
       throw new Error('File 15 MB se badi hai. Chhoti file try karein.');
     }
-    buf = fs.readFileSync(filePath);
+    resolvedName = path.basename(resolvedTarget);
+    buf = fs.readFileSync(resolvedTarget);
   } else if (base64) {
     const cleanB64 = String(base64).includes(',') ? String(base64).split(',')[1] : String(base64);
     buf = Buffer.from(cleanB64, 'base64');

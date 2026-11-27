@@ -247,6 +247,15 @@ globalThis.window = {
     openSetting: async (s) => `Opened setting ${s}`,
     listInstalledApps: async (f) => `Installed apps (${f || 'all'})`,
     windowControl: async (act, app) => `Window ${act} ${app}`,
+    extractDocText: async ({ filePath }) => ({
+      ok: true,
+      name: String(filePath || 'notes.pdf').split(/[\\/]/).pop(),
+      ext: '.pdf',
+      pageCount: 2,
+      isScannedPdf: false,
+      text: 'This PDF explains how solar energy works cleanly. Solar panels convert sunlight into electricity for homes and offices. Battery storage keeps power available at night.',
+      chars: 168,
+    }),
   },
 };
 
@@ -461,6 +470,13 @@ const followUpClose = await runLocalQuickBrain('isko band karo', {
 assert.equal(followUpClose.handled, true);
 assert.equal(followUpClose.tools[0].name, 'close_application');
 assert.equal(followUpClose.tools[0].args.app_name, 'notepad');
+
+// Voice file-location PDF reading & summarizing test (0 Gemini API calls)
+const docLocRead = await runLocalQuickBrain('Desktop par notes.pdf hai isko summarize karo aur sunao');
+assert.equal(docLocRead.handled, true);
+assert.equal(docLocRead.tools[0].name, 'read_document_file');
+assert.equal(docLocRead.autoSpeak, true);
+assert.ok(docLocRead.replyText.toLowerCase().includes('solar'));
 
 const volAur = await tryFastVoiceAction('volume thoda aur badhao');
 assert.equal(volAur.handled, true);
