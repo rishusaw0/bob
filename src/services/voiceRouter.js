@@ -210,7 +210,7 @@ function extractNumber0to100(text) {
   return null;
 }
 
-async function runAuthorizedFastTool(name, args, executor, requestPermission, meta = {}) {
+export async function runAuthorizedFastTool(name, args, executor, requestPermission, meta = {}) {
   const category = getToolCategory(name, args);
   const catMeta = PERMISSION_CATEGORIES.find((c) => c.id === category);
   const policy = getCategoryPolicy(category);
@@ -234,8 +234,22 @@ async function runAuthorizedFastTool(name, args, executor, requestPermission, me
     isSensitiveVoiceAction(name, args) ||
     policy === 'ask';
 
+  if (needsPrompt && !requestPermission) {
+    appendAuditLog({ tool: name, category, summary, decision: 'blocked (permission handler unavailable)' });
+    return {
+      ok: false,
+      error: userLang === 'english'
+        ? 'Cannot execute ' + summary + ': permission confirmation is unavailable.'
+        : userLang === 'hindi'
+          ? 'अनुमति की पुष्टि उपलब्ध नहीं है, इसलिए यह कार्य नहीं किया गया: ' + summary + '।'
+          : 'Permission confirmation available nahi hai, isliye ' + summary + ' execute nahi kiya.',
+    };
+  }
+
   if (needsPrompt && requestPermission) {
-    const decision = await requestPermission({
+    let decision;
+    try {
+      decision = await requestPermission({
       name,
       args,
       riskLevel,
@@ -246,7 +260,18 @@ async function runAuthorizedFastTool(name, args, executor, requestPermission, me
       fromVoice: true,
       userLang,
       userPrompt: meta.userPrompt || '',
-    });
+      });
+    } catch (err) {
+      appendAuditLog({ tool: name, category, summary, decision: 'denied (permission request failed)' });
+      return {
+        ok: false,
+        error: userLang === 'english'
+          ? 'Permission confirmation failed. The action was not executed.'
+          : userLang === 'hindi'
+            ? 'अनुमति की पुष्टि विफल रही। कार्य नहीं किया गया।'
+            : 'Permission confirmation fail ho gaya. Action execute nahi kiya.',
+      };
+    }
     if (!decision || decision === 'deny') {
       appendAuditLog({ tool: name, category, summary, decision: 'denied' });
       return {

@@ -278,6 +278,8 @@ const svUrl = pathToFileURL(path.join(ROOT, 'src/services/speakerVerify.js')).hr
 
 const {
   tryFastVoiceAction,
+  runAuthorizedFastTool,
+  normalizePhoneticVoiceText,
   matchWakePhrase,
   getWakeOpenMode,
   setWakeOpenMode,
@@ -301,6 +303,20 @@ const {
 const { detectCommandLanguage, buildLocalizedPermissionQuestion, parseVoiceConfirmation } = await import(vpUrl);
 const { isDeicticVoiceCommand } = await import(vctxUrl);
 const { extractVoiceprint, compareVoiceprints, enrollVoiceprintSamples, setVoiceprintGuardEnabled, verifySpeakerVoiceprint } = await import(svUrl);
+
+// Voice command resilience + safety regressions
+assert.equal(normalizePhoneticVoiceText('set volum to 50 and open crome'), 'set volume to 50 and open chrome');
+let dangerousVoiceActionExecuted = false;
+const permissionFailClosed = await runAuthorizedFastTool(
+  'manage_software',
+  { action: 'uninstall', package: 'Chrome' },
+  () => { dangerousVoiceActionExecuted = true; return 'uninstalled'; },
+  null,
+  { userLang: 'english', userPrompt: 'uninstall Chrome' }
+);
+assert.equal(permissionFailClosed.ok, false, 'High-risk voice actions must fail closed without a permission UI');
+assert.equal(dangerousVoiceActionExecuted, false, 'Unconfirmed high-risk voice actions must never execute');
+assert.match(permissionFailClosed.error, /permission confirmation is unavailable/i);
 
 // Vocal-band spectral VAD & dynamic silence tests
 const synthVoice = new Float32Array(2048);
