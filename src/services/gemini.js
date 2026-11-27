@@ -60,6 +60,11 @@ export function initGemini(apiKey) {
   return true;
 }
 
+// Used by the Windows voice-capture path to choose online Gemini STT vs offline SAPI.
+export function getGeminiConnectionInfo() {
+  return { apiKey: Boolean(client), useServerProxy: false };
+}
+
 /**
  * Verifies live Gemini API connectivity and finds a responsive model automatically if the selected ID is unsupported.
  */
