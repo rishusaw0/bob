@@ -50,6 +50,8 @@ export function useVoiceEngine({
   const [liveState, setLiveState] = useState('idle');
 
   const captureRef = useRef(null);
+  const submitInFlightRef = useRef(false);
+  const commandStartTimerRef = useRef(null);
   const wakeListenerRef = useRef(null);
   const bargeInRef = useRef(null);
   const liveSessionRef = useRef(null);
@@ -123,6 +125,8 @@ export function useVoiceEngine({
   }, []);
 
   const stopCommandCapture = useCallback((submitNow = false) => {
+    clearTimeout(commandStartTimerRef.current);
+    commandStartTimerRef.current = null;
     if (captureRef.current) {
       if (submitNow) captureRef.current.stop();
       else captureRef.current.cancel();
@@ -139,6 +143,8 @@ export function useVoiceEngine({
         setPhase('idle');
         return;
       }
+      if (submitInFlightRef.current) return;
+      submitInFlightRef.current = true;
       clearTimeout(followUpTimerRef.current);
       voiceFollowUpPendingRef.current = true;
       setLiveTranscript(cleaned);
@@ -157,6 +163,7 @@ export function useVoiceEngine({
           'Access denied. Yeh owner ki aawaz match nahi hui, isliye command block kar diya gaya hai.',
           { instant: true }
         ).catch(() => {});
+        submitInFlightRef.current = false;
         setPhase('idle');
         return;
       }
@@ -170,6 +177,7 @@ export function useVoiceEngine({
           speakerScore: speakerCheck.score,
         });
       } finally {
+        submitInFlightRef.current = false;
         setPhase('idle');
       }
     },
@@ -229,7 +237,10 @@ export function useVoiceEngine({
       };
 
       if (!isFollowUp) {
-        setTimeout(beginMicCapture, 130);
+        commandStartTimerRef.current = setTimeout(() => {
+          commandStartTimerRef.current = null;
+          beginMicCapture();
+        }, 130);
       } else {
         beginMicCapture();
       }
@@ -536,6 +547,8 @@ export function useVoiceEngine({
     return () => {
       clearTimeout(followUpTimerRef.current);
       clearTimeout(notchHideTimerRef.current);
+      clearTimeout(commandStartTimerRef.current);
+      commandStartTimerRef.current = null;
       stopCommandCapture(false);
       stopWakeListener();
       stopBargeIn();
