@@ -3,7 +3,42 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const zlib = require('node:zlib');
+const { execFileSync } = require('node:child_process');
 const { checkPathSafety } = require('./security-guardrails.cjs');
+
+/**
+ * Runs offline Windows WinRT OCR on an image file (.png, .jpg, .bmp, .webp).
+ */
+function extractOcrFromImageFile(filePath, timeoutMs = 12000) {
+  const safePath = String(filePath || '').replace(/'/g, "''");
+  const psScript = `
+    $ErrorActionPreference = 'Stop'
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    $null = [Windows.Storage.StorageFile, Windows.Storage, ContentType=WindowsRuntime]
+    $null = [Windows.Media.Ocr.OcrEngine, Windows.Foundation, ContentType=WindowsRuntime]
+    $null = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType=WindowsRuntime]
+    $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' })[0]
+    function Await($WinRtTask, $ResultType) {
+      $netTask = $asTaskGeneric.MakeGenericMethod($ResultType).Invoke($null, @($WinRtTask))
+      $netTask.Wait(-1) | Out-Null
+      $netTask.Result
+    }
+    $file = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync('${safePath}')) ([Windows.Storage.StorageFile])
+    $stream = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+    $decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+    $bitmap = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+    if (-not $engine) { throw 'Windows OCR engine unavailable for current language profile' }
+    $ocrRes = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+    Write-Output $ocrRes.Text
+  `;
+  const out = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psScript], {
+    encoding: 'utf8',
+    timeout: timeoutMs,
+    windowsHide: true,
+  });
+  return String(out || '').trim();
+}
 
 function resolveUserDocumentPath(rawPath = '') {
   const input = String(rawPath || '').trim().replace(/^["']|["']$/g, '');
@@ -295,6 +330,31 @@ function extractDocumentContent({ filePath = '', base64 = '', name = '' } = {}) 
   }
 
   const ext = path.extname(resolvedName).toLowerCase();
+  if (filePath && ['.png', '.jpg', '.jpeg', '.bmp', '.webp'].includes(ext)) {
+    const resolvedTarget = resolveUserDocumentPath(filePath);
+    try {
+      const ocrText = extractOcrFromImageFile(resolvedTarget);
+      return {
+        ok: true,
+        name: resolvedName,
+        ext,
+        pageCount: 1,
+        isScannedPdf: false,
+        ocrUsed: true,
+        text: ocrText,
+        chars: ocrText.length,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        name: resolvedName,
+        ext,
+        ocrUsed: false,
+        error: err?.message || 'Offline Windows OCR failed on image.',
+      };
+    }
+  }
+
   if (ext === '.pdf') {
     const pdfRes = extractPdfTextFromBuffer(buf);
     return {
@@ -338,4 +398,5 @@ module.exports = {
   extractDocumentContent,
   extractPdfTextFromBuffer,
   extractOfficeXmlText,
+  extractOcrFromImageFile,
 };

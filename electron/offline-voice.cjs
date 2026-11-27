@@ -31,6 +31,9 @@ function detectLocalAsrEngines(userDataDir = '') {
   const voskReady = Boolean(voskModelDir);
   return {
     modelsDir: baseDir,
+    whisperExe,
+    whisperModel,
+    voskModelDir,
     whisperReady,
     voskReady,
     supportsFullHindiHinglish: whisperReady || voskReady,
@@ -248,10 +251,75 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
     });
   }
 
+  function transcribeAudioBase64(wavBase64, { language = 'auto', timeoutMs = 15000 } = {}) {
+    const asr = detectLocalAsrEngines(userDataDir);
+    if (!asr.whisperReady) {
+      return Promise.resolve({
+        ok: false,
+        engine: asr.engineType,
+        text: '',
+        reason: `No local Whisper.cpp binary/model found in ${asr.modelsDir}`,
+      });
+    }
+    const cleanB64 = String(wavBase64 || '').includes(',') ? String(wavBase64).split(',')[1] : String(wavBase64 || '');
+    if (!cleanB64) {
+      return Promise.resolve({ ok: false, engine: 'whisper.cpp', text: '', reason: 'Empty audio buffer' });
+    }
+    const os = require('os');
+    const tmpWav = path.join(os.tmpdir(), `jeeva-asr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.wav`);
+    try {
+      fs.writeFileSync(tmpWav, Buffer.from(cleanB64, 'base64'));
+    } catch (err) {
+      return Promise.resolve({ ok: false, engine: 'whisper.cpp', text: '', reason: err?.message || 'Temp WAV write failed' });
+    }
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let stdout = '';
+      let proc = null;
+      let timer = null;
+      const cleanup = (res) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (proc) activeDictations.delete(proc);
+        try { if (fs.existsSync(tmpWav)) fs.unlinkSync(tmpWav); } catch {}
+        resolve(res);
+      };
+
+      try {
+        proc = spawn(
+          asr.whisperExe,
+          ['-m', asr.whisperModel, '-f', tmpWav, '-l', String(language || 'auto'), '-nt', '--no-prints'],
+          { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
+        );
+      } catch (err) {
+        return cleanup({ ok: false, engine: 'whisper.cpp', text: '', reason: err?.message || 'Whisper spawn failed' });
+      }
+
+      activeDictations.add(proc);
+      timer = setTimeout(() => {
+        safeKill(proc);
+        cleanup({ ok: false, engine: 'whisper.cpp', text: '', timedOut: true, reason: 'Whisper transcription timed out' });
+      }, timeoutMs);
+
+      proc.stdout?.on('error', () => {});
+      proc.stdout?.on('data', (d) => {
+        if (stdout.length < 32768) stdout += d.toString('utf8');
+      });
+      proc.on('close', (code) => {
+        const text = stdout.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim();
+        cleanup({ ok: code === 0 && Boolean(text), engine: 'whisper.cpp', text, language });
+      });
+      proc.on('error', (err) => cleanup({ ok: false, engine: 'whisper.cpp', text: '', reason: err?.message || 'Whisper process error' }));
+    });
+  }
+
   return {
     start,
     stop,
     dictateOnce,
+    transcribeAudioBase64,
     getStatus: () => ({ ...status, ...detectLocalAsrEngines(userDataDir) }),
     setAiName: (name) => {
       const clean = String(name || 'Jeeva').trim() || 'Jeeva';

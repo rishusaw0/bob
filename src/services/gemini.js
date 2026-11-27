@@ -10,6 +10,8 @@ let previousInteractionId = null;
 let preferredModel = 'gemini-3.5-flash-lite';
 let customInstructions = '';
 let assistantName = 'Jeeva';
+let usingServerProxy = false;
+let lastInitOptions = { apiKey: '', useServerProxy: false, proxyBaseUrl: '', appToken: '' };
 
 export const SMOKE_CANDIDATE_MODELS = [
   'gemini-3.5-flash-lite',
@@ -49,31 +51,69 @@ LANGUAGE & CONFIRMATION RULE: Always reply in the SAME language and script style
   return `${base}${styleHint}${customBlock}${voiceBlock}`;
 }
 
-function createTempClient(apiKey) {
-  const key = String(apiKey || '').trim();
-  if (!key) throw new Error('Gemini API key is required for the PC desktop app.');
-  return new GoogleGenAI({ apiKey: key, apiVersion: 'v1beta' });
+export function isUsingServerProxy() {
+  return usingServerProxy;
 }
 
-export function initGemini(apiKey) {
-  client = createTempClient(apiKey);
+function createTempClient({ apiKey, useServerProxy, proxyBaseUrl, appToken } = {}) {
+  if (useServerProxy) {
+    const origin = (
+      proxyBaseUrl ||
+      (typeof window !== 'undefined' && window.location.protocol.startsWith('http') ? window.location.origin : '')
+    ).replace(/\/+$/, '');
+    if (!origin) {
+      throw new Error('Render Cloud Server URL is required for proxy mode');
+    }
+    const baseUrl = `${origin}/api/gemini`;
+    const headers = appToken ? { 'x-app-token': appToken } : {};
+    return new GoogleGenAI({
+      apiKey: 'server-proxy',
+      apiVersion: 'v1beta',
+      httpOptions: { baseUrl, headers },
+    });
+  }
+  if (!apiKey) throw new Error('API key is required');
+  return new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
+}
+
+export function initGemini(apiKey, options = {}) {
+  lastInitOptions = {
+    apiKey: String(apiKey || '').trim(),
+    useServerProxy: Boolean(options?.useServerProxy),
+    proxyBaseUrl: (options?.proxyBaseUrl || '').trim().replace(/\/+$/, ''),
+    appToken: options?.appToken || '',
+  };
+  client = createTempClient(lastInitOptions);
+  usingServerProxy = lastInitOptions.useServerProxy;
   previousInteractionId = null;
   return true;
 }
 
-// Used by the Windows voice-capture path to choose online Gemini STT vs offline SAPI.
 export function getGeminiConnectionInfo() {
-  return { apiKey: Boolean(client), useServerProxy: false };
+  const origin =
+    lastInitOptions.proxyBaseUrl ||
+    (typeof window !== 'undefined' && window.location.protocol.startsWith('http') ? window.location.origin : '');
+  return {
+    ...lastInitOptions,
+    proxyBaseUrl: origin.replace(/\/+$/, ''),
+  };
 }
 
 /**
  * Verifies live Gemini API connectivity and finds a responsive model automatically if the selected ID is unsupported.
  */
-export async function testGeminiConnection({ apiKey = '', model = preferredModel } = {}) {
+export async function testGeminiConnection({
+  apiKey = '',
+  useServerProxy = false,
+  proxyBaseUrl = '',
+  appToken = '',
+  model = preferredModel,
+} = {}) {
+  assertCloudAllowed('Gemini Connection Test');
   const startedAt = Date.now();
   let testClient;
   try {
-    testClient = createTempClient(apiKey);
+    testClient = createTempClient({ apiKey, useServerProxy, proxyBaseUrl, appToken });
   } catch (err) {
     return { ok: false, error: err?.message || 'Configuration incomplete' };
   }
@@ -486,15 +526,15 @@ async function getRegionalVoices(accent = 'indian', persona = 'natural_warm') {
   return fallback;
 }
 
-export const VOICE_STYLE_HINTS = {
+const VOICE_STYLE_HINTS = {
   english:
-    'Professional Indian English studio speaker (en-IN). Use crisp consonants, clean vowel articulation, confident warm delivery and natural word stress. Keep syllables distinct but connected, and sentence-boundary pauses short and consistent; do not add long dramatic silences.',
+    'realistic human Indian English speaker (en-IN), warm conversational studio presence, natural micro-pauses at punctuation, subtle expressive emphasis, never robotic or monotonous',
   english_global:
-    'Professional human studio narrator with precise consonants, clear vowels, warm articulate delivery and natural inflection. Keep pauses concise and conversational, never theatrical.',
+    'realistic human studio narrator, warm articulate conversational tone, natural breathing pauses and genuine human inflection without sounding synthetic',
   hindi:
-    'Native Indian Hindi speaker. Use standard, accurate Hindi pronunciation, crisp consonants, clear vowel sounds and natural matra pronunciation. Speak warmly and confidently with short conversational sentence pauses.',
+    'realistic native Indian Hindi human speaker, warm expressive voice with natural conversational cadence, soft breathing pauses, and crisp authentic pronunciation',
   hinglish:
-    'Fluent bilingual Indian Hinglish speaker. Pronounce Hindi words written in Latin letters as natural Hindi (not as English spelling); pronounce English words in clear Indian English. Switch languages smoothly without changing or dropping words. Use crisp consonants, distinct syllables, correct Hindi matras, natural lexical stress on meaningful words and gentle syllable separation without spelling out letters. Keep a steady speaking pace and short natural pauses with a 120 ms transition between completed sentence clips; do not add dramatic pauses or exaggerated breaths.',
+    'realistic bilingual Indian human assistant (en-IN / hi-IN), friendly conversational warmth, effortless code-switching between English and Hindi with natural human rhythm',
 };
 
 export async function createReplicatedVoice({
@@ -502,6 +542,7 @@ export async function createReplicatedVoice({
   sourceWavBase64,
   consentWavBase64,
 } = {}) {
+  assertCloudAllowed('Gemini Voice Replication');
   if (!client) throw new Error('Gemini API key set karein voice clone karne ke liye.');
   if (!sourceWavBase64 || !consentWavBase64) {
     throw new Error('Voice sample aur consent recording dono zaroori hain.');
@@ -538,10 +579,6 @@ export async function createReplicatedVoice({
   };
 }
 
-export function getTtsModelPriority() {
-  return ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
-}
-
 export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
   if (isStrictOfflineMode()) throw new Error('Cloud TTS blocked in Strict Offline Mode');
   if (!client) throw new Error('Gemini not initialized');
@@ -565,8 +602,7 @@ export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
   const voice = customVoiceId || voices[profile] || voices.hinglish;
   const styleKey = profile === 'english' && accent === 'global' ? 'english_global' : profile;
   const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;
-  // Prefer full studio quality; Flash Lite remains a resilient fallback.
-  const ttsModels = getTtsModelPriority();
+  const ttsModels = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
 
   let lastErr;
   for (const model of ttsModels) {

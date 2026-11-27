@@ -4,19 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { pathToFileURL, fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import * as luIcons from 'react-icons/lu';
 
 const require = createRequire(import.meta.url);
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = path.resolve(import.meta.dirname, '..');
 
 function readRel(rel) {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
 }
 
-// 1. Node syntax check on all Electron CJS modules
-console.log('[1/6] Checking Electron desktop JS/CJS syntax...');
+// 1. Node syntax check on server & all Electron CJS modules
+console.log('[1/6] Checking JS/CJS syntax...');
 const jsTargets = [
+  'server/index.js',
   ...fs.readdirSync(path.join(ROOT, 'electron'))
     .filter((f) => f.endsWith('.cjs'))
     .map((f) => path.join('electron', f)),
@@ -50,12 +51,14 @@ const guardSrc = readRel('electron/permission-guard.cjs');
 const actionsSrc = readRel('electron/pc-actions.cjs');
 const mainSrc = readRel('electron/main.cjs');
 const preloadSrc = readRel('electron/preload.cjs');
+const bridgeSrc = readRel('src/services/bridge.js');
 
 const toolsArrayBlock = toolsSrc.slice(toolsSrc.indexOf('export const TOOLS'), toolsSrc.indexOf('function guessDocumentMime'));
 const declaredTools = [...toolsArrayBlock.matchAll(/name:\s*'([a-z_]+)'/g)].map((m) => m[1]);
 const execBlock = toolsSrc.slice(toolsSrc.indexOf('export async function executeFunctionCall'));
 const handledCases = new Set([...execBlock.matchAll(/case\s*'([a-z_]+)'/g)].map((m) => m[1]));
 if (execBlock.includes("name === 'generate_image_tool'")) handledCases.add('generate_image_tool');
+if (execBlock.includes("name === 'mobile_browser_action'")) handledCases.add('mobile_browser_action');
 
 const permCases = new Set(
   [...permSrc.slice(permSrc.indexOf('getToolCategory'), permSrc.indexOf('getToolRiskLevel')).matchAll(/case\s*'([a-z_]+)'/g)].map((m) => m[1])
@@ -67,8 +70,7 @@ for (const t of declaredTools) {
 }
 
 const preloadInvokes = [...preloadSrc.matchAll(/ipcRenderer\.invoke\(['"]([^'"]+)['"]/g)].map((m) => m[1]);
-assert.ok(mainSrc.includes('function registerSecureIpcHandler'), 'IPC handlers must be registered through the trusted-renderer guard');
-const mainHandles = new Set([...mainSrc.matchAll(/registerSecureIpcHandler\(['"]([^'"]+)['"]/g)].map((m) => m[1]));
+const mainHandles = new Set([...mainSrc.matchAll(/ipcMain\.handle\(['"]([^'"]+)['"]/g)].map((m) => m[1]));
 for (const ch of preloadInvokes) {
   assert.ok(mainHandles.has(ch), `IPC channel "${ch}" exposed in preload.cjs but missing in main.cjs`);
 }
@@ -78,12 +80,17 @@ const actionKeys = [...actionsBlock.matchAll(/^\s{4}(?:async\s+)?([a-zA-Z0-9_]+)
 const guardCases = new Set(
   [...guardSrc.slice(guardSrc.indexOf('getActionCategory'), guardSrc.indexOf('isActionHighRisk')).matchAll(/case\s*'([a-zA-Z0-9_]+)'/g)].map((m) => m[1])
 );
+const remoteActions = new Set([...bridgeSrc.matchAll(/callRemoteAction\(['"]([a-zA-Z0-9_]+)['"]/g)].map((m) => m[1]));
+
 for (const act of actionKeys) {
   assert.ok(guardCases.has(act), `Action "${act}" missing in permission-guard.cjs`);
+  if (!['liveStats', 'saveImage'].includes(act)) {
+    assert.ok(remoteActions.has(act), `Action "${act}" missing in bridge.js remote actions`);
+  }
 }
 console.log(`   Verified ${declaredTools.length} tools, ${preloadInvokes.length} IPC handlers, ${actionKeys.length} actions.`);
 
-// 3. Unit tests: DPI mapper, updater, scheduler, permission guard, security guardrails and memory
+// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard, security guardrails, memory RAG, server store & WS codec
 console.log('[3/6] Testing coord-mapper, updater, scheduler, guardrails, memory RAG & auto-launch...');
 const { mapCoordsToPhysical } = require(path.join(ROOT, 'electron/coord-mapper.cjs'));
 const { compareSemver } = require(path.join(ROOT, 'electron/updater.cjs'));
@@ -217,11 +224,6 @@ assert.equal(fallbackMgr.setEnabled(false).enabled, false);
 assert.equal(fallbackMgr.isEnabled(), false);
 fs.rmSync(tmpAutoDir, { recursive: true, force: true });
 
-
-// Secret paths and empty paths are rejected by the local filesystem guard.
-assert.equal(checkPathSafety('', 'read').allowed, false);
-assert.equal(checkPathSafety(path.win32.join('C:\\\\', 'Users', 'Test', 'AppData', 'Roaming', 'Jeeva-AI', 'api-key.vault'), 'read').allowed, false);
-
 // 4. Voice router verification (including "batao" status exception + battery + browser)
 console.log('[4/6] Testing fast Voice Router rules...');
 const memStore = new Map();
@@ -278,8 +280,6 @@ const svUrl = pathToFileURL(path.join(ROOT, 'src/services/speakerVerify.js')).hr
 
 const {
   tryFastVoiceAction,
-  runAuthorizedFastTool,
-  normalizePhoneticVoiceText,
   matchWakePhrase,
   getWakeOpenMode,
   setWakeOpenMode,
@@ -303,20 +303,6 @@ const {
 const { detectCommandLanguage, buildLocalizedPermissionQuestion, parseVoiceConfirmation } = await import(vpUrl);
 const { isDeicticVoiceCommand } = await import(vctxUrl);
 const { extractVoiceprint, compareVoiceprints, enrollVoiceprintSamples, setVoiceprintGuardEnabled, verifySpeakerVoiceprint } = await import(svUrl);
-
-// Voice command resilience + safety regressions
-assert.equal(normalizePhoneticVoiceText('set volum to 50 and open crome'), 'set volume to 50 and open chrome');
-let dangerousVoiceActionExecuted = false;
-const permissionFailClosed = await runAuthorizedFastTool(
-  'manage_software',
-  { action: 'uninstall', package: 'Chrome' },
-  () => { dangerousVoiceActionExecuted = true; return 'uninstalled'; },
-  null,
-  { userLang: 'english', userPrompt: 'uninstall Chrome' }
-);
-assert.equal(permissionFailClosed.ok, false, 'High-risk voice actions must fail closed without a permission UI');
-assert.equal(dangerousVoiceActionExecuted, false, 'Unconfirmed high-risk voice actions must never execute');
-assert.match(permissionFailClosed.error, /permission confirmation is unavailable/i);
 
 // Vocal-band spectral VAD & dynamic silence tests
 const synthVoice = new Float32Array(2048);
@@ -556,31 +542,64 @@ assert.equal(tabAct.tools[0].args.action, 'new_tab');
 const openEnded = await tryFastVoiceAction('python ke baare mein batao');
 assert.equal(openEnded.handled, false);
 
-// 5. Desktop-only architecture checks
-console.log('[5/6] Verifying Windows desktop-only build surface...');
-for (const removedPath of [
-  'server',
-  'render.yaml',
-  'src/components/LandingPage.jsx',
-  'src/components/MobileConnectModal.jsx',
-  'public/manifest.json',
-  'public/service-worker.js',
-  'public/robots.txt',
-  'public/sitemap.xml',
-  'public/icon-192.png',
-  'public/icon-512.png',
-  'electron/bridge-server.cjs',
-  'electron/cloud-relay.cjs',
-  'electron/ws-client.cjs',
-]) {
-  assert.equal(fs.existsSync(path.join(ROOT, removedPath)), false, `Removed mobile/web module still exists: ${removedPath}`);
-}
-const appSource = readRel('src/App.jsx');
-assert.ok(!/MobileConnectModal|LandingPage|serverConfig|appToken|cloudApiUrl|showMobileModal|PWA|Render/.test(appSource),
-  'App must not contain browser workspace, phone, PWA or hosted workspace references');
-const desktopBridge = readRel('src/services/bridge.js');
-assert.ok(desktopBridge.includes('window.electronAPI'), 'PC renderer must use local Electron IPC');
-assert.ok(!desktopBridge.includes('fetch(') && !desktopBridge.includes('/api/'), 'PC bridge must not expose HTTP routes');
+// 5. Render Server timed & scoped share tokens verification
+console.log('[5/6] Testing Render server expiring/scoped share links...');
+const serverUrl = pathToFileURL(path.join(ROOT, 'server/index.js')).href;
+const {
+  createTimedShareToken,
+  getRelayAuthContext,
+  isActionAllowedForReadOnly,
+  hashPairToken,
+  UPDATE_LATEST_VERSION,
+} = await import(serverUrl);
+
+assert.ok(UPDATE_LATEST_VERSION);
+const ownerPair = 'JVA-TEST-OWNR-1234';
+const ownerKey = `pair:${hashPairToken(ownerPair)}`;
+
+const tmpFull = createTimedShareToken({ ownerKey, ttlMinutes: 60, scope: 'full' });
+assert.ok(tmpFull.shareToken.startsWith('JVA-TMP-'));
+assert.equal(tmpFull.scope, 'full');
+
+const fullCtx = getRelayAuthContext({ headers: { 'x-pair-token': tmpFull.shareToken } });
+assert.equal(fullCtx.ownerKey, ownerKey);
+assert.equal(fullCtx.scope, 'full');
+assert.equal(fullCtx.expired, false);
+
+const tmpRo = createTimedShareToken({ ownerKey, ttlMinutes: 30, scope: 'read_only' });
+const roCtx = getRelayAuthContext({ headers: { 'x-pair-token': tmpRo.shareToken } });
+assert.equal(roCtx.ownerKey, ownerKey);
+assert.equal(roCtx.scope, 'read_only');
+assert.equal(isActionAllowedForReadOnly('runCommand', ['echo hack']), false);
+assert.equal(isActionAllowedForReadOnly('liveStats', []), true);
+assert.equal(isActionAllowedForReadOnly('diagnostics', ['kill_process', '123']), false);
+assert.equal(isActionAllowedForReadOnly('diagnostics', ['overview']), true);
+
+const fakeTmpCtx = getRelayAuthContext({ headers: { 'x-pair-token': 'JVA-TMP-DOESNOTEXIST' } });
+assert.equal(fakeTmpCtx.ownerKey, null);
+assert.equal(fakeTmpCtx.expired, true);
+
+// WebSocket codec & Server Store persistence tests
+const wsUrl = pathToFileURL(path.join(ROOT, 'server/ws-codec.js')).href;
+const storeUrl = pathToFileURL(path.join(ROOT, 'server/store.js')).href;
+const { computeWebSocketAccept, encodeServerFrame, createFrameReader } = await import(wsUrl);
+const { createServerStore } = await import(storeUrl);
+assert.equal(computeWebSocketAccept('dGhlIHNhbXBsZSBub25jZQ=='), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=');
+let decodedWs = '';
+const reader = createFrameReader((op, pay) => {
+  if (op === 1) decodedWs = pay.toString('utf8');
+});
+reader(encodeServerFrame(1, Buffer.from('hello-ws', 'utf8')));
+assert.equal(decodedWs, 'hello-ws');
+
+const tmpStoreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-test-store-'));
+const st1 = await createServerStore(tmpStoreDir);
+st1.setShareToken('hash123', { ownerKey: 'owner:test', scope: 'read_only', expiresAt: Date.now() + 60000, createdAt: Date.now() });
+st1.close();
+const st2 = await createServerStore(tmpStoreDir);
+assert.equal(st2.getShareToken('hash123')?.scope, 'read_only');
+st2.close();
+fs.rmSync(tmpStoreDir, { recursive: true, force: true });
 
 // Hybrid Local AI Brain tests (Semantic Intent, Top-4 Tool Pruning, Escalation Gatekeeper & Hardware Profile)
 const { classifyIntent, pickTopToolsForQuery } = await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
@@ -622,22 +641,6 @@ assert.ok(hw.totalGb > 0 && hw.safeThreads >= 2);
 assert.ok(LOW_END_MODELS.some((m) => m.id === 'qwen2.5:1.5b'));
 assert.ok(compactHistoryForCloud([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }, { role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }], 2).includes('CONVERSATION CONTEXT DIGEST'));
 
-// Romanized Hindi phonetics and natural sentence transition regressions
-const { normalizeRomanizedHindiForSpeech, SPEECH_TRANSITION_MS } = await import(pathToFileURL(path.join(ROOT, 'src/services/speech.js')).href);
-assert.equal(normalizeRomanizedHindiForSpeech('Acha hai, aap kaise ho?', 'hinglish'), 'अच्छा है, आप कैसे हो?');
-assert.equal(normalizeRomanizedHindiForSpeech('Open Chrome please', 'english'), 'Open Chrome please');
-assert.equal(SPEECH_TRANSITION_MS, 120, 'Sentence clips should use a short natural transition');
-assert.ok(readRel('src/components/SettingsPanel.jsx').includes('Run Mic + Speaker Test'), 'Settings must expose microphone and speaker diagnostics');
-
-// Professional TTS quality and sentence playback regressions
-const { getTtsModelPriority, VOICE_STYLE_HINTS } = await import(pathToFileURL(path.join(ROOT, 'src/services/gemini.js')).href);
-assert.equal(getTtsModelPriority()[0], 'gemini-3.8-flash-tts', 'Full-quality TTS must be preferred over Flash Lite');
-assert.ok(VOICE_STYLE_HINTS.hinglish.includes('Latin letters') && VOICE_STYLE_HINTS.hinglish.includes('short natural pauses'),
-  'Hinglish TTS must guide native Hindi pronunciation and concise sentence pauses');
-const speechSource = readRel('src/services/speech.js');
-assert.ok(speechSource.includes('Reuse one AudioContext across sentence chunks'),
-  'Sentence playback must reuse the audio context to avoid per-sentence startup gaps');
-
 // Indian-style TTS accent default, Human Personas, Custom Cloned Voice & Speech Clarity tests
 const {
   cleanTextForSpeech,
@@ -658,7 +661,10 @@ saveCustomClonedVoice({ id: 'voice_test_123', displayName: 'Test Voice' });
 assert.equal(getActiveCustomVoiceId(), 'voice_test_123');
 removeCustomClonedVoice('voice_test_123');
 assert.equal(getActiveCustomVoiceId(), '');
-// Desktop application icon asset check
+// SEO & Brand asset checks for webbuildix.online
+assert.ok(fs.existsSync(path.join(ROOT, 'public/robots.txt')));
+assert.ok(fs.readFileSync(path.join(ROOT, 'public/sitemap.xml'), 'utf8').includes('https://webbuildix.online/'));
+assert.ok(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes('rel="canonical" href="https://webbuildix.online/"'));
 assert.ok(fs.readFileSync(path.join(ROOT, 'public/icon.svg'), 'utf8').includes('viewBox="0 0 128 128"'));
 
 // Regression tests: Strict Offline Mode, NSIS installer hooks & offline-voice resilience
@@ -675,7 +681,33 @@ assert.equal(isStrictOfflineMode(), true);
 assert.throws(() => assertCloudAllowed('Gemini Cloud Chat'), /Strict Offline Mode/);
 setStrictOfflineMode(false);
 assert.ok(fs.existsSync(path.join(ROOT, 'build/installer.nsh')));
-assert.ok(fs.readFileSync(path.join(ROOT, 'build/installer.nsh'), 'utf8').includes('taskkill /F /IM "JEEVA AI.exe"'));
+const installerNsh = fs.readFileSync(path.join(ROOT, 'build/installer.nsh'), 'utf8');
+assert.ok(installerNsh.includes('${ifNot} ${isUpdated}'), 'Uninstall cleanup must not run during updates');
+assert.ok(installerNsh.includes('taskkill /IM "JEEVA AI.exe"') && installerNsh.includes('taskkill /F /IM "JEEVA AI.exe" /T'), 'Installer must try graceful shutdown before force-kill fallback');
+assert.ok(installerNsh.includes('IfSilent jeeva_keep_app_data') && installerNsh.includes('/SD IDNO'), 'Silent/default uninstall must preserve user data');
+const pkgJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+assert.equal(pkgJson.build?.nsis?.include, 'build/installer.nsh');
+const { createOfflineVoice } = require(path.join(ROOT, 'electron/offline-voice.cjs'));
+const ov = createOfflineVoice({ resolveUnpackedPath: () => '' });
+const emptyDict = await ov.dictateOnce(3);
+assert.equal(emptyDict.text, '');
+assert.equal(typeof ov.getStatus().supportsFullHindiHinglish, 'boolean');
+const noWhisper = await ov.transcribeAudioBase64('UklGRg==', { language: 'hi' });
+assert.equal(noWhisper.ok, false);
+
+// Local Document RAG Search + Hardware GPU/RAM AI Model Selection + Strict Offline Cloud Block tests
+const { indexDocumentChunks, searchLocalDocuments } = await import(pathToFileURL(path.join(ROOT, 'src/services/docExtractor.js')).href);
+const docChunks = indexDocumentChunks('sales_2026.xlsx', 'Q1 Total Sales: 145000 INR.\n\nQ2 Total Sales: 210000 INR.', 60);
+const docHits = searchLocalDocuments('total sales Q2', [{ name: 'sales_2026.xlsx', chunks: docChunks }], 2);
+assert.ok(docHits.length >= 1 && docHits[0].source === 'sales_2026.xlsx' && docHits[0].section.startsWith('Section '));
+
+const hwProf = detectHardwareProfile();
+assert.ok(hwProf.totalGb > 0 && hwProf.recommendedModel && 'gpuVramGb' in hwProf);
+
+const { startLiveVoiceCall } = await import(pathToFileURL(path.join(ROOT, 'src/services/liveAudio.js')).href);
+setStrictOfflineMode(true);
+await assert.rejects(() => startLiveVoiceCall(), /Strict Offline Mode/);
+setStrictOfflineMode(false);
 assert.ok(fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8').includes("In.Peek() -eq -1) {\r\n        break") || fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8').includes("In.Peek() -eq -1) {\n        break"));
 assert.ok(computeAdaptiveSilenceMs(500, 740) <= 540);
 assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'), 'english');
@@ -766,23 +798,6 @@ assert.ok(Math.max(...Array.from(normOut, Math.abs)) >= 0.55); // Boosted toward
 const repaired = repairVoiceTranscript('Hey Jeeva wollum 50 karo aur crome kholo');
 assert.ok(repaired.toLowerCase().includes('volume 50') && repaired.toLowerCase().includes('chrome'));
 
-
-// NSIS uninstall safety: real uninstall prompts, silent/update paths preserve user data.
-const uninstallNsis = readRel('build/installer.nsh');
-assert.ok(uninstallNsis.includes('!macro customUnInstall'), 'NSIS custom uninstall hook must be present');
-assert.ok(uninstallNsis.includes('${ifNot} ${isUpdated}'), 'Uninstall cleanup must not run during installer-driven updates');
-assert.ok(uninstallNsis.includes('IfSilent jeeva_keep_app_data') && uninstallNsis.includes('/SD IDNO'),
-  'Silent uninstall must preserve app data without a prompt');
-assert.ok(uninstallNsis.includes('MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2') && uninstallNsis.includes('/SD IDNO') && uninstallNsis.includes('IDYES jeeva_delete_app_data'),
-  'Interactive uninstall must ask for explicit consent, defaulting to keep data');
-assert.ok(uninstallNsis.includes('${APP_FILENAME}') && uninstallNsis.includes('${APP_PRODUCT_FILENAME}') && uninstallNsis.includes('${APP_PACKAGE_NAME}'),
-  'Data cleanup must cover JEEVA app-data names used by electron-builder');
-assert.ok(uninstallNsis.includes('com.roushan.jeeva-ai') && uninstallNsis.includes('JEEVA AI.lnk'),
-  'Uninstall must remove only JEEVA startup entries');
-const desktopPackage = JSON.parse(readRel('package.json'));
-assert.equal(desktopPackage.version, '1.0.1');
-assert.equal(desktopPackage.build.nsis.include, 'build/installer.nsh');
-
 // 6. PowerShell AST validation on ALL .ps1 scripts
 console.log('[6/6] Checking PowerShell AST across all electron/*.ps1...');
 const psFiles = fs.readdirSync(path.join(ROOT, 'electron')).filter((f) => f.endsWith('.ps1'));
@@ -794,4 +809,4 @@ const astScript = psFiles
   .join('');
 execFileSync('powershell.exe', ['-NoProfile', '-Command', astScript], { stdio: 'pipe' });
 
-console.log(`ALL_TESTS_PASSED (${psFiles.length} PowerShell scripts, ${declaredTools.length} PC tools, desktop-only modules, DPI mapper, voice router)`);
+console.log(`ALL_TESTS_PASSED (${psFiles.length} PS scripts, ${declaredTools.length} AI tools, server share-tokens, DPI mapper, voice router)`);

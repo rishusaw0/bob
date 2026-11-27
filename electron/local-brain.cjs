@@ -4,7 +4,29 @@ const path = require('node:path');
 const os = require('node:os');
 const http = require('node:http');
 const https = require('node:https');
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
+
+let cachedGpu = { gpuName: 'Unknown', gpuVramGb: 0, checked: false };
+if (process.platform === 'win32') {
+  try {
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue | Select-Object -First 1 Name, AdapterRAM | ConvertTo-Json -Compress'],
+      { timeout: 3000, windowsHide: true },
+      (err, stdout) => {
+        if (err || !stdout) return;
+        try {
+          const parsed = JSON.parse(stdout.trim());
+          cachedGpu = {
+            gpuName: parsed?.Name || 'GPU',
+            gpuVramGb: parsed?.AdapterRAM ? Number((Number(parsed.AdapterRAM) / 1073741824).toFixed(1)) : 0,
+            checked: true,
+          };
+        } catch {}
+      }
+    );
+  } catch {}
+}
 
 const IDLE_UNLOAD_MS = 2 * 60 * 1000; // Unload local model from RAM after 2 minutes idle
 const MIN_FREE_RAM_GB = 1.2; // Prevent system hang if free RAM drops below 1.2 GB
@@ -98,7 +120,7 @@ function detectHardwareProfile() {
   if (totalGb < 6.5) {
     recommendedModel = 'qwen2.5:0.5b';
     hardwareTier = 'ultra-low';
-  } else if (totalGb < 11.5) {
+  } else if (totalGb < 11.5 && cachedGpu.gpuVramGb < 4) {
     recommendedModel = 'qwen2.5:1.5b';
     hardwareTier = 'low-end';
   } else {
@@ -112,6 +134,8 @@ function detectHardwareProfile() {
     cpuCores,
     safeThreads,
     cpuModel: cpus[0]?.model || 'CPU',
+    gpuName: cachedGpu.gpuName,
+    gpuVramGb: cachedGpu.gpuVramGb,
     hardwareTier,
     recommendedModel,
     lowRamRisk: freeGb < MIN_FREE_RAM_GB,

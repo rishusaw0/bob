@@ -3,6 +3,7 @@ import { GoogleGenAI } from '@google/genai';
 import { TOOLS, executeFunctionCall } from './tools.js';
 import { getGeminiConnectionInfo } from './gemini.js';
 import { createPcmStreamMonitor, pcmFloat32ToInt16Base64 } from './voiceCapture.js';
+import { assertCloudAllowed } from './offlineMode.js';
 
 const LIVE_MODEL = 'gemini-3.8-live';
 
@@ -29,6 +30,7 @@ export async function startLiveVoiceCall({
   onAudioMetrics = () => {},
   onError = () => {},
 } = {}) {
+  assertCloudAllowed('Gemini Live Voice Call');
   const conn = getGeminiConnectionInfo();
   let apiKeyOrToken = conn.apiKey;
   let apiVersion = 'v1beta';

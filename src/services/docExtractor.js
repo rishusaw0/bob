@@ -237,7 +237,7 @@ export async function runLocalDocumentPathTurn({
       return {
         handled: true,
         tier: 'fast',
-        replyText: `${filePath} ek scanned image PDF hai (isme selectable text nahi hai). Isko Chat me attach karke Cloud AI se padhwa sakte hain.`,
+        replyText: `${filePath} ek scanned image PDF hai (isme selectable text nahi hai). Aap iska screenshot/image le kar offline Windows OCR se padhwa sakte hain, ya Cloud AI enabled hone par Chat me attach kar sakte hain.`,
         tools: [{ name: 'read_document_file', status: 'error', args: { path: filePath } }],
       };
     }
@@ -250,4 +250,69 @@ export async function runLocalDocumentPathTurn({
       tools: [{ name: 'read_document_file', status: 'error', args: { path: filePath } }],
     };
   }
+}
+
+/**
+ * Splits a local document into overlapping chunks with section/page metadata for offline RAG search.
+ */
+export function indexDocumentChunks(docName, rawText, chunkSize = 520) {
+  const clean = String(rawText || '').replace(/\r\n/g, '\n').trim();
+  if (!clean) return [];
+  const paragraphs = clean.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const chunks = [];
+  let buf = '';
+  let sectionIdx = 1;
+
+  for (const para of paragraphs) {
+    if ((buf + '\n' + para).length > chunkSize && buf.trim()) {
+      chunks.push({
+        source: docName || 'document',
+        section: `Section ${sectionIdx++}`,
+        text: buf.trim(),
+      });
+      buf = para;
+    } else {
+      buf = buf ? `${buf}\n${para}` : para;
+    }
+  }
+  if (buf.trim()) {
+    chunks.push({
+      source: docName || 'document',
+      section: `Section ${sectionIdx}`,
+      text: buf.trim(),
+    });
+  }
+  return chunks;
+}
+
+/**
+ * Local Offline Semantic/Keyword Search across indexed documents with source + section references.
+ */
+export function searchLocalDocuments(query, indexedDocs = [], topK = 4) {
+  const qWords = (String(query || '').toLowerCase().match(/[a-z0-9\u0900-\u097F]{2,}/g) || [])
+    .filter((w) => !['the', 'and', 'for', 'with', 'hai', 'kya', 'mein', 'ka', 'ki', 'ke'].includes(w));
+  if (!qWords.length || !Array.isArray(indexedDocs) || !indexedDocs.length) return [];
+
+  const allChunks = [];
+  for (const doc of indexedDocs) {
+    const docChunks = Array.isArray(doc.chunks)
+      ? doc.chunks
+      : indexDocumentChunks(doc.name || doc.source || 'document', doc.text || '');
+    allChunks.push(...docChunks);
+  }
+
+  const scored = allChunks
+    .map((chunk) => {
+      const lower = chunk.text.toLowerCase();
+      let hits = 0;
+      for (const w of qWords) {
+        if (lower.includes(w)) hits++;
+      }
+      const score = hits / qWords.length;
+      return { ...chunk, score: Number(score.toFixed(3)) };
+    })
+    .filter((c) => c.score > 0);
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, topK);
 }
