@@ -143,7 +143,7 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
 }
 
 const ROMAN_HINDI_PHONETIC = new Map([
-  ['accha', 'अच्छा'], ['acha', 'अच्छा'], ['achha', 'अच्छा'], ['hai', 'है'], ['hain', 'हैं'], ['hoon', 'हूँ'], ['hun', 'हूँ'], ['nahi', 'नहीं'], ['nhi', 'नहीं'], ['nahin', 'नहीं'], ['kya', 'क्या'], ['kaise', 'कैसे'], ['kyun', 'क्यों'], ['aap', 'आप'], ['main', 'मैं'], ['maine', 'मैंने'], ['mera', 'मेरा'], ['meri', 'मेरी'], ['mere', 'मेरे'], ['bahut', 'बहुत'], ['bohot', 'बहुत'], ['thoda', 'थोड़ा'], ['theek', 'ठीक'], ['thik', 'ठीक'], ['karo', 'करो'], ['karna', 'करना'], ['raha', 'रहा'], ['rahi', 'रही'], ['rahe', 'रहे'], ['chahiye', 'चाहिए'], ['shukriya', 'शुक्रिया'], ['namaste', 'नमस्ते'], ['batao', 'बताओ'], ['samjho', 'समझो'],
+  ['accha', 'अच्छा'], ['acha', 'अच्छा'], ['achha', 'अच्छा'], ['ho', 'हो'], ['hai', 'है'], ['hain', 'हैं'], ['hoon', 'हूँ'], ['hun', 'हूँ'], ['nahi', 'नहीं'], ['nhi', 'नहीं'], ['nahin', 'नहीं'], ['kya', 'क्या'], ['kaise', 'कैसे'], ['kyun', 'क्यों'], ['aap', 'आप'], ['main', 'मैं'], ['maine', 'मैंने'], ['mera', 'मेरा'], ['meri', 'मेरी'], ['mere', 'मेरे'], ['bahut', 'बहुत'], ['bohot', 'बहुत'], ['thoda', 'थोड़ा'], ['theek', 'ठीक'], ['thik', 'ठीक'], ['karo', 'करो'], ['karna', 'करना'], ['raha', 'रहा'], ['rahi', 'रही'], ['rahe', 'रहे'], ['chahiye', 'चाहिए'], ['shukriya', 'शुक्रिया'], ['namaste', 'नमस्ते'], ['batao', 'बताओ'], ['samjho', 'समझो'],
 ]);
 
 /** Convert common Romanized Hindi words to Devanagari before TTS, leaving English intact. */
