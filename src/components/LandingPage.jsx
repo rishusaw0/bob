@@ -398,7 +398,7 @@ export default function LandingPage({
       </section>
 
       <footer className="relative z-10 mt-auto border-t border-white/10 py-6 text-center text-xs text-zinc-500">
-        JEEVA AI — Hybrid Local + Cloud Windows PC Assistant · Created by Roushan Kumar
+        JEEVA AI · <a href="https://webbuildix.online/" className="text-zinc-300 hover:text-emerald-400 transition-colors">webbuildix.online</a> — Hybrid Local + Cloud Windows PC Assistant · Created by Roushan Kumar
       </footer>
 
       {showDownloadGuide && (

@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /app
+Disallow: /chat
+
+Sitemap: https://webbuildix.online/sitemap.xml

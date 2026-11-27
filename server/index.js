@@ -150,6 +150,8 @@ const MIME_TYPES = {
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.json': 'application/json; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml; charset=utf-8',
   '.ico': 'image/x-icon',
 };
 
