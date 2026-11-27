@@ -1,6 +1,6 @@
 // PWA Service Worker for JEEVA AI (Network-first + Asset caching)
-const CACHE_NAME = 'jeeva-ai-v2';
-const PRECACHE_URLS = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png', '/icon.svg'];
+const CACHE_NAME = 'jeeva-ai-v3';
+const PRECACHE_URLS = ['/', '/manifest.json?v=3', '/icon-192.png?v=3', '/icon-512.png?v=3', '/icon.svg?v=3'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
