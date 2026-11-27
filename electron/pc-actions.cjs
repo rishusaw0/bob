@@ -749,6 +749,16 @@ function createPcActions({
       if (clean === 'remind') {
         return { success: true, task: sched.scheduleReminder({ delayMinutes: arg1, message: arg2 }) };
       }
+      if (clean === 'remind_date') {
+        const opts = arg1 && typeof arg1 === 'object' ? arg1 : { triggerAt: arg1, message: arg2 };
+        return { success: true, task: sched.scheduleDateReminder(opts) };
+      }
+      if (clean === 'agenda') {
+        return sched.getAgendaSummary();
+      }
+      if (clean === 'ack') {
+        return sched.acknowledgeAgenda(String(arg1 || 'all'));
+      }
       if (clean === 'delayed_command') {
         return {
           success: true,

@@ -100,16 +100,32 @@ export const TOOLS = [
             'read_page',
             'open_url',
             'new_tab',
+            'new_incognito',
             'close_tab',
             'reopen_tab',
             'next_tab',
             'prev_tab',
+            'downloads',
+            'history',
+            'bookmarks',
+            'zoom_in',
+            'zoom_out',
+            'zoom_reset',
             'back',
             'forward',
             'refresh',
             'find_on_page',
             'youtube_play_pause',
             'youtube_next',
+            'youtube_prev',
+            'youtube_mute',
+            'youtube_fullscreen',
+            'youtube_theater',
+            'youtube_captions',
+            'youtube_forward',
+            'youtube_rewind',
+            'youtube_speed_up',
+            'youtube_speed_down',
             'youtube_skip_ad',
             'launch_debug',
           ],
@@ -463,11 +479,16 @@ export const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['remind', 'delayed_command', 'list', 'cancel'] },
+        action: { type: 'string', enum: ['remind', 'remind_date', 'agenda', 'ack', 'delayed_command', 'list', 'cancel'] },
         delay_minutes: { type: 'number', description: 'Delay in minutes from now (e.g. 5 or 0.5)' },
+        trigger_at: { type: 'number', description: 'Epoch ms for scheduled calendar date/time reminder' },
+        date_key: { type: 'string', description: 'Date key YYYY-MM-DD' },
+        has_explicit_time: { type: 'boolean', description: 'Whether a specific clock time was requested' },
+        time_label: { type: 'string', description: 'Human-readable clock time e.g. 6:00 PM' },
+        early_warn_minutes: { type: 'number', description: 'Advance warning minutes before event (default 30)' },
         message: { type: 'string', description: 'Reminder message or task description' },
         command: { type: 'string', description: 'Shell command for delayed_command' },
-        task_id: { type: 'string', description: 'Task ID to cancel, or "all"' },
+        task_id: { type: 'string', description: 'Task ID to cancel/acknowledge, or "all"' },
       },
       required: ['action'],
     },
@@ -814,6 +835,24 @@ export async function executeFunctionCall(
         const act = String(args.action || 'list').toLowerCase();
         if (act === 'remind') {
           return { result: await api.scheduler('remind', args.delay_minutes ?? 5, args.message || 'Reminder') };
+        }
+        if (act === 'remind_date') {
+          return {
+            result: await api.scheduler('remind_date', {
+              triggerAt: args.trigger_at,
+              dateKey: args.date_key || '',
+              hasExplicitTime: Boolean(args.has_explicit_time),
+              timeLabel: args.time_label || '',
+              message: args.message || 'Scheduled Reminder',
+              earlyWarnMinutes: args.early_warn_minutes ?? 30,
+            }),
+          };
+        }
+        if (act === 'agenda') {
+          return { result: await api.scheduler('agenda') };
+        }
+        if (act === 'ack') {
+          return { result: await api.scheduler('ack', args.task_id || 'all') };
         }
         if (act === 'delayed_command') {
           return {

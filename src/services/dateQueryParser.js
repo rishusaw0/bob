@@ -36,6 +36,9 @@ export function isEpisodicHistoryQuery(text) {
   const raw = String(text || '').trim();
   if (!raw || raw.length > 220) return false;
   const lower = raw.toLowerCase();
+  if (/\b(remind|reminder|yaad dilana|yaad dila|yaad dilao|yaad rakhna|alarm|timer)\b/i.test(lower)) {
+    return false;
+  }
 
   const hasPastRecallPhrase =
     /\b(kya pucha|kya bola|kya kaha|kya baat|kya kaam|kya command|kya jawaab|kya jawab|pucha tha|bola tha|kaha tha|diya tha|kiya tha|baat hui|what did i ask|what did i say|what did we talk|what did we discuss|what did you answer|what happened on|history of|maine kab|kab pucha|kab bola)\b|क्या पूछा|क्या बोला|क्या बात|कब पूछा/i.test(

@@ -101,15 +101,31 @@ switch ($Task) {
     } | ConvertTo-Json -Compress)
   }
   "new_tab"            { Send-Combo @(0x11, 0x54); Write-Output "Opened new tab in $($browser.ProcessName)" }
+  "new_incognito"      { Send-Combo @(0x11, 0x10, 0x4E); Write-Output "Opened Incognito/Private window in $($browser.ProcessName)" }
   "close_tab"          { Send-Combo @(0x11, 0x57); Write-Output "Closed active tab in $($browser.ProcessName)" }
   "reopen_tab"         { Send-Combo @(0x11, 0x10, 0x54); Write-Output "Reopened last closed tab" }
   "next_tab"           { Send-Combo @(0x11, 0x09); Write-Output "Switched to next tab" }
   "prev_tab"           { Send-Combo @(0x11, 0x10, 0x09); Write-Output "Switched to previous tab" }
+  "downloads"          { Send-Combo @(0x11, 0x4A); Write-Output "Opened browser Downloads" }
+  "history"            { Send-Combo @(0x11, 0x48); Write-Output "Opened browser History" }
+  "bookmarks"          { Send-Combo @(0x11, 0x10, 0x4F); Write-Output "Opened Bookmark Manager" }
+  "zoom_in"            { Send-Combo @(0x11, 0xBB); Write-Output "Zoomed in browser page" }
+  "zoom_out"           { Send-Combo @(0x11, 0xBD); Write-Output "Zoomed out browser page" }
+  "zoom_reset"         { Send-Combo @(0x11, 0x30); Write-Output "Reset browser zoom to 100%" }
   "back"               { Send-Combo @(0x12, 0x25); Write-Output "Navigated Back" }
   "forward"            { Send-Combo @(0x12, 0x27); Write-Output "Navigated Forward" }
   "refresh"            { Send-Combo @(0x74); Write-Output "Refreshed active tab" }
-  "youtube_play_pause" { Send-Combo @(0x4B); Write-Output "Toggled video playback (K)" }
+  "youtube_play_pause" { Send-Combo @(0x4B); Write-Output "Toggled YouTube playback (K)" }
   "youtube_next"       { Send-Combo @(0x10, 0x4E); Write-Output "Skipped to next video (Shift+N)" }
+  "youtube_prev"       { Send-Combo @(0x10, 0x50); Write-Output "Switched to previous video (Shift+P)" }
+  "youtube_mute"       { Send-Combo @(0x4D); Write-Output "Toggled YouTube mute (M)" }
+  "youtube_fullscreen" { Send-Combo @(0x46); Write-Output "Toggled YouTube fullscreen (F)" }
+  "youtube_theater"    { Send-Combo @(0x54); Write-Output "Toggled YouTube theater mode (T)" }
+  "youtube_captions"   { Send-Combo @(0x43); Write-Output "Toggled YouTube subtitles/captions (C)" }
+  "youtube_forward"    { Send-Combo @(0x4C); Write-Output "Forwarded YouTube 10 seconds (L)" }
+  "youtube_rewind"     { Send-Combo @(0x4A); Write-Output "Rewound YouTube 10 seconds (J)" }
+  "youtube_speed_up"   { Send-Combo @(0x10, 0xBE); Write-Output "Increased YouTube playback speed" }
+  "youtube_speed_down" { Send-Combo @(0x10, 0xBC); Write-Output "Decreased YouTube playback speed" }
   "find_on_page" {
     if ($Arg1) {
       [System.Windows.Forms.Clipboard]::SetText($Arg1)

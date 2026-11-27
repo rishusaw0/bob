@@ -2,7 +2,17 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const MAX_DELAY_MS = 24 * 60 * 60 * 1000; // 24 hours max
+const MAX_DELAY_MS = 120 * 24 * 60 * 60 * 1000; // Up to 120 days scheduling horizon
+const TIMER_SLICE_MS = 24 * 60 * 60 * 1000; // Safe 24h Node timer slices to avoid 32-bit overflow
+const RETENTION_MS = 90 * 24 * 60 * 60 * 1000; // Retain reminders & missed items for 90 days (3 months)
+
+function toLocalDateKey(ts = Date.now()) {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 const PC_MACROS = [
   {
@@ -118,14 +128,41 @@ function createScheduler({
     const task = tasks.get(id);
     if (!task) return;
     clearTimer(id);
-    tasks.delete(id);
-    persist();
-    emitListUpdate();
+
+    const now = Date.now();
+    // 30-Minute Early Warning phase (keep main reminder armed afterward)
+    if (task.kind === 'reminder' && task.earlyWarnAt && !task.earlyWarned && now < task.triggerAt - 60000) {
+      task.earlyWarned = true;
+      task.status = 'early_warned';
+      persist();
+      armTimer(task);
+      emitListUpdate();
+      const warnTitle = 'JEEVA AI · 30 Min Advance Reminder';
+      const warnBody = `30 minute baad (${task.timeLabel || ''}): ${task.message}`;
+      showNativeNotification(warnTitle, warnBody);
+      if (typeof onFire === 'function') {
+        onFire({ ...task, earlyWarning: true, firedAt: now });
+      }
+      return;
+    }
+
+    if (task.kind === 'reminder' && task.retainDays) {
+      // Keep date reminders for 90 days so catch-up & history stay available
+      task.fired = true;
+      task.firedAt = now;
+      task.status = 'fired';
+      persist();
+      emitListUpdate();
+    } else {
+      tasks.delete(id);
+      persist();
+      emitListUpdate();
+    }
 
     if (task.kind === 'reminder') {
       showNativeNotification('JEEVA AI Reminder', task.message || 'Scheduled reminder');
       if (typeof onFire === 'function') {
-        onFire({ ...task, firedAt: Date.now() });
+        onFire({ ...task, firedAt: now });
       }
       return;
     }
@@ -144,17 +181,29 @@ function createScheduler({
         }
       }
       if (typeof onFire === 'function') {
-        onFire({ ...task, firedAt: Date.now(), execResult });
+        onFire({ ...task, firedAt: now, execResult });
       }
     }
   }
 
   function armTimer(task) {
     clearTimer(task.id);
-    const delayMs = Math.max(50, Math.min(MAX_DELAY_MS, task.triggerAt - Date.now()));
+    const now = Date.now();
+    const nextTarget =
+      task.earlyWarnAt && !task.earlyWarned && task.earlyWarnAt > now ? task.earlyWarnAt : task.triggerAt;
+    const remainingMs = Math.max(50, nextTarget - now);
+    const sliceMs = Math.min(TIMER_SLICE_MS, remainingMs);
     const handle = setTimeout(() => {
-      fireTask(task.id);
-    }, delayMs);
+      const current = tasks.get(task.id);
+      if (!current) return;
+      const targetNow =
+        current.earlyWarnAt && !current.earlyWarned ? current.earlyWarnAt : current.triggerAt;
+      if (targetNow - Date.now() > 500) {
+        armTimer(current);
+      } else {
+        fireTask(task.id);
+      }
+    }, sliceMs);
     if (typeof handle.unref === 'function') handle.unref();
     timers.set(task.id, handle);
   }
@@ -172,9 +221,27 @@ function createScheduler({
 
       for (const item of raw) {
         if (!item || !item.id || !item.triggerAt) continue;
-        if (item.triggerAt <= now) {
+        // Prune items older than 90 days
+        if (now - item.triggerAt > RETENTION_MS) {
           changed = true;
-          // Fire missed reminders lightly, but never auto-run overdue delayed shell commands on reboot
+          continue;
+        }
+        if (item.triggerAt <= now) {
+          if (item.kind === 'reminder' && item.retainDays) {
+            if (!item.fired && !item.missed) {
+              item.missed = true;
+              item.status = 'missed';
+              changed = true;
+              showNativeNotification('JEEVA AI Missed Reminder', item.message || 'Scheduled reminder');
+              if (typeof onFire === 'function') {
+                onFire({ ...item, missed: true, firedAt: now });
+              }
+            }
+            tasks.set(item.id, item);
+            continue;
+          }
+          changed = true;
+          // Fire legacy short missed reminders within 12h, never auto-run overdue delayed shell commands on reboot
           if (item.kind === 'reminder' && (now - item.triggerAt) < 12 * 3600 * 1000) {
             showNativeNotification('JEEVA AI Missed Reminder', item.message || 'Scheduled reminder');
             if (typeof onFire === 'function') {
@@ -245,10 +312,106 @@ function createScheduler({
     return task;
   }
 
+  function scheduleDateReminder({
+    triggerAt,
+    dateKey = '',
+    hasExplicitTime = false,
+    timeLabel = '',
+    message = '',
+    earlyWarnMinutes = 30,
+  } = {}) {
+    init();
+    const now = Date.now();
+    const targetMs = Number(triggerAt);
+    if (!Number.isFinite(targetMs) || targetMs <= now) {
+      throw new Error('Reminder date/time must be in the future.');
+    }
+    if (targetMs - now > MAX_DELAY_MS) {
+      throw new Error('Reminder cannot be more than 120 days ahead.');
+    }
+
+    const text = String(message || '').trim() || 'Scheduled Reminder';
+    const cleanDateKey = dateKey || toLocalDateKey(targetMs);
+    const earlyMs = Math.max(0, Number(earlyWarnMinutes) || 0) * 60 * 1000;
+    const earlyWarnAt =
+      hasExplicitTime && earlyMs > 0 && targetMs - now > earlyMs + 60 * 1000 ? targetMs - earlyMs : null;
+
+    const task = {
+      id: `drem_${crypto.randomBytes(4).toString('hex')}`,
+      kind: 'reminder',
+      retainDays: 90,
+      message: text.slice(0, 300),
+      triggerAt: targetMs,
+      dateKey: cleanDateKey,
+      hasExplicitTime: Boolean(hasExplicitTime),
+      timeLabel: String(timeLabel || ''),
+      earlyWarnAt,
+      earlyWarned: false,
+      fired: false,
+      missed: false,
+      acknowledged: false,
+      status: 'scheduled',
+      createdAt: now,
+    };
+    tasks.set(task.id, task);
+    armTimer(task);
+    persist();
+    emitListUpdate();
+    return task;
+  }
+
+  function getAgendaSummary() {
+    init();
+    const now = Date.now();
+    const todayKey = toLocalDateKey(now);
+    const todayItems = [];
+    const missedItems = [];
+    const upcomingItems = [];
+
+    for (const t of tasks.values()) {
+      if (t.kind !== 'reminder' || t.acknowledged) continue;
+      if (t.triggerAt <= now || t.missed) {
+        if (now - t.triggerAt <= RETENTION_MS) {
+          missedItems.push(t);
+        }
+      } else if (t.dateKey === todayKey) {
+        todayItems.push(t);
+      } else {
+        upcomingItems.push(t);
+      }
+    }
+
+    todayItems.sort((a, b) => a.triggerAt - b.triggerAt);
+    missedItems.sort((a, b) => b.triggerAt - a.triggerAt);
+    upcomingItems.sort((a, b) => a.triggerAt - b.triggerAt);
+
+    return { todayKey, todayItems, missedItems, upcomingItems };
+  }
+
+  function acknowledgeAgenda(idOrAll = 'all') {
+    init();
+    let updated = 0;
+    for (const t of tasks.values()) {
+      if (t.kind !== 'reminder') continue;
+      if (idOrAll === 'all' || t.id === idOrAll) {
+        if (t.fired || t.missed || t.triggerAt <= Date.now()) {
+          t.acknowledged = true;
+          updated++;
+        }
+      }
+    }
+    if (updated > 0) {
+      persist();
+      emitListUpdate();
+    }
+    return { acknowledged: updated };
+  }
+
   function listTasks() {
     init();
     const now = Date.now();
     return Array.from(tasks.values())
+      .filter((t) => !t.acknowledged && (!t.fired || t.triggerAt > now))
       .sort((a, b) => a.triggerAt - b.triggerAt)
       .map((t) => ({
         ...t,
@@ -361,6 +524,9 @@ function createScheduler({
   return {
     init,
     scheduleReminder,
+    scheduleDateReminder,
+    getAgendaSummary,
+    acknowledgeAgenda,
     scheduleDelayedCommand,
     listTasks,
     cancelTask,

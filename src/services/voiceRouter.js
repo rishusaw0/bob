@@ -927,7 +927,7 @@ async function trySingleFastVoiceAction(rawText, requestPermission = null) {
     lower.match(/^([a-z0-9\s._-]{2,24})\s+(?:open|kholo|chalao|chala|khol do|chala do)$/i);
   if (openMatch) {
     const appTarget = openMatch[1].trim();
-    if (!/\b(setting|settings|file|folder|tab|url|gaana|gana|music|song|track|volume|brightness|awaz|mode|theme)\b/i.test(appTarget)) {
+    if (!/\b(setting|settings|file|folder|tab|url|gaana|gana|music|song|track|volume|brightness|awaz|mode|theme|incognito|private|downloads|history|bookmarks|github|pulls|issues|notifications|terminal|command palette|sidebar)\b/i.test(appTarget)) {
       const out = await runFast('open_application', { app_name: appTarget }, () => api.openApp(appTarget, ''));
       return {
         handled: true,

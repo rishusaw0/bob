@@ -184,13 +184,64 @@ export default function App() {
 
     const unsubSched = window.electronAPI?.onSchedulerFired?.((item) => {
       const label = item?.message || item?.description || 'Scheduled PC task completed';
+      if (item?.earlyWarning) {
+        toast.info(`⏰ 30 Min Alert (${item.timeLabel || ''}): ${label}`);
+        speakText?.(`30 minute baad aapka kaam hai: ${label}`, { instant: true }).catch?.(() => {});
+        return;
+      }
       toast.success(`⏰ ${label}`);
       if (item?.kind === 'reminder') {
-        speakText?.(`Reminder: ${label}`, { autoStop: true }).catch?.(() => {});
+        speakText?.(`Reminder: ${label}`, { instant: true }).catch?.(() => {});
       }
     });
 
+    // Proactive Startup / Device-Open Catch-Up for Today's & Missed Reminders (90-day retention)
+    const agendaTimer = setTimeout(async () => {
+      if (!window.electronAPI?.scheduler) return;
+      try {
+        const agenda = await window.electronAPI.scheduler('agenda');
+        const todayItems = Array.isArray(agenda?.todayItems) ? agenda.todayItems : [];
+        const missedItems = Array.isArray(agenda?.missedItems) ? agenda.missedItems : [];
+        if (todayItems.length === 0 && missedItems.length === 0) return;
+        if (sessionStorage.getItem('jeeva_agenda_announced') === (agenda?.todayKey || '1')) return;
+        sessionStorage.setItem('jeeva_agenda_announced', agenda?.todayKey || '1');
+
+        const lines = [];
+        if (todayItems.length > 0) {
+          lines.push('**Aaj ke Reminders:**');
+          todayItems.forEach((it) => lines.push(`• ${it.timeLabel || 'Today'}: ${it.message}`));
+        }
+        if (missedItems.length > 0) {
+          lines.push('\n**Jab PC band tha tab yeh kaam miss hue (kya ho gaye?):**');
+          missedItems.slice(0, 5).forEach((it) => lines.push(`• ${it.dateKey} (${it.timeLabel || ''}): ${it.message}`));
+        }
+        const msgText = lines.join('\n');
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now() + 7,
+            role: 'assistant',
+            text: msgText,
+            brainMeta: { tier: 'fast', modelLabel: 'Smart Agenda · 0 API' },
+            timestamp: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]);
+
+        const spokenParts = [];
+        if (todayItems.length > 0) {
+          spokenParts.push(`Aaj aapko yaad dilana tha: ${todayItems.map((i) => i.message).join(', ')}.`);
+        }
+        if (missedItems.length > 0) {
+          spokenParts.push(`Jab PC band tha tab miss hua tha: ${missedItems[0].message}. Kya yeh kaam ho gaya?`);
+        }
+        if (spokenParts.length > 0) {
+          speakText?.(spokenParts.join(' '), { instant: true }).catch?.(() => {});
+        }
+      } catch {}
+    }, 1500);
+
     return () => {
+      clearTimeout(agendaTimer);
       window.removeEventListener('popstate', onPopState);
       window.removeEventListener('jeeva-cloud-url-updated', onCloudUrlEvent);
       window.removeEventListener('jeeva-ai-name-updated', onAiNameEvent);

@@ -143,6 +143,18 @@ sched.saveMacro({
 });
 const dry = sched.dryRunMacro('custom_' + sched.getAllMacros().find((m) => m.name === 'Unit Macro').id.replace('custom_', ''), { batteryPct: 18 });
 assert.equal(dry.conditionMet, true);
+
+// 90-day calendar date/time reminder + 30-min earlyWarnAt + missed/today catch-up
+const futureAt = Date.now() + 2 * 3600 * 1000;
+const dTask = sched.scheduleDateReminder({
+  triggerAt: futureAt,
+  hasExplicitTime: true,
+  timeLabel: '6:00 PM',
+  message: 'Meeting with client',
+  earlyWarnMinutes: 30,
+});
+assert.ok(dTask.earlyWarnAt && Math.abs(futureAt - dTask.earlyWarnAt - 30 * 60 * 1000) < 1000);
+assert.equal(sched.getAgendaSummary().todayItems.length + sched.getAgendaSummary().upcomingItems.length >= 1, true);
 sched.dispose();
 fs.rmSync(tmpSchedDir, { recursive: true, force: true });
 
@@ -477,6 +489,30 @@ assert.equal(docLocRead.handled, true);
 assert.equal(docLocRead.tools[0].name, 'read_document_file');
 assert.equal(docLocRead.autoSpeak, true);
 assert.ok(docLocRead.replyText.toLowerCase().includes('solar'));
+
+// Date/Time Reminder + VS Code / GitHub / Chrome / YouTube local control tests
+const decRem = await runLocalQuickBrain('5 December ko shaam 6 baje yaad dilana meeting hai');
+assert.equal(decRem.handled, true);
+assert.equal(decRem.tools[0].name, 'schedule_pc_task');
+assert.equal(decRem.tools[0].args.action, 'remind_date');
+assert.equal(decRem.tools[0].args.early_warn_minutes, 30);
+
+const ytFs = await runLocalQuickBrain('youtube fullscreen karo');
+assert.equal(ytFs.handled, true);
+assert.equal(ytFs.tools[0].name, 'browser_control');
+assert.equal(ytFs.tools[0].args.action, 'youtube_fullscreen');
+
+const incog = await runLocalQuickBrain('incognito kholo');
+assert.equal(incog.handled, true);
+assert.equal(incog.tools[0].args.action, 'new_incognito');
+
+const vscTerm = await runLocalQuickBrain('vs code terminal kholo');
+assert.equal(vscTerm.handled, true);
+assert.equal(vscTerm.tools[0].name, 'press_shortcut');
+
+const ghPulls = await runLocalQuickBrain('github pulls kholo');
+assert.equal(ghPulls.handled, true);
+assert.equal(ghPulls.tools[0].args.url, 'https://github.com/pulls');
 
 const volAur = await tryFastVoiceAction('volume thoda aur badhao');
 assert.equal(volAur.handled, true);
