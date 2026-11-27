@@ -150,7 +150,7 @@ const ROMAN_HINDI_PHONETIC = new Map([
 export function normalizeRomanizedHindiForSpeech(text, profile = 'hinglish') {
   const source = String(text || '');
   if (!['hindi', 'hinglish'].includes(profile)) return source;
-  return source.replace(/\\b[a-z]+\\b/gi, (word) => ROMAN_HINDI_PHONETIC.get(word.toLowerCase()) || word);
+  return source.replace(/\b[a-z]+\b/gi, (word) => ROMAN_HINDI_PHONETIC.get(word.toLowerCase()) || word);
 }
 
 const HINGLISH_WORDS = new Set([
