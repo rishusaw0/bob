@@ -1650,22 +1650,27 @@ export default function SettingsPanel({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-obsidian-border bg-obsidian-bg/50">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3.5 py-1.5 rounded-lg text-xs text-obsidian-secondary hover:text-obsidian-text transition-colors"
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-zinc-100 text-zinc-950 text-xs font-medium hover:bg-white transition-colors"
-          >
-            {saved && <LuCheck className="w-3.5 h-3.5 text-emerald-600" />}
-            {saved ? 'Saved' : 'Save Changes'}
-          </button>
+        <div className="flex items-center justify-between gap-2 px-5 py-3.5 border-t border-obsidian-border bg-obsidian-bg/50">
+          <span className="text-[11px] font-mono text-obsidian-muted">
+            JEEVA AI v{updaterState?.currentVersion || '1.0.0'} · WebBuildix
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3.5 py-1.5 rounded-lg text-xs text-obsidian-secondary hover:text-obsidian-text transition-colors"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-zinc-100 text-zinc-950 text-xs font-medium hover:bg-white transition-colors"
+            >
+              {saved && <LuCheck className="w-3.5 h-3.5 text-emerald-600" />}
+              {saved ? 'Saved' : 'Save Changes'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

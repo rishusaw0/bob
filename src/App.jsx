@@ -240,6 +240,11 @@ export default function App() {
       } catch {}
     }, 1500);
 
+    const unsubEmergency = window.electronAPI?.onEmergencyStop?.(() => {
+      stopSpeech();
+      toast.info('Emergency Stop: All voice & speech actions stopped.');
+    });
+
     return () => {
       clearTimeout(agendaTimer);
       window.removeEventListener('popstate', onPopState);
@@ -247,6 +252,7 @@ export default function App() {
       window.removeEventListener('jeeva-ai-name-updated', onAiNameEvent);
       unsubDeep?.();
       unsubSched?.();
+      unsubEmergency?.();
     };
   }, [updateCloudApiUrl]);
 

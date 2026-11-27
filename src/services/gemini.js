@@ -3,6 +3,7 @@ import { GoogleGenAI } from '@google/genai';
 import { TOOLS, executeFunctionCall, clearToolSessionPermissions } from './tools.js';
 import { recallRelevantMemories } from './memoryRag.js';
 import { getReplyStyle } from './userPrefs.js';
+import { assertCloudAllowed, isStrictOfflineMode } from './offlineMode.js';
 
 let client = null;
 let previousInteractionId = null;
@@ -178,6 +179,7 @@ export async function sendMessage(
   onToolUpdate = null,
   options = {}
 ) {
+  assertCloudAllowed('Gemini Cloud Chat');
   if (!client) throw new Error('Gemini not initialized. Please set your API key.');
 
   const isPdf = attachment?.mimeType === 'application/pdf' || attachment?.name?.toLowerCase().endsWith('.pdf');
@@ -576,6 +578,7 @@ export async function createReplicatedVoice({
 }
 
 export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
+  if (isStrictOfflineMode()) throw new Error('Cloud TTS blocked in Strict Offline Mode');
   if (!client) throw new Error('Gemini not initialized');
 
   const customVoiceId =

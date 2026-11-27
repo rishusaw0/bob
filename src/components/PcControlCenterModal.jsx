@@ -25,6 +25,13 @@ import { rememberUserMemory, listAllMemories, forgetMemoryItem } from '../servic
 import { queryEpisodicTimeline, forgetEpisodicDay } from '../services/episodicMemory';
 import { toDateKey } from '../services/dateQueryParser';
 import { getBrainStats } from '../services/brainRouter';
+import {
+  SERVICE_CLASSIFICATION,
+  isStrictOfflineMode,
+  setStrictOfflineMode,
+  isOnlineNow,
+} from '../services/offlineMode';
+import { speakText, stopSpeech } from '../services/speech';
 import { toast } from '../services/toast';
 
 function parseJsonSafe(val, fallback) {
@@ -87,6 +94,9 @@ export default function PcControlCenterModal({
   const [episodicDate, setEpisodicDate] = useState('');
   const [episodicTopic, setEpisodicTopic] = useState('');
   const [episodicSource, setEpisodicSource] = useState(initialTab === 'voice_history' ? 'voice' : '');
+  const [diagReport, setDiagReport] = useState(null);
+  const [strictOffline, setStrictOfflineState] = useState(() => isStrictOfflineMode());
+  const [onlineState, setOnlineState] = useState(() => isOnlineNow());
 
   useEffect(() => {
     if (isOpen && initialTab) {
@@ -279,6 +289,7 @@ export default function PcControlCenterModal({
             { id: 'workflows', label: 'Workflows', icon: LuWorkflow },
             { id: 'system', label: 'Hardware', icon: LuCpu },
             { id: 'audit', label: 'Audit & Memory', icon: LuDatabase },
+            { id: 'diagnostics', label: 'Diagnostics', icon: LuShieldAlert },
           ].map((item) => {
             const Icon = item.icon;
             return (
@@ -1124,6 +1135,139 @@ export default function PcControlCenterModal({
                         <p className="text-[10px] text-obsidian-muted">{e.timestamp}</p>
                       </div>
                     ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {api && tab === 'diagnostics' && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className={`px-2.5 py-1 rounded-full text-[11px] font-mono border ${
+                    onlineState
+                      ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
+                      : 'bg-amber-500/15 border-amber-500/40 text-amber-300'
+                  }`}>
+                    {onlineState ? 'Internet: Online' : 'Internet: Offline'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = setStrictOfflineMode(!strictOffline);
+                      setStrictOfflineState(next);
+                      toast.info(next ? 'Strict Offline Mode ON — Cloud API calls blocked' : 'Strict Offline Mode OFF');
+                    }}
+                    className={`px-3 py-1 rounded-full text-[11px] font-mono border transition-colors ${
+                      strictOffline
+                        ? 'bg-sky-500/20 border-sky-500/45 text-sky-200'
+                        : 'bg-obsidian-bg border-obsidian-border text-obsidian-secondary'
+                    }`}
+                  >
+                    Strict Offline Mode: {strictOffline ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    stopSpeech();
+                    await window.electronAPI?.emergencyStop?.();
+                    toast.info('Emergency Stop triggered — voice, sidecar & speech halted.');
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-semibold"
+                >
+                  Emergency Stop All Actions
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setOnlineState(isOnlineNow());
+                    const d = await window.electronAPI?.getDiagnostics?.();
+                    if (d) setDiagReport(d);
+                    toast.success('Diagnostics refreshed');
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-obsidian-bg border border-obsidian-border text-xs text-obsidian-text hover:bg-obsidian-elevated"
+                >
+                  Run Diagnostics
+                </button>
+                <button
+                  type="button"
+                  onClick={() => speakText('Offline speaker test successful. JEEVA AI ready hai.', { instant: true })}
+                  className="px-3 py-1.5 rounded-lg bg-obsidian-bg border border-obsidian-border text-xs text-obsidian-text hover:bg-obsidian-elevated"
+                >
+                  Test Offline Speaker
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setOnlineState(isOnlineNow());
+                    toast.info(isOnlineNow() ? 'Network interface reports Online' : 'Network interface is Offline');
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-obsidian-bg border border-obsidian-border text-xs text-obsidian-text hover:bg-obsidian-elevated"
+                >
+                  Check Internet
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const d = diagReport || (await window.electronAPI?.getDiagnostics?.()) || {};
+                    const safeReport = {
+                      ...d,
+                      strictOfflineMode: strictOffline,
+                      browserOnline: isOnlineNow(),
+                      brainStats: getBrainStats(),
+                      services: SERVICE_CLASSIFICATION,
+                    };
+                    const blob = new Blob([JSON.stringify(safeReport, null, 2)], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = `jeeva-diagnostics-${Date.now()}.json`;
+                    a.click();
+                    toast.success('Privacy-safe diagnostic report exported');
+                  }}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-xs text-emerald-300"
+                >
+                  <LuDownload className="w-3.5 h-3.5" />
+                  Export Diagnostic Report
+                </button>
+              </div>
+
+              {diagReport && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="p-2.5 rounded-lg bg-obsidian-bg border border-obsidian-border">
+                    <p className="text-[10px] text-obsidian-muted">App Version</p>
+                    <p className="font-mono text-obsidian-text">v{diagReport.appVersion || '1.0.0'}</p>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-obsidian-bg border border-obsidian-border">
+                    <p className="text-[10px] text-obsidian-muted">RAM Used</p>
+                    <p className="font-mono text-obsidian-text">{diagReport.usedMemPct ?? 0}% ({diagReport.freeMemMb ?? 0} MB free)</p>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-obsidian-bg border border-obsidian-border">
+                    <p className="text-[10px] text-obsidian-muted">Offline Wake</p>
+                    <p className="font-mono text-obsidian-text">{diagReport.offlineVoice?.running ? 'Running' : diagReport.offlineVoice?.available === false ? 'Unavailable' : 'Standby'}</p>
+                  </div>
+                  <div className="p-2.5 rounded-lg bg-obsidian-bg border border-obsidian-border">
+                    <p className="text-[10px] text-obsidian-muted">Scheduled Tasks</p>
+                    <p className="font-mono text-obsidian-text">{diagReport.schedulerCount ?? 0} saved</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="p-3 rounded-xl bg-obsidian-bg border border-obsidian-border space-y-2">
+                <p className="text-[11px] font-mono uppercase tracking-wider text-obsidian-muted">
+                  Service Offline Classification
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+                  {SERVICE_CLASSIFICATION.map((svc) => (
+                    <div key={svc.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded bg-obsidian-surface border border-obsidian-border/60">
+                      <span className="text-obsidian-text truncate">{svc.name}</span>
+                      <span className="text-[10px] font-mono text-emerald-300 flex-shrink-0">{svc.tier}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

@@ -666,6 +666,23 @@ assert.ok(fs.existsSync(path.join(ROOT, 'public/robots.txt')));
 assert.ok(fs.readFileSync(path.join(ROOT, 'public/sitemap.xml'), 'utf8').includes('https://webbuildix.online/'));
 assert.ok(fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes('rel="canonical" href="https://webbuildix.online/"'));
 assert.ok(fs.readFileSync(path.join(ROOT, 'public/icon.svg'), 'utf8').includes('viewBox="0 0 128 128"'));
+
+// Regression tests: Strict Offline Mode, NSIS installer hooks & offline-voice resilience
+const {
+  isStrictOfflineMode,
+  setStrictOfflineMode,
+  assertCloudAllowed,
+  SERVICE_CLASSIFICATION,
+} = await import(pathToFileURL(path.join(ROOT, 'src/services/offlineMode.js')).href);
+assert.equal(isStrictOfflineMode(), false);
+assert.ok(SERVICE_CLASSIFICATION.length >= 10);
+setStrictOfflineMode(true);
+assert.equal(isStrictOfflineMode(), true);
+assert.throws(() => assertCloudAllowed('Gemini Cloud Chat'), /Strict Offline Mode/);
+setStrictOfflineMode(false);
+assert.ok(fs.existsSync(path.join(ROOT, 'build/installer.nsh')));
+assert.ok(fs.readFileSync(path.join(ROOT, 'build/installer.nsh'), 'utf8').includes('taskkill /F /IM "JEEVA AI.exe"'));
+assert.ok(fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8').includes("In.Peek() -eq -1) {\r\n        break") || fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8').includes("In.Peek() -eq -1) {\n        break"));
 assert.ok(computeAdaptiveSilenceMs(500, 740) <= 540);
 assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'), 'english');
 assert.equal(detectVoiceProfile('Bhai laptop bohot slow ho raha hai'), 'hinglish');

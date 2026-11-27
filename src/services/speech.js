@@ -1,5 +1,6 @@
 // Smart Multi-Voice Read-Aloud Engine (Indian English, Hindi, Hinglish + Realistic Human Studio Voices)
 import { textToSpeech, resetRegionalVoiceCache, isGeminiReady } from './gemini.js';
+import { canUseExternalCloud } from './offlineMode.js';
 
 export const VOICE_PROFILES = {
   auto: { id: 'auto', label: 'Auto Detect', shortLabel: 'Auto' },
@@ -594,8 +595,7 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
   const initialProfile =
     forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(clean) : selectedMode);
   const speedMode = getSpeechSpeedMode();
-  const isOnline = typeof navigator === 'undefined' || navigator.onLine !== false;
-  const canUseStudio = speedMode !== 'instant_local' && isOnline && isGeminiReady() && !instant;
+  const canUseStudio = speedMode !== 'instant_local' && canUseExternalCloud() && isGeminiReady() && !instant;
   const useInstantDirect = !canUseStudio;
 
   currentState = {
@@ -762,8 +762,7 @@ export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = n
 
   const canUseStudioNow = () => {
     const mode = getSpeechSpeedMode();
-    const online = typeof navigator === 'undefined' || navigator.onLine !== false;
-    return mode !== 'instant_local' && online && isGeminiReady();
+    return mode !== 'instant_local' && canUseExternalCloud() && isGeminiReady();
   };
 
   const getChunkProfile = (text) =>
