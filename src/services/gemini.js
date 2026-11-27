@@ -484,15 +484,15 @@ async function getRegionalVoices(accent = 'indian', persona = 'natural_warm') {
   return fallback;
 }
 
-const VOICE_STYLE_HINTS = {
+export const VOICE_STYLE_HINTS = {
   english:
-    'realistic human Indian English speaker (en-IN), warm conversational studio presence, natural micro-pauses at punctuation, subtle expressive emphasis, never robotic or monotonous',
+    'Professional Indian English studio speaker (en-IN). Use crisp consonants, clean vowel articulation, confident warm delivery and natural emphasis. Keep sentence-boundary pauses short and consistent; do not add long dramatic silences.',
   english_global:
-    'realistic human studio narrator, warm articulate conversational tone, natural breathing pauses and genuine human inflection without sounding synthetic',
+    'Professional human studio narrator with precise consonants, clear vowels, warm articulate delivery and natural inflection. Keep pauses concise and conversational, never theatrical.',
   hindi:
-    'realistic native Indian Hindi human speaker, warm expressive voice with natural conversational cadence, soft breathing pauses, and crisp authentic pronunciation',
+    'Native Indian Hindi speaker. Use standard, accurate Hindi pronunciation, crisp consonants, clear vowel sounds and natural matra pronunciation. Speak warmly and confidently with short conversational sentence pauses.',
   hinglish:
-    'realistic bilingual Indian human assistant (en-IN / hi-IN), friendly conversational warmth, effortless code-switching between English and Hindi with natural human rhythm',
+    'Fluent bilingual Indian Hinglish speaker. Pronounce Hindi words written in Latin letters as natural Hindi (not as English spelling); pronounce English words in clear Indian English. Switch languages smoothly without changing or dropping words. Use crisp consonants, distinct syllables, steady pacing and short natural pauses after full stops; avoid long gaps or exaggerated breaths.',
 };
 
 export async function createReplicatedVoice({
@@ -536,6 +536,10 @@ export async function createReplicatedVoice({
   };
 }
 
+export function getTtsModelPriority() {
+  return ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
+}
+
 export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
   if (!client) throw new Error('Gemini not initialized');
 
@@ -558,7 +562,8 @@ export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
   const voice = customVoiceId || voices[profile] || voices.hinglish;
   const styleKey = profile === 'english' && accent === 'global' ? 'english_global' : profile;
   const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;
-  const ttsModels = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
+  // Prefer full studio quality; Flash Lite remains a resilient fallback.
+  const ttsModels = getTtsModelPriority();
 
   let lastErr;
   for (const model of ttsModels) {
