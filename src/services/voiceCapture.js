@@ -446,6 +446,8 @@ export function startVoiceCapture({
 
   const startPcmCommandCapture = async () => {
     if (stopped) return;
+    clearTimeout(noSpeechTimer);
+    noSpeechTimer = null;
     try {
       onStatus('listening-audio');
       let noiseFloor = 0.018;
@@ -600,9 +602,13 @@ export function startVoiceCapture({
           cleanup();
           onResult(out, { pcm16k: null });
         } else if (!stopped) {
-          stopped = true;
-          cleanup();
-          onResult('', { pcm16k: null });
+          // Some Chromium builds end a continuous recognition session without
+          // emitting a no-speech error. Keep the command alive via PCM fallback.
+          if (recognition) {
+            try { recognition.onend = null; recognition.onerror = null; recognition.stop(); } catch {}
+            recognition = null;
+          }
+          startPcmCommandCapture();
         }
       };
 
