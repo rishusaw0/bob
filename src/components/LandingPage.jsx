@@ -182,20 +182,12 @@ export default function LandingPage({
           </nav>
 
           <div className="flex items-center gap-2">
-            {canInstallPWA && (
-              <button
-                onClick={onInstallPWA}
-                className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-xs text-zinc-200 transition-colors"
-              >
-                Install App
-              </button>
-            )}
             <button
-              onClick={onEnterWorkspace}
+              onClick={handleDownloadExe}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-gradient-to-r from-emerald-400 to-sky-400 text-zinc-950 text-xs font-semibold hover:brightness-110 transition-all shadow-md shadow-emerald-500/20"
             >
-              Open Workspace
-              <LuArrowRight className="w-3.5 h-3.5" />
+              <LuDownload className="w-3.5 h-3.5" />
+              Download (.exe)
             </button>
           </div>
         </div>
@@ -217,21 +209,26 @@ export default function LandingPage({
             Speak naturally in Hindi, Hinglish, or English. JEEVA runs Windows apps, types anywhere, reads PDFs &amp; your screen offline, remembers tasks for 90 days, and switches to Gemini Cloud only for heavy vision or live web queries.
           </p>
 
-          <div className="flex flex-wrap items-center justify-center gap-3 mb-12">
-            <button
-              onClick={handleDownloadExe}
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-white text-zinc-950 text-sm font-semibold hover:bg-zinc-200 transition-all shadow-lg shadow-white/10"
-            >
-              <LuDownload className="w-4 h-4" />
-              Download Windows (.exe)
-            </button>
-            <button
-              onClick={onEnterWorkspace}
-              className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-sm font-medium text-white backdrop-blur transition-all"
-            >
-              <LuGlobe className="w-4 h-4 text-sky-400" />
-              Launch Web Workspace
-            </button>
+          <div className="flex flex-col items-center justify-center gap-2.5 mb-12">
+            <div className="flex flex-wrap items-center justify-center gap-3">
+              <button
+                onClick={handleDownloadExe}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-400 to-sky-400 text-zinc-950 text-sm font-semibold hover:brightness-110 transition-all shadow-lg shadow-emerald-500/20"
+              >
+                <LuDownload className="w-4 h-4" />
+                Download for Windows (.exe)
+              </button>
+              <a
+                href="#features"
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-sm font-medium text-white backdrop-blur transition-all"
+              >
+                Explore Features
+                <LuArrowRight className="w-4 h-4 text-sky-400" />
+              </a>
+            </div>
+            <p className="text-[11px] font-mono text-zinc-500">
+              Windows 10 / 11 (64-bit) · Offline-First Desktop Software · Free
+            </p>
           </div>
         </div>
 
@@ -404,11 +401,11 @@ export default function LandingPage({
           </div>
 
           <button
-            onClick={onEnterWorkspace}
+            onClick={handleDownloadExe}
             className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-gradient-to-r from-emerald-400 to-sky-400 text-zinc-950 text-sm font-semibold hover:brightness-110 transition-all flex-shrink-0"
           >
-            <LuMonitor className="w-4 h-4" />
-            Launch JEEVA AI
+            <LuDownload className="w-4 h-4" />
+            Download for Windows (.exe)
           </button>
         </div>
       </section>
@@ -430,14 +427,23 @@ export default function LandingPage({
               </button>
             </div>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Build the desktop installer locally or host your latest <code className="text-emerald-300">JEEVA AI Setup 1.0.0.exe</code> and set <code className="text-sky-300">INSTALLER_DOWNLOAD_URL</code> on Render for 1-click download.
+              Download the latest Windows installer (<code className="text-emerald-300">JEEVA AI Setup 1.0.1.exe</code>) from GitHub Releases, or set <code className="text-sky-300">INSTALLER_DOWNLOAD_URL</code> on Render for instant 1-click download.
             </p>
-            <div className="flex justify-end">
+            <div className="flex items-center justify-end gap-2">
+              <a
+                href="https://github.com/rishusaw0/bob/releases/latest"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-emerald-400 text-zinc-950 text-xs font-semibold hover:brightness-110"
+              >
+                <LuDownload className="w-3.5 h-3.5" />
+                Open Releases
+              </a>
               <button
                 onClick={() => setShowDownloadGuide(false)}
-                className="px-4 py-1.5 rounded-lg bg-white text-zinc-950 text-xs font-semibold"
+                className="px-4 py-1.5 rounded-lg bg-white/10 text-white text-xs font-semibold"
               >
-                Got it
+                Close
               </button>
             </div>
           </div>
