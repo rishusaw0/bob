@@ -138,37 +138,28 @@ function createUpdater({ currentVersion = '1.0.0', shell, onStatus } = {}) {
     return { ...state };
   }
 
-  async function checkForUpdates({ githubRepo = '', feedUrl = '' } = {}) {
+  async function checkForUpdates({ githubRepo = 'rishusaw0/bob' } = {}) {
     emit({ checking: true, lastError: '' });
     try {
-      const cleanFeed = String(feedUrl || '').trim();
-      const cleanRepo = String(githubRepo || '').trim();
-      let endpoint = '';
-      if (cleanFeed) {
-        endpoint = cleanFeed;
-      } else if (/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(cleanRepo)) {
-        endpoint = `https://api.github.com/repos/${cleanRepo}/releases/latest`;
-      } else {
+      const cleanRepo = String(githubRepo || 'rishusaw0/bob').trim();
+      if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(cleanRepo)) {
         return emit({
           checking: false,
           updateAvailable: false,
-          lastError: 'Set a GitHub repo (owner/repo) or Render /api/config feed URL first.',
+          lastError: 'Set a valid GitHub repository (owner/repo) for Windows desktop releases.',
         });
       }
-
+      const endpoint = `https://api.github.com/repos/${cleanRepo}/releases/latest`;
       const data = await fetchJson(endpoint);
-      // Support both GitHub Releases payload and JEEVA /api/config JSON
-      const remoteVersion = String(
-        data.tag_name || data.latestVersion || data.version || currentVersion
-      ).replace(/^v/i, '');
+      const remoteVersion = String(data.tag_name || currentVersion).replace(/^v/i, '');
 
-      let dlUrl = String(data.installerUrl || data.downloadUrl || '').trim();
-      let digest = String(data.installerSha256 || data.sha256 || '').trim().replace(/^sha256:/i, '');
+      let dlUrl = '';
+      let digest = '';
       if (Array.isArray(data.assets)) {
-        const exeAsset = data.assets.find((a) => /\.exe$/i.test(a.name || '') && a.browser_download_url);
+        const exeAsset = data.assets.find((asset) => /\.exe$/i.test(asset.name || '') && asset.browser_download_url);
         if (exeAsset) {
-          if (!dlUrl) dlUrl = exeAsset.browser_download_url;
-          if (!digest && exeAsset.digest) digest = String(exeAsset.digest).replace(/^sha256:/i, '');
+          dlUrl = String(exeAsset.browser_download_url || '').trim();
+          digest = String(exeAsset.digest || '').replace(/^sha256:/i, '');
         }
       }
       const validDigest = /^[a-f0-9]{64}$/i.test(digest);

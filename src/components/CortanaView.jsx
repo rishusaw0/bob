@@ -8,7 +8,6 @@ import {
   LuSquare,
   LuWrench,
   LuSettings,
-  LuSmartphone,
   LuVolume2,
   LuPhone,
   LuPhoneOff,
@@ -26,7 +25,6 @@ export default function CortanaView({
   onExpandToChat,
   onSwitchSpeaker,
   onOpenSettings,
-  onOpenMobileModal,
   voiceMode,
   onVoiceModeChange,
   autoListenSignal,
@@ -139,15 +137,7 @@ export default function CortanaView({
             <LuMaximize2 className="w-3.5 h-3.5" />
           </button>
 
-          <button
-            onClick={onOpenMobileModal}
-            className="p-1.5 rounded text-obsidian-secondary hover:text-obsidian-text hover:bg-obsidian-elevated transition-colors"
-            title="Connect Phone"
-          >
-            <LuSmartphone className="w-3.5 h-3.5" />
-          </button>
-
-          <button
+remove Cortana phone button          <button
             onClick={onOpenSettings}
             className="p-1.5 rounded text-obsidian-secondary hover:text-obsidian-text hover:bg-obsidian-elevated transition-colors"
             title="Preferences"
