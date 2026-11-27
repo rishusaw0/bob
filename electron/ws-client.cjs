@@ -68,7 +68,7 @@ function createServerFrameReader(onFrame) {
 function connectRelayWebSocket({ urlStr, headers = {}, onOpen, onMessage, onAuthError, onClose, onError }) {
   const u = new URL(urlStr);
   const isLoopback = ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
-  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && isLoopback)) {
+  if (!['https:', 'wss:'].includes(u.protocol) && !(u.protocol === 'http:' && isLoopback) && !(u.protocol === 'ws:' && isLoopback)) {
     throw new Error('Relay WebSocket must use HTTPS/WSS; plaintext is permitted only on localhost.');
   }
   const lib = u.protocol === 'https:' || u.protocol === 'wss:' ? https : http;

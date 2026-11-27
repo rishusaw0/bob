@@ -20,6 +20,8 @@ const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim();
 const APP_PIN = (process.env.APP_PIN || '').trim();
 const RELAY_SECRET = (process.env.RELAY_SECRET || '').trim();
 const INSTALLER_DOWNLOAD_URL = (process.env.INSTALLER_DOWNLOAD_URL || '').trim();
+const INSTALLER_SHA256 = (process.env.INSTALLER_SHA256 || '').trim().toLowerCase();
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true';
 const PRIVATE_LOCK_ALL = process.env.PRIVATE_LOCK_ALL === 'true';
 const GEMINI_RPM_LIMIT = Math.max(5, Number(process.env.GEMINI_RPM_LIMIT) || 40);
 function loadSessionSecret() {
@@ -51,23 +53,10 @@ const SESSION_SECRET = loadSessionSecret();
 const relayAgents = new Map();
 const store = await createServerStore();
 
-const READ_ONLY_ACTIONS = new Set([
-  'liveStats',
-  'systemInfo',
-  'battery',
-  'runningApps',
-  'listInstalledApps',
-  'listFiles',
-  'searchFiles',
-]);
+const READ_ONLY_ACTIONS = new Set(['battery']);
 
-function isActionAllowedForReadOnly(action, args = []) {
-  if (READ_ONLY_ACTIONS.has(action)) return true;
-  if (action === 'wifi' && (!args[0] || args[0] === 'status')) return true;
-  if (action === 'diagnostics' && args[0] !== 'kill_process') return true;
-  if (action === 'clipboardHistory' && (!args[0] || args[0] === 'list')) return true;
-  if (action === 'scheduler' && (!args[0] || args[0] === 'list')) return true;
-  return false;
+function isActionAllowedForReadOnly(action) {
+  return READ_ONLY_ACTIONS.has(action);
 }
 
 const APP_VERSION = (() => {
@@ -99,8 +88,11 @@ function createTimedShareToken({ ownerKey, ttlMinutes = 60, scope = 'full' }) {
 }
 
 function getClientIp(req) {
-  const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return fwd || req.socket.remoteAddress || 'unknown';
+  if (TRUST_PROXY) {
+    const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    if (fwd) return fwd;
+  }
+  return req.socket.remoteAddress || 'unknown';
 }
 
 function checkGeminiRateLimit(req) {
@@ -184,9 +176,30 @@ function signToken(pin) {
 function isAuthorized(req) {
   if (!APP_PIN) return true;
   const token = String(req.headers['x-app-token'] || '').trim();
+  const expectedToken = signToken(APP_PIN);
+  if (token.length === expectedToken.length &&
+      crypto.timingSafeEqual(Buffer.from(token), Buffer.from(expectedToken))) return true;
   const pinHeader = String(req.headers['x-app-pin'] || '').trim();
-  if (pinHeader && pinHeader === APP_PIN) return true;
-  if (token && token === signToken(APP_PIN)) return true;
+  if (!pinHeader) return false;
+  const clientIp = getClientIp(req);
+  const now = Date.now();
+  const state = unlockAttempts.get(clientIp) || { count: 0, lockUntil: 0, lastAttempt: now };
+  if (now < state.lockUntil) return false;
+  if (pinHeader.length === APP_PIN.length &&
+      crypto.timingSafeEqual(Buffer.from(pinHeader), Buffer.from(APP_PIN))) {
+    unlockAttempts.delete(clientIp);
+    return true;
+  }
+  state.count += 1;
+  state.lastAttempt = now;
+  if (state.count >= 5) { state.lockUntil = now + 30000; state.count = 0; }
+  if (unlockAttempts.size > 2000) {
+    const cutoff = now - 10 * 60 * 1000;
+    for (const [ip, entry] of unlockAttempts) {
+      if ((entry.lastAttempt || 0) < cutoff && entry.lockUntil < now) unlockAttempts.delete(ip);
+    }
+  }
+  unlockAttempts.set(clientIp, state);
   return false;
 }
 
@@ -370,6 +383,7 @@ const server = http.createServer(async (req, res) => {
       requiresFullLock: Boolean(PRIVATE_LOCK_ALL && APP_PIN),
       authorized: isAuthorized(req),
       installerUrl: INSTALLER_DOWNLOAD_URL,
+      installerSha256: /^[a-f0-9]{64}$/i.test(INSTALLER_SHA256) ? INSTALLER_SHA256 : '',
       latestVersion: UPDATE_LATEST_VERSION,
       relayDevicesCount: countAgentsForOwner(ownerKey),
     });
@@ -424,6 +438,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 200, { ok: true, token: APP_PIN ? signToken(APP_PIN) : 'open' });
       } else {
         state.count++;
+        state.lastAttempt = now;
         if (state.count >= 5) {
           state.lockUntil = now + 30000;
           state.count = 0;
