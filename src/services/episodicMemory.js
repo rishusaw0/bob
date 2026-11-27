@@ -85,14 +85,16 @@ export async function queryEpisodicTimeline(filters = {}) {
   if (api?.episodicQuery) {
     return await api.episodicQuery(filters);
   }
-  const { dateKey = '', dateFrom = '', dateTo = '', weekday = '', timeOfDay = '', topic = '', limit = 25 } = filters;
+  const { dateKey = '', dateFrom = '', dateTo = '', weekday = '', timeOfDay = '', topic = '', source = '', limit = 25 } = filters;
   const topicLower = String(topic || '').trim().toLowerCase();
+  const srcLower = String(source || '').trim().toLowerCase();
   const list = loadLocalTurns()
     .filter((t) => {
       if (dateKey && t.dateKey !== dateKey) return false;
       if (dateFrom && t.dateKey < dateFrom) return false;
       if (dateTo && t.dateKey > dateTo) return false;
       if (timeOfDay && t.timeOfDay !== timeOfDay) return false;
+      if (srcLower && String(t.source || '').toLowerCase() !== srcLower) return false;
       if (weekday && String(t.weekday).toLowerCase() !== weekday.toLowerCase()) return false;
       if (topicLower) {
         const hay = `${t.userPrompt} ${t.assistantReply} ${(t.toolsUsed || []).join(' ')}`.toLowerCase();

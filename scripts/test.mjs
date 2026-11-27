@@ -685,6 +685,9 @@ epStore.logTurn({
 const epRes = epStore.queryTimeline({ dateKey: toDateKey(new Date(2026, 10, 25)), timeOfDay: 'evening', topic: 'chrome' });
 assert.equal(epRes.length, 1);
 assert.ok(epRes[0].userPrompt.includes('[REDACTED_API_KEY]') && !epRes[0].userPrompt.includes('AIzaSyTestFakeKey'));
+const voiceOnlyEp = epStore.queryTimeline({ source: 'voice' });
+assert.equal(voiceOnlyEp.length, 1);
+assert.equal(voiceOnlyEp[0].source, 'voice');
 assert.equal(epStore.forgetDay('2026-11-25').removed, 1);
 epStore.close();
 fs.rmSync(tmpEpDir, { recursive: true, force: true });

@@ -47,7 +47,7 @@ export default function PcControlCenterModal({
   watchdogAlert = null,
   onApplyWatchdogFix = null,
 }) {
-  const [tab, setTab] = useState(initialTab);
+  const [tab, setTab] = useState(initialTab === 'voice_history' ? 'audit' : initialTab);
   const [loading, setLoading] = useState(false);
 
   // Clipboard state
@@ -86,9 +86,17 @@ export default function PcControlCenterModal({
   const [episodicRows, setEpisodicRows] = useState([]);
   const [episodicDate, setEpisodicDate] = useState('');
   const [episodicTopic, setEpisodicTopic] = useState('');
+  const [episodicSource, setEpisodicSource] = useState(initialTab === 'voice_history' ? 'voice' : '');
 
   useEffect(() => {
-    if (isOpen && initialTab) setTab(initialTab);
+    if (isOpen && initialTab) {
+      if (initialTab === 'voice_history') {
+        setTab('audit');
+        setEpisodicSource('voice');
+      } else {
+        setTab(initialTab);
+      }
+    }
   }, [isOpen, initialTab]);
 
   const loadTab = useCallback(async (targetTab) => {
@@ -125,7 +133,7 @@ export default function PcControlCenterModal({
         const [hostLogs, memList, epRows] = await Promise.all([
           window.electronAPI?.getHostAuditLog?.().catch(() => []) || [],
           listAllMemories().catch(() => []),
-          queryEpisodicTimeline({ dateKey: episodicDate, topic: episodicTopic, limit: 40 }).catch(() => []),
+          queryEpisodicTimeline({ dateKey: episodicDate, topic: episodicTopic, source: episodicSource, limit: 60 }).catch(() => []),
         ]);
         const localLogs = getAuditLog();
         const combined = [
@@ -146,7 +154,7 @@ export default function PcControlCenterModal({
   useEffect(() => {
     if (!isOpen) return;
     loadTab(tab);
-  }, [isOpen, tab, loadTab, episodicDate, episodicTopic]);
+  }, [isOpen, tab, loadTab, episodicDate, episodicTopic, episodicSource]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -912,6 +920,17 @@ export default function PcControlCenterModal({
                     </button>
                     <button
                       type="button"
+                      onClick={() => setEpisodicSource((s) => (s === 'voice' ? '' : 'voice'))}
+                      className={`px-2 py-0.5 rounded border ${
+                        episodicSource === 'voice'
+                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                          : 'bg-obsidian-surface border-obsidian-border text-obsidian-muted'
+                      }`}
+                    >
+                      {episodicSource === 'voice' ? 'Voice Only' : 'All Inputs'}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setEpisodicDate('')}
                       className={`px-2 py-0.5 rounded border ${
                         !episodicDate
@@ -962,6 +981,11 @@ export default function PcControlCenterModal({
                         <p className="text-obsidian-text mt-0.5 truncate">You: {row.userPrompt}</p>
                         {row.assistantReply && (
                           <p className="text-obsidian-secondary truncate">JEEVA: {row.assistantReply}</p>
+                        )}
+                        {Array.isArray(row.toolsUsed) && row.toolsUsed.length > 0 && (
+                          <p className="text-[10px] text-emerald-400/90 mt-0.5 truncate">
+                            Actions: {row.toolsUsed.map((t) => String(t).replace(/_/g, ' ')).join(', ')}
+                          </p>
                         )}
                       </div>
                     ))}

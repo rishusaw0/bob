@@ -11,6 +11,7 @@ import {
   LuClipboard,
   LuClock,
   LuFolderOpen,
+  LuMic,
 } from 'react-icons/lu';
 
 export default function Sidebar({
@@ -209,6 +210,14 @@ export default function Sidebar({
             >
               <LuClipboard className="w-3 h-3 text-violet-400 flex-shrink-0" />
               <span className="truncate">Clipboard</span>
+            </button>
+            <button
+              onClick={() => onOpenPcControl?.('voice_history')}
+              className="col-span-2 flex items-center justify-center gap-1.5 px-2 py-1 rounded bg-obsidian-elevated/70 hover:bg-obsidian-elevated border border-obsidian-border text-[10px] text-emerald-300 hover:text-emerald-200 transition-colors"
+              title="View all voice commands, replies & executed actions"
+            >
+              <LuMic className="w-3 h-3 flex-shrink-0" />
+              <span className="truncate">Voice Command History</span>
             </button>
           </div>
         </div>

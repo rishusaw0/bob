@@ -274,6 +274,39 @@ export function buildLocalTitle(text) {
 }
 
 async function tryEpisodicHistoryRecall(text, lang) {
+  const lower = String(text || '').toLowerCase();
+  if (/\b(voice history|voice command history|voice commands history|maine voice se kya|voice se kya kiya|voice se kya bola)\b/i.test(lower)) {
+    const vRows = await queryEpisodicTimeline({ source: 'voice', limit: 8 });
+    if (!Array.isArray(vRows) || vRows.length === 0) {
+      return {
+        replyText: replyByLang(
+          lang,
+          'No voice commands have been recorded yet.',
+          'Abhi tak koi voice command history saved nahi hai.',
+          'अभी तक कोई वॉइस कमांड हिस्ट्री सेव नहीं है।'
+        ),
+        tools: [{ name: 'episodic_recall', status: 'done', args: { source: 'voice' } }],
+      };
+    }
+    const listText = vRows
+      .map((r, i) => {
+        const acts = Array.isArray(r.toolsUsed) && r.toolsUsed.length
+          ? ` [${r.toolsUsed.map((t) => String(t).replace(/_/g, ' ')).join(', ')}]`
+          : '';
+        return `${i + 1}. **[${r.dateKey} · ${r.timeLabel}]** "${r.userPrompt}" → ${r.assistantReply || 'Done.'}${acts}`;
+      })
+      .join('\n');
+    return {
+      replyText: replyByLang(
+        lang,
+        `Your recent voice commands:\n\n${listText}`,
+        `Aapke recent voice commands aur unke actions:\n\n${listText}`,
+        `आपके हाल के वॉइस कमांड और एक्शन:\n\n${listText}`
+      ),
+      tools: [{ name: 'episodic_recall', status: 'done', args: { source: 'voice' } }],
+    };
+  }
+
   if (!isEpisodicHistoryQuery(text)) return null;
   const parsed = parseEpisodicDateQuery(text);
   const rows = await queryEpisodicTimeline({

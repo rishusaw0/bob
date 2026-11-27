@@ -200,11 +200,12 @@ function createEpisodicMemory({ userDataDir, retentionDays = 90, maxTurns = 2500
     };
   }
 
-  function queryTimeline({ dateKey = '', dateFrom = '', dateTo = '', weekday = '', timeOfDay = '', topic = '', limit = 25 } = {}) {
+  function queryTimeline({ dateKey = '', dateFrom = '', dateTo = '', weekday = '', timeOfDay = '', topic = '', source = '', limit = 25 } = {}) {
     const safeLimit = Math.max(1, Math.min(200, Number(limit) || 25));
     const topicLower = String(topic || '').trim().toLowerCase();
     const weekdayLower = String(weekday || '').trim().toLowerCase();
     const todLower = String(timeOfDay || '').trim().toLowerCase();
+    const srcLower = String(source || '').trim().toLowerCase();
 
     let all;
     if (db) {
@@ -230,6 +231,10 @@ function createEpisodicMemory({ userDataDir, retentionDays = 90, maxTurns = 2500
         sql += ' AND lower(weekday) = ?';
         params.push(weekdayLower);
       }
+      if (srcLower) {
+        sql += ' AND lower(source) = ?';
+        params.push(srcLower);
+      }
       sql += ' ORDER BY timestamp DESC LIMIT ?';
       params.push(topicLower ? 200 : safeLimit);
       all = db.prepare(sql).all(...params).map(rowToEntry);
@@ -241,6 +246,7 @@ function createEpisodicMemory({ userDataDir, retentionDays = 90, maxTurns = 2500
           if (dateTo && t.dateKey > dateTo) return false;
           if (todLower && String(t.timeOfDay).toLowerCase() !== todLower) return false;
           if (weekdayLower && String(t.weekday).toLowerCase() !== weekdayLower) return false;
+          if (srcLower && String(t.source).toLowerCase() !== srcLower) return false;
           return true;
         })
         .sort((a, b) => b.timestamp - a.timestamp);
