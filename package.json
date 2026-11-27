@@ -1,6 +1,6 @@
 {
   "name": "jeeva-ai",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "JEEVA AI - Windows PC Desktop Assistant powered by local tools and Gemini",
   "main": "electron/main.cjs",
   "scripts": {
@@ -77,7 +77,8 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "JEEVA AI"
+      "shortcutName": "JEEVA AI",
+      "include": "build/uninstaller.nsh"
     }
   },
   "allowScripts": {
