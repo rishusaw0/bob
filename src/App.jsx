@@ -107,7 +107,7 @@ export default function App() {
   });
   const [appToken, setAppToken] = useState(() => localStorage.getItem('jeeva_app_token') || '');
   const [cloudApiUrl, setCloudApiUrl] = useState(
-    () => (localStorage.getItem('jeeva_cloud_api_url') || import.meta.env.VITE_RENDER_URL || '').trim().replace(/\/+$/, '')
+    () => (localStorage.getItem('jeeva_cloud_api_url') || import.meta.env.VITE_RENDER_URL || 'https://jeeva-ai-mjr1.onrender.com').trim().replace(/\/+$/, '')
   );
   const [pinEntry, setPinEntry] = useState('');
   const [pinError, setPinError] = useState('');

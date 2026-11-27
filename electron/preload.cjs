@@ -158,7 +158,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('hotkey:wake', handler);
   },
   updateNotchState: (state) => ipcRenderer.invoke('notch:update', state),
-  notchAction: (action) => ipcRenderer.invoke('notch:action', action),
+  notchAction: (action, payload) => ipcRenderer.invoke('notch:action', action, payload),
   onNotchState: (cb) => {
     const handler = (_, state) => cb(state);
     ipcRenderer.on('notch:state', handler);

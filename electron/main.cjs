@@ -513,7 +513,7 @@ ipcMain.handle('window:setMode', (_, mode) => {
 ipcMain.handle('window:wakeRestore', (_, preferredMode = 'notch') => windowManager.wakeRestore(preferredMode));
 ipcMain.handle('window:hideToTray', () => windowManager.getMainWindow()?.hide());
 ipcMain.handle('notch:update', (_, state) => windowManager.updateNotchState(state || {}));
-ipcMain.handle('notch:action', (_, action) => {
+ipcMain.handle('notch:action', (_, action, payload = '') => {
   const act = String(action || '').toLowerCase();
   if (act === 'hide') {
     windowManager.updateNotchState({ visible: false });
@@ -533,6 +533,10 @@ ipcMain.handle('notch:action', (_, action) => {
   }
   if (act === 'toggle_mic') {
     emitRendererEvent('notch:event', { action: 'toggle_mic' });
+    return { ok: true };
+  }
+  if (act === 'send_text' && String(payload || '').trim()) {
+    emitRendererEvent('notch:event', { action: 'send_text', text: String(payload).trim() });
     return { ok: true };
   }
   return { ok: false };

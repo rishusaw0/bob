@@ -86,7 +86,9 @@ export default function SettingsPanel({
   const [ownerPin, setOwnerPin] = useState('');
   const [unlockBusy, setUnlockBusy] = useState(false);
   const [key, setKey] = useState(apiKey);
-  const [cloudUrl, setCloudUrl] = useState(() => localStorage.getItem('jeeva_cloud_api_url') || '');
+  const [cloudUrl, setCloudUrl] = useState(
+    () => localStorage.getItem('jeeva_cloud_api_url') || 'https://jeeva-ai-mjr1.onrender.com'
+  );
   const [assistantName, setAssistantName] = useState(() => getAiName());
   const [wakeTrigger, setWakeTrigger] = useState(() => getWakeTriggerPhrase());
   const [docSummaryPref, setDocSummaryPrefState] = useState(() => getDocSummaryPref());
@@ -382,25 +384,30 @@ export default function SettingsPanel({
             <>
               {/* API Key */}
               <div>
-                <label className="flex items-center gap-1.5 text-xs font-medium text-obsidian-text mb-1.5">
-                  <LuKey className="w-3.5 h-3.5 text-obsidian-muted" />
-                  Gemini API Key
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="flex items-center gap-1.5 text-xs font-medium text-obsidian-text">
+                    <LuKey className="w-3.5 h-3.5 text-obsidian-muted" />
+                    Gemini API Key
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = 'https://aistudio.google.com/apikey';
+                      if (window.electronAPI?.openURL) window.electronAPI.openURL(url);
+                      else window.open(url, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/25"
+                  >
+                    Create Gemini API Key →
+                  </button>
+                </div>
                 {isUsingServerProxy() && (
                   <div className="mb-2 px-2.5 py-2 rounded-lg bg-emerald-950/30 border border-emerald-800/50 text-[11px] text-emerald-300">
                     Server-protected Render key is active. Leave blank to keep using it, or enter a personal override key.
                   </div>
                 )}
                 <p className="text-[11px] text-obsidian-muted mb-2">
-                  Free tier key from{' '}
-                  <a
-                    href="https://aistudio.google.com"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-obsidian-secondary underline"
-                  >
-                    aistudio.google.com
-                  </a>
+                  Apna personal Gemini API key banakar yahan paste karein (optional).
                 </p>
                 <div className="relative">
                   <input
@@ -489,7 +496,7 @@ export default function SettingsPanel({
                       type="url"
                       value={cloudUrl}
                       onChange={(e) => setCloudUrl(e.target.value)}
-                      placeholder="https://your-app.onrender.com"
+                      placeholder="https://jeeva-ai-mjr1.onrender.com"
                       className="w-full bg-obsidian-bg border border-obsidian-border rounded-lg px-3 py-1.5 text-xs font-mono text-obsidian-text placeholder:text-obsidian-muted focus:outline-none focus:border-zinc-600"
                     />
                   </div>

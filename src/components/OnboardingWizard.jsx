@@ -34,7 +34,7 @@ export default function OnboardingWizard({
   const [docPref, setDocPref] = useState(() => getDocSummaryPref());
   const [apiKeyInput, setApiKeyInput] = useState(initialApiKey || '');
   const [cloudUrlInput, setCloudUrlInput] = useState(
-    initialCloudUrl || localStorage.getItem('jeeva_last_render_url') || 'https://jeeva-ai.onrender.com'
+    initialCloudUrl || localStorage.getItem('jeeva_last_render_url') || 'https://jeeva-ai-mjr1.onrender.com'
   );
   const [checkingCloud, setCheckingCloud] = useState(false);
   const [cloudVerified, setCloudVerified] = useState(false);
@@ -47,7 +47,7 @@ export default function OnboardingWizard({
   const [permRules, setPermRules] = useState(() => getPermissionRules());
   const [autoLaunch, setAutoLaunch] = useState(false);
   const [renderUrl, setRenderUrl] = useState(
-    initialCloudUrl || localStorage.getItem('jeeva_last_render_url') || 'https://jeeva-ai.onrender.com'
+    initialCloudUrl || localStorage.getItem('jeeva_last_render_url') || 'https://jeeva-ai-mjr1.onrender.com'
   );
   const [pairToken, setPairToken] = useState('');
   const [relayConnected, setRelayConnected] = useState(false);
@@ -361,14 +361,17 @@ export default function OnboardingWizard({
                     <LuKey className="w-3.5 h-3.5 text-obsidian-muted" />
                     Option 2: Personal Gemini API Key (Optional)
                   </label>
-                  <a
-                    href="https://aistudio.google.com/apikey"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[11px] text-emerald-400 hover:underline"
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = 'https://aistudio.google.com/apikey';
+                      if (window.electronAPI?.openURL) window.electronAPI.openURL(url);
+                      else window.open(url, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/25"
                   >
-                    Get Free Key <LuExternalLink className="w-3 h-3" />
-                  </a>
+                    Create Gemini API Key <LuExternalLink className="w-3 h-3" />
+                  </button>
                 </div>
                 <input
                   type="password"

@@ -95,10 +95,65 @@
     transition: max-height 0.2s ease, opacity 0.18s ease;
   }
   .island.active .row,
-  .island:hover .row {
+  .island:hover .row,
+  .island:focus-within .row {
     max-height: 54px;
     opacity: 1;
   }
+  .island.active,
+  .island:hover,
+  .island:focus-within {
+    width: 408px;
+    padding: 8px 14px 10px 14px;
+    border-bottom-left-radius: 22px;
+    border-bottom-right-radius: 22px;
+  }
+  .island.active .cam-notch-bar,
+  .island:hover .cam-notch-bar,
+  .island:focus-within .cam-notch-bar {
+    margin-bottom: 6px;
+  }
+  .chat-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin-top: 0;
+    transition: max-height 0.2s ease, opacity 0.18s ease, margin-top 0.2s ease;
+  }
+  .island.active .chat-form,
+  .island:hover .chat-form,
+  .island:focus-within .chat-form {
+    max-height: 36px;
+    opacity: 1;
+    margin-top: 7px;
+  }
+  .chat-input {
+    flex: 1;
+    background: rgba(24, 24, 27, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    border-radius: 9px;
+    padding: 4px 9px;
+    font-size: 11px;
+    color: #f4f4f5;
+    outline: none;
+  }
+  .chat-input:focus {
+    border-color: #10b981;
+  }
+  .chat-send {
+    border: none;
+    background: #10b981;
+    color: #09090b;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 5px 10px;
+    border-radius: 9px;
+    cursor: pointer;
+  }
+  .chat-send:hover { background: #34d399; }
   .orb-btn {
     width: 34px;
     height: 34px;
@@ -190,6 +245,10 @@
           <button id="hideBtn" class="pill-btn hide-btn" title="Minimize to Standby Notch">Hide</button>
         </div>
       </div>
+      <form id="chatForm" class="chat-form">
+        <input id="chatInput" class="chat-input" type="text" placeholder="Type command or chat right here..." autocomplete="off" />
+        <button type="submit" class="chat-send">Send</button>
+      </form>
     </div>
   </div>
 <script>
@@ -197,7 +256,17 @@
   const aiLabel = document.getElementById('aiLabel');
   const statusText = document.getElementById('statusText');
   const captionText = document.getElementById('captionText');
+  const chatInput = document.getElementById('chatInput');
   const bars = [0, 1, 2, 3, 4].map((i) => document.getElementById('b' + i));
+
+  document.getElementById('chatForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const val = (chatInput.value || '').trim();
+    if (!val) return;
+    chatInput.value = '';
+    captionText.textContent = 'Running: ' + val;
+    window.electronAPI?.notchAction?.('send_text', val);
+  });
 
   document.getElementById('micBtn').addEventListener('click', () => {
     window.electronAPI?.notchAction?.('toggle_mic');

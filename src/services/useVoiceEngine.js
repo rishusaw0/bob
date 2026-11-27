@@ -493,9 +493,11 @@ export function useVoiceEngine({
         setPhase('idle');
       } else if (ev?.action === 'toggle_mic') {
         toggleOrb();
+      } else if (ev?.action === 'send_text' && ev?.text) {
+        onSend?.(ev.text, null, { fromVoice: false, rawVoiceText: ev.text });
       }
     });
-  }, [toggleOrb, stopCommandCapture]);
+  }, [toggleOrb, stopCommandCapture, onSend]);
 
   useEffect(() => {
     return () => {

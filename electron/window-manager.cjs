@@ -27,8 +27,8 @@ function createWindowManager({
     if (notchWindow && !notchWindow.isDestroyed()) return notchWindow;
     const primary = screen.getPrimaryDisplay();
     const b = primary.bounds;
-    const width = 416;
-    const height = 104;
+    const width = 424;
+    const height = 142;
     const x = b.x + Math.round((b.width - width) / 2);
     const y = b.y;
 
@@ -41,7 +41,7 @@ function createWindowManager({
       transparent: true,
       alwaysOnTop: true,
       skipTaskbar: true,
-      focusable: false,
+      focusable: true,
       resizable: false,
       hasShadow: false,
       show: false,
