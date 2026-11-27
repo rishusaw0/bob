@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: jeeva-ai
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build:react
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: ELECTRON_SKIP_BINARY_DOWNLOAD
+        value: "1"
+      - key: GEMINI_RPM_LIMIT
+        value: "40"
+      - key: INSTALLER_DOWNLOAD_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: APP_PIN
+        sync: false

@@ -1021,9 +1021,10 @@ export default function App() {
     autoListenSignal,
     requestPermission,
     enabled: Boolean(
+      routeView === 'app' &&
       !isLockedScreen &&
       ((window.electronAPI && (isReady || brainMode !== 'cloud')) ||
-        (isReady && routeView === 'app' && windowMode !== 'full'))
+        (isReady && windowMode !== 'full'))
     ),
     onWakeOpen: (mode) => {
       if (mode && mode !== 'notch') setWindowMode(mode);
