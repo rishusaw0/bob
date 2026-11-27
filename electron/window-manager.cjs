@@ -4,13 +4,13 @@ const path = require('path');
 
 function createWindowManager({
   app,
+  shell,
   BrowserWindow,
   Menu,
   Tray,
   screen,
   actions,
   resolveUnpackedPath,
-  getCloudRelay,
   getAutoLaunchManager,
   emitRendererEvent,
   getWatchdogAlert,
@@ -22,6 +22,41 @@ function createWindowManager({
   let tray = null;
   let trayRefreshTimer = null;
   let currentWindowMode = 'full';
+
+  function hardenWebContents(contents) {
+    contents.setWindowOpenHandler(({ url }) => {
+      try {
+        const u = new URL(url);
+        if (['https:', 'http:', 'mailto:'].includes(u.protocol)) {
+          Promise.resolve(shell?.openExternal?.(url)).catch(() => {});
+        }
+      } catch {}
+      return { action: 'deny' };
+    });
+
+    const guardNavigation = (event, targetUrl) => {
+      const currentUrl = contents.getURL();
+      if (!currentUrl) return;
+      let current;
+      let target;
+      try { current = new URL(currentUrl); target = new URL(targetUrl); }
+      catch { event.preventDefault(); return; }
+      const sameFile = current.protocol === 'file:' && target.protocol === 'file:' &&
+        decodeURIComponent(current.pathname) === decodeURIComponent(target.pathname);
+      const sameDevOrigin = !app.isPackaged && current.origin === target.origin &&
+        ['localhost', '127.0.0.1', '[::1]'].includes(target.hostname) &&
+        Number(target.port || (target.protocol === 'https:' ? 443 : 80)) === 5173;
+      if (sameFile || sameDevOrigin) return;
+      event.preventDefault();
+      if (['https:', 'http:', 'mailto:'].includes(target.protocol)) {
+        Promise.resolve(shell?.openExternal?.(targetUrl)).catch(() => {});
+      }
+    };
+    contents.on('will-navigate', guardNavigation);
+    contents.on('will-redirect', guardNavigation);
+    contents.on('will-attach-webview', (event) => event.preventDefault());
+  }
+
 
   function createNotchWindow() {
     if (notchWindow && !notchWindow.isDestroyed()) return notchWindow;
@@ -50,8 +85,13 @@ function createWindowManager({
         contextIsolation: true,
         nodeIntegration: false,
         backgroundThrottling: false,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        webviewTag: false,
       },
     });
+    hardenWebContents(notchWindow.webContents);
     notchWindow.setAlwaysOnTop(true, 'screen-saver');
     notchWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     notchWindow.loadFile(path.join(__dirname, 'notch-overlay.html')).catch(() => {});
@@ -142,9 +182,15 @@ function createWindowManager({
         contextIsolation: true,
         nodeIntegration: false,
         backgroundThrottling: true,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        webviewTag: false,
       },
       icon: path.join(__dirname, '..', 'public', 'icon.png'),
     });
+
+    hardenWebContents(mainWindow.webContents);
 
     mainWindow.on('close', (event) => {
       // Keep JEEVA alive in System Tray + Camera Notch by default

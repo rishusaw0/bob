@@ -30,7 +30,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveDesktopFile: (filename, content) => ipcRenderer.invoke('system:saveDesktopFile', filename, content),
   saveImage: (dataUrl, filename) => ipcRenderer.invoke('system:saveImage', dataUrl, filename),
   liveStats: () => ipcRenderer.invoke('system:liveStats'),
-  adbControl: (action, arg) => ipcRenderer.invoke('system:adbControl', action, arg),
 
   // App & Software Engine
   listInstalledApps: (filter) => ipcRenderer.invoke('system:listInstalledApps', filter),
@@ -115,28 +114,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('clipboard:updated', handler);
   },
 
-  // Bridge, Vault, Permissions & Cloud Relay
-  getBridgeInfo: () => ipcRenderer.invoke('bridge:info'),
+  // Local API key vault & PC permissions
   vaultSaveKey: (key) => ipcRenderer.invoke('vault:saveKey', key),
   vaultGetKey: () => ipcRenderer.invoke('vault:getKey'),
   syncPermissionRules: (rules) => ipcRenderer.invoke('permissions:sync', rules),
   getPermissionRules: () => ipcRenderer.invoke('permissions:get'),
   getHostAuditLog: () => ipcRenderer.invoke('permissions:auditGet'),
   clearHostAuditLog: () => ipcRenderer.invoke('permissions:auditClear'),
-  relayConnect: (cfg) => ipcRenderer.invoke('relay:connect', cfg),
-  relayDisconnect: () => ipcRenderer.invoke('relay:disconnect'),
-  relayRegeneratePairToken: () => ipcRenderer.invoke('relay:regeneratePairToken'),
-  relayStatus: () => ipcRenderer.invoke('relay:status'),
-  onRelayStatusChange: (cb) => {
-    const handler = (_, status) => cb(status);
-    ipcRenderer.on('relay:statusChanged', handler);
-    return () => ipcRenderer.removeListener('relay:statusChanged', handler);
-  },
-  onDeepLinked: (cb) => {
-    const handler = (_, data) => cb(data);
-    ipcRenderer.on('relay:deepLinked', handler);
-    return () => ipcRenderer.removeListener('relay:deepLinked', handler);
-  },
   getAutoLaunch: () => ipcRenderer.invoke('app:getAutoLaunch'),
   setAutoLaunch: (enabled) => ipcRenderer.invoke('app:setAutoLaunch', enabled),
 

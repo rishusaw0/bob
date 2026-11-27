@@ -132,17 +132,7 @@ function createPcActions({
     });
   }
 
-  function runAdb(args) {
-    return new Promise((resolve, reject) => {
-      execFile('adb', args, { timeout: 10000 }, (error, stdout, stderr) => {
-        if (error) {
-          reject(stderr?.trim() || 'ADB not installed or no phone connected via USB/Wireless Debugging.');
-        } else {
-          resolve(stdout?.trim() || 'ADB command sent');
-        }
-      });
-    });
-  }
+
 
   const browserBridge = createBrowserBridge({ runPsScript, shell });
 
@@ -258,7 +248,9 @@ function createPcActions({
     },
 
     async listFiles(dirPath) {
-      const dir = dirPath || os.homedir();
+      const dir = path.resolve(dirPath || os.homedir());
+      const check = checkPathSafety(dir, 'read');
+      if (!check.allowed) throw new Error(check.reason);
       const items = fs.readdirSync(dir, { withFileTypes: true });
       return items.map((item) => ({
         name: item.name,
@@ -268,14 +260,18 @@ function createPcActions({
     },
 
     async searchFiles(query, dirPath) {
-      const dir = dirPath || os.homedir();
+      const dir = path.resolve(dirPath || os.homedir());
+      const check = checkPathSafety(dir, 'read');
+      if (!check.allowed) throw new Error(check.reason);
+      const needle = String(query || '').trim().toLowerCase();
+      if (!needle) return [];
       const results = [];
       function searchDir(currentDir, depth = 0) {
         if (depth > 3) return;
         try {
           const items = fs.readdirSync(currentDir, { withFileTypes: true });
           for (const item of items) {
-            if (item.name.toLowerCase().includes(query.toLowerCase())) {
+            if (item.name.toLowerCase().includes(needle)) {
               results.push({
                 name: item.name,
                 path: path.join(currentDir, item.name),
@@ -515,26 +511,6 @@ function createPcActions({
         hostname: os.hostname(),
         username: os.userInfo().username,
       };
-    },
-
-    async adbControl(action, arg = '') {
-      const clean = String(action || '').toLowerCase();
-      switch (clean) {
-        case 'devices': return await runAdb(['devices']);
-        case 'home': return await runAdb(['shell', 'input', 'keyevent', '3']);
-        case 'back': return await runAdb(['shell', 'input', 'keyevent', '4']);
-        case 'volume_up': return await runAdb(['shell', 'input', 'keyevent', '24']);
-        case 'volume_down': return await runAdb(['shell', 'input', 'keyevent', '25']);
-        case 'media_play_pause': return await runAdb(['shell', 'input', 'keyevent', '85']);
-        case 'open_url': return await runAdb(['shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', String(arg)]);
-        case 'open_app': return await runAdb(['shell', 'monkey', '-p', String(arg), '-c', 'android.intent.category.LAUNCHER', '1']);
-        case 'brightness': {
-          const val = Math.max(0, Math.min(255, Math.round((Number(arg) / 100) * 255)));
-          return await runAdb(['shell', 'settings', 'put', 'system', 'screen_brightness', String(val)]);
-        }
-        case 'lock': return await runAdb(['shell', 'input', 'keyevent', '26']);
-        default: throw new Error(`Unknown ADB action: ${action}`);
-      }
     },
 
     async listInstalledApps(filter = '') {

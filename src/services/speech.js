@@ -143,6 +143,17 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   } catch {}
 }
 
+const ROMAN_HINDI_PHONETIC = new Map([
+  ['accha', 'अच्छा'], ['acha', 'अच्छा'], ['achha', 'अच्छा'], ['ho', 'हो'], ['hai', 'है'], ['hain', 'हैं'], ['hoon', 'हूँ'], ['hun', 'हूँ'], ['nahi', 'नहीं'], ['nhi', 'नहीं'], ['nahin', 'नहीं'], ['kya', 'क्या'], ['kaise', 'कैसे'], ['kyun', 'क्यों'], ['aap', 'आप'], ['main', 'मैं'], ['maine', 'मैंने'], ['mera', 'मेरा'], ['meri', 'मेरी'], ['mere', 'मेरे'], ['bahut', 'बहुत'], ['bohot', 'बहुत'], ['thoda', 'थोड़ा'], ['theek', 'ठीक'], ['thik', 'ठीक'], ['karo', 'करो'], ['karna', 'करना'], ['raha', 'रहा'], ['rahi', 'रही'], ['rahe', 'रहे'], ['chahiye', 'चाहिए'], ['shukriya', 'शुक्रिया'], ['namaste', 'नमस्ते'], ['batao', 'बताओ'], ['samjho', 'समझो'],
+]);
+
+/** Convert common Romanized Hindi words to Devanagari before TTS, leaving English intact. */
+export function normalizeRomanizedHindiForSpeech(text, profile = 'hinglish') {
+  const source = String(text || '');
+  if (!['hindi', 'hinglish'].includes(profile)) return source;
+  return source.replace(/\b[a-z]+\b/gi, (word) => ROMAN_HINDI_PHONETIC.get(word.toLowerCase()) || word);
+}
+
 const HINGLISH_WORDS = new Set([
   'hai', 'hain', 'ho', 'hun', 'hoon', 'hu', 'ka', 'ki', 'ke', 'ko', 'se', 'me', 'mein',
   'par', 'pe', 'ne', 'nahi', 'nhi', 'na', 'kya', 'kaise', 'kasa', 'kab', 'kahan', 'kyun',
@@ -186,6 +197,7 @@ let activeAudio = null;
 let activeUtterance = null;
 let activeGain = null;
 let activeAudioCtx = null;
+let activeAudioNodes = null;
 let activeMeterTimer = null;
 let stopRequested = false;
 let playbackToken = 0;
@@ -463,13 +475,15 @@ function clearTtsMeter() {
     clearInterval(activeMeterTimer);
     activeMeterTimer = null;
   }
-  activeGain = null;
-  if (activeAudioCtx) {
-    try {
-      if (activeAudioCtx.state !== 'closed') activeAudioCtx.close().catch(() => {});
-    } catch {}
-    activeAudioCtx = null;
+  // Reuse one AudioContext across sentence chunks; closing and reopening it
+  // after every full stop adds avoidable startup latency.
+  if (activeAudioNodes) {
+    for (const node of activeAudioNodes) {
+      try { node.disconnect(); } catch {}
+    }
+    activeAudioNodes = null;
   }
+  activeGain = null;
   currentState = { ...currentState, audioLevel: 0, freqBands: [0, 0, 0, 0, 0] };
   notify();
 }
@@ -515,6 +529,7 @@ function playAudioUrl(audioUrl) {
     if (stopRequested) return resolve();
     clearTtsMeter();
     const audio = new Audio(audioUrl);
+    audio.preload = 'auto';
     audio.playbackRate = currentState.rate;
     audio.volume = 1;
     activeAudio = audio;
@@ -522,7 +537,7 @@ function playAudioUrl(audioUrl) {
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (Ctx) {
-        const ctx = new Ctx();
+        const ctx = activeAudioCtx && activeAudioCtx.state !== 'closed' ? activeAudioCtx : new Ctx();
         if (ctx.state === 'suspended') ctx.resume().catch(() => {});
         const src = ctx.createMediaElementSource(audio);
         const gain = ctx.createGain();
@@ -534,6 +549,7 @@ function playAudioUrl(audioUrl) {
         analyser.connect(ctx.destination);
         activeAudioCtx = ctx;
         activeGain = gain;
+        activeAudioNodes = [src, gain, analyser];
 
         const freqData = new Uint8Array(analyser.frequencyBinCount);
         activeMeterTimer = setInterval(() => {
@@ -575,11 +591,19 @@ function playAudioUrl(audioUrl) {
   });
 }
 
+export const SPEECH_TRANSITION_MS = 120;
+
+async function waitForSpeechTransition() {
+  await new Promise((resolve) => setTimeout(resolve, SPEECH_TRANSITION_MS));
+}
+
 export async function speakText(text, { label = 'Reading aloud...', forceProfile = null, instant = false } = {}) {
   const wasSpeaking = typeof window !== 'undefined' && Boolean(window.speechSynthesis?.speaking || activeAudio);
   stopSpeech();
-  const clean = cleanTextForSpeech(text);
-  if (!clean) return;
+  const rawClean = cleanTextForSpeech(text);
+  if (!rawClean) return;
+  const initialProfile = forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(rawClean) : selectedMode);
+  const clean = normalizeRomanizedHindiForSpeech(rawClean, initialProfile);
 
   // Brief 12ms yield only when interrupting active Chromium speechSynthesis so the next utterance never drops
   if (wasSpeaking && typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -592,8 +616,6 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
   const chunks = splitIntoChunks(clean, 220, 100);
   if (!chunks.length) return;
 
-  const initialProfile =
-    forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(clean) : selectedMode);
   const speedMode = getSpeechSpeedMode();
   const canUseStudio = speedMode !== 'instant_local' && canUseExternalCloud() && isGeminiReady() && !instant;
   const useInstantDirect = !canUseStudio;
@@ -628,6 +650,7 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
       };
       notify();
       await speakChunkNative(chunks[i], chunkProfile);
+      if (i + 1 < chunks.length && !stopRequested && myToken === playbackToken) await waitForSpeechTransition();
     }
     if (myToken === playbackToken) {
       currentState = {
@@ -691,16 +714,19 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
       notify();
       try {
         await playAudioUrl(result.url);
+        if (i + 1 < chunks.length && !stopRequested && myToken === playbackToken) await waitForSpeechTransition();
       } catch {
         currentState = { ...currentState, engine: 'fallback' };
         notify();
         await speakChunkNative(chunks[i], chunkProfile);
+        if (i + 1 < chunks.length && !stopRequested && myToken === playbackToken) await waitForSpeechTransition();
       }
     } else {
       // Fallback to OS voice only if Gemini TTS API fails
       currentState = { ...currentState, engine: 'fallback' };
       notify();
       await speakChunkNative(chunks[i], chunkProfile);
+      if (i + 1 < chunks.length && !stopRequested && myToken === playbackToken) await waitForSpeechTransition();
     }
   }
 
@@ -832,6 +858,10 @@ export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = n
             notify();
             await speakChunkNative(chunk, profile);
           }
+          // Apply the same short, natural transition to streamed assistant replies.
+          if ((i + 1 < subChunks.length || queue.length > 0) && !stopRequested && myToken === playbackToken) {
+            await waitForSpeechTransition();
+          }
         }
       }
     } finally {
@@ -852,8 +882,9 @@ export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = n
   };
 
   const enqueueText = (rawSegment) => {
-    const cleaned = cleanTextForSpeech(rawSegment);
-    if (!cleaned) return;
+    const rawCleaned = cleanTextForSpeech(rawSegment);
+    if (!rawCleaned) return;
+    const cleaned = normalizeRomanizedHindiForSpeech(rawCleaned, getChunkProfile(rawCleaned));
     started = true;
     totalQueued++;
     if (canUseStudioNow() && queue.length < 2) {
@@ -975,6 +1006,11 @@ export function stopSpeech() {
     activeAudio = null;
   }
   clearTtsMeter();
+  if (activeAudioCtx) {
+    const ctx = activeAudioCtx;
+    activeAudioCtx = null;
+    try { if (ctx.state !== 'closed') ctx.close().catch(() => {}); } catch {}
+  }
   if ('speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
