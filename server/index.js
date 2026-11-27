@@ -270,10 +270,20 @@ function serveStatic(req, res, reqPath) {
     return;
   }
 
-  const normalized = path.normalize(reqPath === '/' ? 'index.html' : reqPath.replace(/^\/+/, ''));
+  // Handle relative ./assets/... requests when browser is at /app/... or /chat/...
+  const cleanReqPath = reqPath.replace(/^\/(?:app|chat)\/assets\//i, '/assets/');
+  const normalized = path.normalize(cleanReqPath === '/' ? 'index.html' : cleanReqPath.replace(/^\/+/, ''));
   let filePath = path.join(DIST_DIR, normalized);
 
+  const reqExt = path.extname(cleanReqPath).toLowerCase();
+  const isAssetRequest = ['.js', '.mjs', '.css', '.png', '.jpg', '.jpeg', '.svg', '.ico', '.map', '.woff', '.woff2', '.json'].includes(reqExt);
+
   if (!filePath.startsWith(DIST_DIR + path.sep) || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    if (isAssetRequest) {
+      res.statusCode = 404;
+      res.end('Asset not found');
+      return;
+    }
     filePath = path.join(DIST_DIR, 'index.html');
   }
 

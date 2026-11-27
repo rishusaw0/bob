@@ -9,11 +9,11 @@ import AudioPlayerBar from './components/AudioPlayerBar';
 import CommandPalette from './components/CommandPalette';
 import CortanaView from './components/CortanaView';
 import SpeakerPill from './components/SpeakerPill';
+import LandingPage from './components/LandingPage';
 
 const SettingsPanel = lazy(() => import('./components/SettingsPanel'));
 const MobileConnectModal = lazy(() => import('./components/MobileConnectModal'));
 const OnboardingWizard = lazy(() => import('./components/OnboardingWizard'));
-const LandingPage = lazy(() => import('./components/LandingPage'));
 const PcControlCenterModal = lazy(() => import('./components/PcControlCenterModal'));
 import {
   initGemini,
@@ -1102,14 +1102,12 @@ export default function App() {
   if (!window.electronAPI && routeView === 'landing') {
     return (
       <>
-        <Suspense fallback={<div className="min-h-screen bg-obsidian-bg" />}>
-          <LandingPage
-            installerUrl={serverConfig.installerUrl}
-            canInstallPWA={Boolean(installPrompt)}
-            onInstallPWA={handleInstallPWA}
-            onEnterWorkspace={navigateToApp}
-          />
-        </Suspense>
+        <LandingPage
+          installerUrl={serverConfig.installerUrl}
+          canInstallPWA={Boolean(installPrompt)}
+          onInstallPWA={handleInstallPWA}
+          onEnterWorkspace={navigateToApp}
+        />
         <ToastContainer />
       </>
     );

@@ -126,3 +126,48 @@
   background: transparent !important;
   padding: 0 !important;
 }
+
+@keyframes jeevaFloat {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(-10px) scale(1.03); }
+}
+
+@keyframes jeevaEq {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+@keyframes jeevaShimmer {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-jeeva-float {
+  animation: jeevaFloat 6s ease-in-out infinite;
+}
+
+.animate-jeeva-float-slow {
+  animation: jeevaFloat 9s ease-in-out infinite reverse;
+}
+
+.animate-jeeva-eq {
+  animation: jeevaEq 0.9s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.bg-jeeva-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+.text-gradient-futuristic {
+  background: linear-gradient(90deg, #fafafa 0%, #34d399 42%, #38bdf8 75%, #fafafa 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: jeevaShimmer 7s linear infinite;
+}
