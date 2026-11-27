@@ -171,3 +171,34 @@
   color: transparent;
   animation: jeevaShimmer 7s linear infinite;
 }
+
+
+/* Unified futuristic icon system
+   All UI icons use the Lucide (react-icons/lu) family. Keep their geometry
+   consistent across navigation, dialogs, toolbars, chat and controls. */
+svg[viewBox="0 0 24 24"] {
+  stroke-width: 1.75 !important;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+  shape-rendering: geometricPrecision;
+}
+
+button svg[viewBox="0 0 24 24"],
+[role="button"] svg[viewBox="0 0 24 24"],
+nav svg[viewBox="0 0 24 24"],
+aside svg[viewBox="0 0 24 24"],
+header svg[viewBox="0 0 24 24"] {
+  transition: color 160ms ease, opacity 160ms ease, filter 160ms ease,
+    transform 160ms ease;
+}
+
+button:disabled svg[viewBox="0 0 24 24"] {
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  svg[viewBox="0 0 24 24"] {
+    transition: none !important;
+  }
+}
