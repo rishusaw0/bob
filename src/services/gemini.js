@@ -448,7 +448,7 @@ const VOICE_STYLE_HINTS = {
 };
 
 export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
-  if (isStrictOfflineMode()) throw new Error('Cloud TTS blocked in Strict Offline Mode');
+  assertCloudAllowed('Gemini voice output');
   if (!client) throw new Error('Gemini not initialized');
 
   const accent =
