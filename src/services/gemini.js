@@ -357,18 +357,8 @@ export async function transcribeAudio(base64Data, mimeType = 'audio/wav', opts =
   return (interaction.output_text || '').trim();
 }
 
-export async function generateImage(prompt) {
-  assertCloudAllowed('Gemini Image Generation');
-  if (!client) throw new Error('Gemini not initialized');
-  const interaction = await client.interactions.create({
-    model: 'gemini-nano-banana-2.1',
-    input: prompt,
-    store: false,
-  });
-  if (interaction.output_image) {
-    return `data:${interaction.output_image.mime_type};base64,${interaction.output_image.data}`;
-  }
-  throw new Error('No image generated');
+export async function generateImage() {
+  throw new Error('Image generation is not included in the lightweight Gemini Flash-Lite-only edition.');
 }
 
 export async function generateTitle(userMessage) {
@@ -456,58 +446,9 @@ const VOICE_STYLE_HINTS = {
     'realistic bilingual Indian human assistant (en-IN / hi-IN), friendly conversational warmth, effortless code-switching between English and Hindi with natural human rhythm',
 };
 
-export async function createReplicatedVoice({
-  displayName = 'My Cloned Voice',
-  sourceWavBase64,
-  consentWavBase64,
-} = {}) {
-  assertCloudAllowed('Gemini Voice Replication');
-  if (!client) throw new Error('Gemini API key set karein voice clone karne ke liye.');
-  if (!sourceWavBase64 || !consentWavBase64) {
-    throw new Error('Voice sample aur consent recording dono zaroori hain.');
-  }
-  if (!client.voices?.create) {
-    throw new Error('Is Gemini SDK version mein voices.create available nahi hai.');
-  }
-
-  const replicatedVoice = await client.voices.create({
-    store: true,
-    voice: {
-      model: 'gemini-3.8-flash-tts',
-      type: 'replicated',
-      display_name: String(displayName || 'My Cloned Voice').slice(0, 60),
-      replicated: {
-        source_audio: {
-          mime_type: 'audio/wav',
-          data: sourceWavBase64,
-        },
-        consent_audio: {
-          mime_type: 'audio/wav',
-          data: consentWavBase64,
-        },
-      },
-    },
-  });
-
-  if (!replicatedVoice?.id) {
-    throw new Error('Voice replication complete hua par voice ID return nahi hui.');
-  }
-  return {
-    id: replicatedVoice.id,
-    displayName: replicatedVoice.display_name || displayName,
-  };
-}
-
 export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
   if (isStrictOfflineMode()) throw new Error('Cloud TTS blocked in Strict Offline Mode');
   if (!client) throw new Error('Gemini not initialized');
-
-  const customVoiceId =
-    opts?.customVoiceId !== undefined
-      ? opts.customVoiceId
-      : typeof localStorage !== 'undefined'
-        ? localStorage.getItem('jeeva_custom_voice_id') || ''
-        : '';
 
   const accent =
     opts?.accent ||
@@ -518,7 +459,7 @@ export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
     (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_persona') : null) ||
     'natural_warm';
   const voices = await getRegionalVoices(accent, persona);
-  const voice = customVoiceId || voices[profile] || voices.hinglish;
+  const voice = voices[profile] || voices.hinglish;
   const styleKey = profile === 'english' && accent === 'global' ? 'english_global' : profile;
   const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;
   const interaction = await client.interactions.create({
