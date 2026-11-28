@@ -450,9 +450,9 @@ ipcMain.handle('window:setMode', (_, mode) => {
 });
 ipcMain.handle('window:wakeRestore', (_, preferredMode = 'notch') => windowManager.wakeRestore(preferredMode));
 ipcMain.handle('window:hideToTray', () => windowManager.getMainWindow()?.hide());
-ipcMain.handle('notch:update', (_, state) => {
+ipcMain.handle('notch:update', (_, state, options = {}) => {
   if (!state || typeof state !== 'object') return false;
-  return windowManager.updateNotchState(state);
+  return windowManager.updateNotchState(state, options);
 });
 ipcMain.handle('notch:action', (_, action, payload = '') => {
   const act = String(action || '').toLowerCase();
