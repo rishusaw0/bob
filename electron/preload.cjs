@@ -75,11 +75,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   episodicSummaries: (days) => ipcRenderer.invoke('episodic:summaries', days),
   episodicForgetDay: (dateKey) => ipcRenderer.invoke('episodic:forgetDay', dateKey),
   episodicClear: () => ipcRenderer.invoke('episodic:clear'),
-  onUpdaterStatus: (cb) => {
-    const listener = (_, st) => cb(st);
-    ipcRenderer.on('updater:status', listener);
-    return () => ipcRenderer.removeListener('updater:status', listener);
-  },
   onOpenPcControl: (cb) => {
     const listener = (_, tab) => cb(tab);
     ipcRenderer.on('ui:openPcControl', listener);
