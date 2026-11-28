@@ -165,6 +165,27 @@ const INTENT_DEFINITIONS = [
     ],
   },
   {
+    id: 'volume',
+    tool: 'control_volume',
+    args: (raw) => {
+      const text = String(raw || '');
+      const level = text.match(/\\b(\\d{1,3})\\s*(?:%|percent)?\\b/i);
+      if (level) {
+        const value = Math.max(0, Math.min(100, Number(level[1])));
+        return { action: 'set', level: value };
+      }
+      if (/(?:down|decrease|lower|kam|ghatao|घटाओ|कम)/iu.test(text)) return { action: 'down' };
+      if (/(?:up|increase|raise|badhao|बढ़ाओ|बढ़ा)/iu.test(text)) return { action: 'up' };
+      return { action: 'get' };
+    },
+    phrases: [
+      'volume 50 kar do awaz 50 percent set karo',
+      'volume badhao increase sound raise audio',
+      'volume kam karo decrease sound lower audio',
+      'awaz kitni hai current volume check',
+    ],
+  },
+  {
     id: 'battery_check',
     tool: 'get_battery_status',
     args: () => ({}),
