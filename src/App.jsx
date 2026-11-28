@@ -507,7 +507,7 @@ export default function App() {
       (isReady && (window.electronAPI || windowMode !== 'full'))
     ),
     onWakeOpen: (mode) => {
-      if (mode && mode !== 'notch') setWindowMode(mode);
+      if (mode && mode !== 'notch') switchWindowMode(mode);
     },
   });
 
