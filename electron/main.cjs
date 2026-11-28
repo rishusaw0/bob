@@ -469,14 +469,14 @@ ipcMain.handle('notch:action', (_, action, payload = '') => {
   if (act === 'open_chat') {
     windowManager.setNotchUserHidden(false);
     windowManager.updateNotchState({ visible: false, standby: false }, { force: true });
-    windowManager.applyWindowMode('full');
+    windowManager.applyWindowMode('cortana');
     return { ok: true };
   }
-  if (act === 'open_dashboard') {
+  if (act === 'open_settings' || act === 'open_dashboard') {
     windowManager.setNotchUserHidden(false);
     windowManager.updateNotchState({ visible: false, standby: false }, { force: true });
-    windowManager.applyWindowMode('full');
-    setTimeout(() => emitRendererEvent('ui:openPcControl', 'system'), 120);
+    windowManager.applyWindowMode('cortana');
+    setTimeout(() => emitRendererEvent('ui:openSettings', true), 120);
     return { ok: true };
   }
   if (act === 'toggle_mic') {
@@ -485,6 +485,15 @@ ipcMain.handle('notch:action', (_, action, payload = '') => {
   }
   if (act === 'send_text' && String(payload || '').trim()) {
     emitRendererEvent('notch:event', { action: 'send_text', text: String(payload).trim().slice(0, 2000) });
+    return { ok: true };
+  }
+  if (act === 'send_attachment' && payload && typeof payload === 'object') {
+    const name = String(payload.name || 'attachment').slice(0, 180);
+    const type = String(payload.type || 'application/octet-stream').slice(0, 120);
+    const dataUrl = String(payload.dataUrl || '');
+    const declaredSize = Number(payload.size || 0);
+    if (!dataUrl.startsWith('data:') || !Number.isFinite(declaredSize) || declaredSize <= 0 || declaredSize > 8 * 1024 * 1024 || dataUrl.length > 12 * 1024 * 1024) return { ok: false, error: 'File must be 8 MB or smaller.' };
+    emitRendererEvent('notch:event', { action: 'send_attachment', text: String(payload.prompt || '').slice(0, 2000), attachment: { name, type, size: declaredSize, dataUrl, isImage: type.startsWith('image/') } });
     return { ok: true };
   }
   return { ok: false };
