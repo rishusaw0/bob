@@ -539,6 +539,8 @@ export function useVoiceEngine({
         toggleOrb();
       } else if (ev?.action === 'send_text' && ev?.text) {
         onSend?.(ev.text, null, { fromVoice: false, rawVoiceText: ev.text });
+      } else if (ev?.action === 'send_attachment' && ev?.attachment) {
+        onSend?.(ev.text || '', ev.attachment, { fromVoice: false, rawVoiceText: ev.text || '' });
       }
     });
   }, [toggleOrb, stopCommandCapture, onSend]);
