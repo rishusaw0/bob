@@ -52,7 +52,6 @@ export function getVoicePersona() {
 export function setVoicePersona(persona) {
   const clean = VOICE_PERSONAS[persona] ? persona : 'natural_warm';
   writeStorage(VOICE_PERSONA_KEY, clean);
-  resetRegionalVoiceCache();
   return clean;
 }
 
