@@ -226,10 +226,14 @@ export function useVoiceEngine({
       notchHiddenRef.current = false;
       clearTimeout(notchHideTimerRef.current);
       const targetMode = getWakeOpenMode();
-      if (targetMode !== 'notch') {
+      const nativeWakeRestore = window.electronAPI?.wakeRestore;
+      if (typeof nativeWakeRestore === 'function') {
+        // Native wakeRestore both restores the window and emits the mode-change event.
+        // Do not also call switchWindowMode here; that would resize/focus the same window twice.
+        Promise.resolve(nativeWakeRestore(targetMode)).catch(() => {});
+      } else if (targetMode !== 'notch') {
         onWakeOpen?.(targetMode);
       }
-      window.electronAPI?.wakeRestore?.(targetMode)?.catch?.(() => {});
 
       if (inlineCmd && inlineCmd.trim()) {
         playWakeChime();
