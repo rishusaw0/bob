@@ -259,8 +259,9 @@ const {
   validateIntentCatalog,
 } = await import(semanticUrl);
 
-assert.equal(normalizeHinglishQuery('जीवा आवाज़ बढ़ाओ'), 'जीवा volume बढ़ाओ');
+assert.equal(normalizeHinglishQuery('जीवा आवाज़ बढ़ाओ'), 'जीवा volume badhao');
 assert.equal(normalizeHinglishQuery('Chrome खोलो'), 'chrome open');
+assert.equal(normalizeHinglishQuery('स्क्रीन की रोशनी बढ़ाओ'), 'screen की brightness badhao');
 
 const semanticCases = [
   ['temp cache saaf kar do', 'clean_temp'],
@@ -290,8 +291,9 @@ for (const unsafe of [
   assert.equal(classifyIntent(unsafe), null, `Unsafe intent must not auto-match: "${unsafe}"`);
   assert.equal(classifyIntentDetailed(unsafe).reason, 'unsafe');
 }
-const ambiguous = classifyIntentDetailed('computer status');
-assert.ok(['ambiguous', 'low-confidence', 'matched'].includes(ambiguous.reason));
+const ambiguous = classifyIntentDetailed('battery status', { threshold: 0, margin: 1 });
+assert.equal(ambiguous.reason, 'ambiguous');
+assert.equal(ambiguous.match, null);
 const catalog = validateIntentCatalog();
 assert.equal(catalog.ok, true, `Duplicate intent catalog entries: ${catalog.issues.join(', ')}`);
 assert.equal(classifyIntent('battery status batao')?.id, 'battery_check');
