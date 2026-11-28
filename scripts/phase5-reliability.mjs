@@ -136,6 +136,8 @@ const routerSource = fs.readFileSync(path.join(ROOT, 'src/services/voiceRouter.j
 check(wifiActionSource.includes("['status', 'on', 'off', 'disconnect']"), 'Wi-Fi ON/OFF accepted by PC action bridge');
 check(wifiScriptSource.includes('Enable-NetAdapter') && wifiScriptSource.includes('Disable-NetAdapter'), 'Wi-Fi ON/OFF toggles adapter instead of only querying status');
 check(wifiScriptSource.includes('No physical Wi-Fi adapter was found'), 'Wi-Fi missing adapter reported as failure');
+const toolsSource = fs.readFileSync(path.join(ROOT, 'src/services/tools.js'), 'utf8');
+check(toolsSource.includes('permission confirmation is unavailable'), 'protected tools fail closed without permission UI');
 check(routerSource.includes("decision: 'execution failed'"), 'fast path logs execution failures');
 check(routerSource.includes("if (out.ok) lastVoiceAppTarget = appTarget"), 'successful app launch stores contextual follow-up target');
 check(routerSource.includes("if (out.ok && lastVoiceAppTarget?.toLowerCase() === appTarget.toLowerCase()) lastVoiceAppTarget = null"), 'successful app close clears contextual target');
