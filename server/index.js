@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
 const PORT = Number(process.env.PORT) || 3000;
-const DOWNLOAD_URL = 'https://github.com/rishusaw0/bob/releases/latest/download/JEEVA.AI.Setup.1.0.3.exe';
+const APP_VERSION = require('../package.json').version;
+const DOWNLOAD_URL = `https://github.com/rishusaw0/bob/releases/latest/download/JEEVA.AI.Setup.${APP_VERSION}.exe`;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
