@@ -1076,16 +1076,14 @@ export default function SettingsPanel({
                           PC: <span className="text-obsidian-secondary font-mono">{localBrain.hardware.totalGb} GB RAM</span> ({localBrain.hardware.freeGb} GB free) · Cap: <span className="text-obsidian-secondary font-mono">{localBrain.hardware.safeThreads} CPU threads</span> · Active: <span className="text-emerald-300 font-mono">{localBrain.activeModel}</span>
                         </p>
                         <div className="flex flex-wrap gap-1.5 pt-1">
-                          {!localBrain.ollama?.running && (
-                            <button
-                              type="button"
-                              disabled={brainBusy}
-                              onClick={() => handleLocalBrainAction('install_ollama')}
-                              className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 disabled:opacity-40"
-                            >
-                              {brainBusy ? 'Installing...' : '1-Click Install Ollama'}
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            disabled={brainBusy}
+                            onClick={() => handleLocalBrainAction('retry_auto_setup')}
+                            className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 disabled:opacity-40"
+                          >
+                            {brainBusy ? 'Setting up...' : 'Set up / Retry Local AI'}
+                          </button>
                           {(localBrain.catalog || []).map((m) => {
                             const isInstalled = localBrain.ollama?.installed?.includes(m.id);
                             return (
@@ -1105,7 +1103,7 @@ export default function SettingsPanel({
                                 }`}
                                 title={m.description}
                               >
-                                {isInstalled ? `Use ${m.id}` : `Pull ${m.id} (${m.sizeMb}MB)`}
+                                {isInstalled ? `Use ${m.id}` : `Download ${m.id} (${m.sizeMb}MB)`}
                               </button>
                             );
                           })}

@@ -29,6 +29,56 @@ function convertGeminiToolsToOpenAI(toolNames) {
   }));
 }
 
+function parseToolArguments(rawArgs) {
+  if (typeof rawArgs === 'string') {
+    try { rawArgs = JSON.parse(rawArgs || '{}'); } catch { return null; }
+  }
+  if (!rawArgs || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) return null;
+  return rawArgs;
+}
+
+export function validateLocalToolCall(name, args, allowedToolNames = []) {
+  if (!Array.isArray(allowedToolNames) || !allowedToolNames.includes(name)) {
+    return { ok: false, error: 'Tool is not in the approved shortlist for this request.' };
+  }
+  // Local language models must never synthesize arbitrary shell commands.
+  if (name === 'run_system_command') {
+    return { ok: false, error: 'Arbitrary shell commands are not available to the local command planner.' };
+  }
+  const tool = TOOLS.find((item) => item.name === name);
+  if (!tool) return { ok: false, error: 'Unknown tool.' };
+  const cleanArgs = parseToolArguments(args);
+  if (!cleanArgs) return { ok: false, error: 'Tool arguments must be a valid JSON object.' };
+  const schema = tool.parameters || {};
+  const properties = schema.properties || {};
+  const required = Array.isArray(schema.required) ? schema.required : [];
+  for (const key of required) {
+    if (!Object.prototype.hasOwnProperty.call(cleanArgs, key) || cleanArgs[key] === '' || cleanArgs[key] == null) {
+      return { ok: false, error: `Missing required argument: ${key}.` };
+    }
+  }
+  for (const [key, value] of Object.entries(cleanArgs)) {
+    if (!Object.prototype.hasOwnProperty.call(properties, key)) {
+      return { ok: false, error: `Unsupported argument: ${key}.` };
+    }
+    const rule = properties[key] || {};
+    const type = String(rule.type || 'string').toLowerCase();
+    if (type === 'string' && (typeof value !== 'string' || value.length > 5000)) {
+      return { ok: false, error: `Invalid string argument: ${key}.` };
+    }
+    if ((type === 'number' || type === 'integer') && (typeof value !== 'number' || !Number.isFinite(value) || (type === 'integer' && !Number.isInteger(value)))) {
+      return { ok: false, error: `Invalid numeric argument: ${key}.` };
+    }
+    if (type === 'boolean' && typeof value !== 'boolean') {
+      return { ok: false, error: `Invalid boolean argument: ${key}.` };
+    }
+    if (Array.isArray(rule.enum) && !rule.enum.includes(value)) {
+      return { ok: false, error: `Unsupported value for argument: ${key}.` };
+    }
+  }
+  return { ok: true, args: cleanArgs };
+}
+
 function tryExtractJsonAction(text) {
   const raw = String(text || '').trim();
   const blockMatch = raw.match(/```json\s*([\s\S]*?)```/i) || raw.match(/(\{[\s\S]*\})/);
@@ -73,9 +123,11 @@ export async function runLocalSlmTurn({
   });
   const systemPrompt = `You are JEEVA Local Brain running on the user's Windows PC. Current local date/time: ${nowStr}.
 Reply in the exact same language (English, Romanized Hinglish, or Hindi) in plain everyday words.
-Keep answers helpful, accurate, and concise.
+Keep answers helpful, accurate, and concise. Use only the listed tools and only when the user clearly requested a PC action.
+Never invent tool names or arguments. Ask a short clarification when a required argument is missing or the target is ambiguous.
+Never create or execute arbitrary shell/PowerShell commands. High-impact actions must go through the existing permission confirmation; do not claim success before a tool result confirms it.
 Available PC tools: ${topToolNames.join(', ')}.
-If you need to execute a PC tool directly and native tool_calls aren't used, respond ONLY with JSON: {"tool":"<name>","args":{...}}.
+If you need a listed PC tool and native tool_calls aren't used, respond ONLY with JSON: {"tool":"<name>","args":{...}}.
 If the task requires live internet info, complex coding, or screen image vision you cannot do locally, respond ONLY with JSON: {"escalate":true,"reason":"<short reason>"}.${memSnippet}`;
 
   const recent = (historyMessages || [])
@@ -119,41 +171,56 @@ If the task requires live internet info, complex coding, or screen image vision 
     }
 
     if (toolCalls.length > 0 || hintedToolName) {
-      const targetCalls =
-        toolCalls.length > 0
-          ? toolCalls.map((tc) => ({
-              name: tc.function?.name,
-              args:
-                typeof tc.function?.arguments === 'string'
-                  ? JSON.parse(tc.function.arguments || '{}')
-                  : tc.function?.arguments || {},
-            }))
-          : [{ name: hintedToolName, args: typeof hintedToolArgs === 'string' ? JSON.parse(hintedToolArgs || '{}') : hintedToolArgs }];
-
+      const rawCalls = toolCalls.length > 0
+        ? toolCalls.slice(0, 2).map((tc) => ({
+            name: tc.function?.name,
+            args: tc.function?.arguments ?? {},
+          }))
+        : [{ name: hintedToolName, args: hintedToolArgs }];
       const toolOutputs = [];
-      for (const tc of targetCalls) {
-        if (!tc.name) continue;
-        const entry = { name: tc.name, status: 'running', args: tc.args };
+      if (toolCalls.length > 2) {
+        toolOutputs.push('Rejected extra tool calls: at most two actions are allowed per model step.');
+      }
+
+      for (const rawCall of rawCalls) {
+        const name = String(rawCall?.name || '');
+        const parsedArgs = parseToolArguments(rawCall?.args);
+        const validation = validateLocalToolCall(name, parsedArgs, topToolNames);
+        if (!validation.ok) {
+          const entry = { name: name || 'unknown_tool', status: 'error', args: parsedArgs || {}, error: validation.error };
+          executedTools.push(entry);
+          onToolUpdate?.([...executedTools]);
+          toolOutputs.push(`${entry.name}: rejected safely — ${validation.error}`);
+          continue;
+        }
+
+        const entry = { name, status: 'running', args: validation.args };
         executedTools.push(entry);
         onToolUpdate?.([...executedTools]);
 
-        const toolResult = await executeFunctionCall(tc.name, tc.args, requestPermission, {
-          fromVoice,
-          userPrompt: text,
-        });
+        let toolResult;
+        try {
+          toolResult = await executeFunctionCall(name, validation.args, requestPermission, {
+            fromVoice,
+            userPrompt: text,
+          });
+        } catch (err) {
+          toolResult = { error: err?.message || 'Tool execution failed safely.' };
+        }
         entry.status = toolResult?.error ? 'error' : 'done';
+        if (toolResult?.error) entry.error = String(toolResult.error).slice(0, 240);
         onToolUpdate?.([...executedTools]);
         if (toolResult?.screenshot) outputImage = toolResult.screenshot;
 
-        const cleanOut = { ...toolResult };
+        const cleanOut = { ...(toolResult || {}) };
         delete cleanOut.screenshot;
-        toolOutputs.push(`${tc.name}: ${JSON.stringify(cleanOut)}`);
+        toolOutputs.push(`${name}: ${JSON.stringify(cleanOut)}`);
       }
 
-      messages.push({ role: 'assistant', content: content || 'Executing tool.' });
+      messages.push({ role: 'assistant', content: content || 'Executing approved tool calls.' });
       messages.push({
         role: 'user',
-        content: `Tool result:\n${toolOutputs.join('\n')}\nNow confirm to the user clearly in one concise reply in their language.`,
+        content: `Tool result:\n${toolOutputs.join('\n')}\nOnly report actions that succeeded. If an action was rejected or denied, explain that briefly. Now reply in the user's language.`,
       });
       continue;
     }
