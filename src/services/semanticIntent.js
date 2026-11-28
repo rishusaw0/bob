@@ -121,10 +121,10 @@ const INTENT_DEFINITIONS = [
     tool: 'brightness_control',
     args: (raw) => {
       const text = normalizeHinglishQuery(raw);
-      const percent = text.match(/\\b(\\d{1,3})\\s*%?/);
-      if (/\\b(down|decrease|lower|kam|ghatao)\\b/.test(text)) return { action: 'down' };
+      const percent = text.match(/\b(\\d{1,3})\\s*%?/);
+      if (/\b(down|decrease|lower|kam|ghatao)\b/.test(text)) return { action: 'down' };
       if (percent && Number(percent[1]) <= 100) return { action: 'set', level: Number(percent[1]) };
-      if (/\\b(get|status|kitna|kitni)\\b/.test(text)) return { action: 'get' };
+      if (/\b(get|status|kitna|kitni)\b/.test(text)) return { action: 'get' };
       return { action: 'up' };
     },
     phrases: [
