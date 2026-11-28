@@ -75,7 +75,7 @@ const SYNONYM_MAP = {
 export function normalizeHinglishQuery(text) {
   const raw = String(text || '')
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s:%._/\\-]/gu, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}\s:%._/\\-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (!raw) return '';
@@ -298,11 +298,11 @@ const INTENT_STOP_WORDS = new Set([
 ]);
 
 const DESTRUCTIVE_COMMAND_RE =
-  /(?:^|\\s)(?:delete|remove|uninstall|kill|shutdown|shut\\s*down|restart|reboot|format|erase|wipe|hta\\s*do|hatao|hata\\s*do|mitao|mita\\s*do|डिलीट|हटाओ|हटा|मिटाओ|बंद\\s*कर\\s*दो)(?=$|\\s)/iu;
+  /(?:^|\s)(?:delete|remove|uninstall|kill|shutdown|shut\s*down|restart|reboot|format|erase|wipe|hta\s*do|hatao|hata\s*do|mitao|mita\s*do|डिलीट|हटाओ|हटा|मिटाओ|बंद\s*कर\s*दो)(?=$|\s)/iu;
 
 function semanticContentTokens(text) {
   return normalizeHinglishQuery(text)
-    .split(/\\s+/)
+    .split(/\s+/)
     .filter((word) => word && !INTENT_STOP_WORDS.has(word));
 }
 
