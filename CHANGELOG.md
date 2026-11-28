@@ -1,5 +1,12 @@
 # Changelog — JEEVA AI
 
+## [1.0.5] — 2026-11-28
+
+### Fixed
+- Restored the missing `switchWindowMode` handler that caused a startup `ReferenceError` and recovery screen.
+- Synchronized React window mode state with Electron window sizing and tray/wake mode changes.
+- Added regression checks to prevent the undefined window mode handler from returning.
+
 ## [1.0.4] — 2026-11-28
 
 ### Changed
