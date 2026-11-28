@@ -8,8 +8,7 @@ export const SERVICE_CLASSIFICATION = [
   { id: 'scheduler', name: '90-Day Scheduler & Missed Catch-Up', tier: 'Fully Offline' },
   { id: 'voiceprint_guard', name: '22-Band Owner Voiceprint Guard', tier: 'Fully Offline' },
   { id: 'win_ocr', name: 'Windows OCR Screen Reader', tier: 'Requires Windows Capability' },
-  { id: 'gemini_cloud', name: 'Gemini Cloud Chat, Live Call & Studio TTS', tier: 'Requires API Key' },
-  { id: 'voice_clone', name: 'Gemini 3.8 Voice Replication', tier: 'Requires API Key' },
+  { id: 'gemini_cloud', name: 'Gemini 3.5 Flash-Lite chat, transcription & Gemini TTS', tier: 'Requires API Key and internet' },
 ];
 
 export function isStrictOfflineMode() {
