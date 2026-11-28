@@ -13,15 +13,42 @@ function replyByLang(lang, en, hiMix, hi) {
   return hiMix;
 }
 
+export function extractExplicitMemoryFact(text) {
+  const clean = String(text || '').trim();
+  if (!clean) return null;
+
+  const explicitMemory = clean.match(
+    /^(?:yaad rakho|yaad rakhna|remember that|remember|note kar lo)\\s+(?:ki\\s+)?(.{4,300})$/i
+  );
+  if (explicitMemory) return { kind: 'memory', fact: explicitMemory[1].trim() };
+
+  const nameMatch = clean.match(
+    /^(?:mera naam|my name is|i am called)\\s+([a-z\\u0900-\\u097f][a-z\\u0900-\\u097f\\s]{1,40}?)(?:\\s+hai)?[.!]?$/i
+  );
+  if (nameMatch) {
+    const name = nameMatch[1].trim();
+    // Questions such as "Mera naam kya hai?" are recall requests, not declarations.
+    if (/^(?:kya|kaun|what|who|which)\\b/i.test(name)) return null;
+    return { kind: 'name', fact: `User's name is ${name}` };
+  }
+
+  const cityMatch =
+    clean.match(/^i live in\\s+([a-z\\u0900-\\u097f][a-z\\u0900-\\u097f\\s,]{1,45})[.!]?$/i) ||
+    clean.match(/^main\\s+([a-z\\u0900-\\u097f][a-z\\u0900-\\u097f\\s,]{1,45}?)\\s+(?:mein|me)\\s+rehti?\\s+(?:hoon|hu|hun)[.!]?$/i);
+  if (cityMatch) {
+    return { kind: 'city', fact: `User lives in ${cityMatch[1].trim()}` };
+  }
+
+  return null;
+}
+
 async function tryDirectMemoryRag(text, lang) {
   const clean = String(text || '').trim();
   const lower = clean.toLowerCase();
-  const rememberMatch =
-    clean.match(/^(?:yaad rakho|yaad rakhna|remember that|remember|note kar lo)\s+(?:ki\s+)?(.{4,300})$/i) ||
-    clean.match(/^(?:mera naam|my name is|i am called)\s+([a-z\u0900-\u097f][a-z\u0900-\u097f\s]{1,40}?)(?:\s+hai)?$/i) ||
-    clean.match(/^(?:main|i live in)\s+([a-z\u0900-\u097f][a-z\u0900-\u097f\s,]{1,45}?)(?:\s+(?:mein|me)\s+rehta\s+(?:hoon|hu|hun))?$/i);
+  const memoryFact = extractExplicitMemoryFact(clean);
 
-  if (rememberMatch) {
+  if (memoryFact) {
+    const fact = memoryFact.fact;  if (rememberMatch) {
     const isNameIntro = /\b(mera naam|my name is|i am called)\b/i.test(lower);
     const isCityIntro = /\b(i live in|rehta hoon|rehta hu|rehta hun)\b/i.test(lower);
     const rawFact = rememberMatch[1].trim();
