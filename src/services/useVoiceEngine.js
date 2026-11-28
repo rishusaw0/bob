@@ -112,7 +112,6 @@ export function useVoiceEngine({
       wakeListenerRef.current.stop();
       wakeListenerRef.current = null;
     }
-    window.electronAPI?.offlineVoiceStop?.().catch?.(() => {});
   }, []);
 
   const stopBargeIn = useCallback(() => {
@@ -386,7 +385,6 @@ export function useVoiceEngine({
     }
 
     let cancelled = false;
-    let unsubOffline = null;
     const api = window.electronAPI;
 
     const startFallbackWake = () => {
@@ -405,39 +403,13 @@ export function useVoiceEngine({
     const timer = setTimeout(() => {
       if (cancelled || phaseRef.current !== 'idle') return;
 
-      if (!offlineUnsupportedRef.current && api?.offlineVoiceStart && api?.onOfflineVoiceEvent) {
-        unsubOffline = api.onOfflineVoiceEvent((ev) => {
-          if (cancelled) return;
-          if (ev.type === 'status') {
-            setOfflineWakeStatus({
-              available: ev.available,
-              running: Boolean(ev.running),
-              culture: ev.culture || '',
-              reason: ev.reason || '',
-            });
-            if (ev.available === false) {
-              offlineUnsupportedRef.current = true;
-              startFallbackWake();
-            }
-          } else if (ev.type === 'wake') {
-            api.offlineVoiceStop?.().catch?.(() => {});
-            handleWakeActivation(ev.command);
-          }
-        });
-        const offlineSpec = wakeTrigger ? `${aiName}|${wakeTrigger}` : aiName;
-        api.offlineVoiceStart(offlineSpec).catch(() => {
-          offlineUnsupportedRef.current = true;
-          startFallbackWake();
-        });
-      } else {
-        startFallbackWake();
-      }
+      // Wake phrases are recognized from PCM audio by Gemini transcription; no local ASR engines.
+      startFallbackWake();
     }, 350);
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      unsubOffline?.();
       stopWakeListener();
     };
   }, [enabled, aiName, wakeTrigger, wakeEnabled, orbState, externalMicBusy, liveActive, handleWakeActivation, stopWakeListener]);
