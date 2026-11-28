@@ -31,6 +31,7 @@ function createWindowManager({
       const raw = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
       return {
         notchUserHidden: Boolean(raw.notchUserHidden),
+        onboardingComplete: Boolean(raw.onboardingComplete),
         notchDisplayId: raw.notchDisplayId ?? null,
         notchPosition: ['top-center', 'top-left', 'top-right'].includes(raw.notchPosition)
           ? raw.notchPosition
@@ -42,6 +43,7 @@ function createWindowManager({
     } catch {
       return {
         notchUserHidden: false,
+        onboardingComplete: false,
         notchDisplayId: null,
         notchPosition: 'top-center',
         startupBehavior: 'notch_standby',
@@ -79,7 +81,7 @@ function createWindowManager({
     return screen.getPrimaryDisplay();
   }
 
-  function computeNotchBounds(width = 436) {
+  function computeNotchBounds(width = 520) {
     const display = getTargetDisplay();
     const b = display.workArea || display.bounds;
     const rawBounds = display.bounds || b;
@@ -96,7 +98,7 @@ function createWindowManager({
   function repositionNotch() {
     if (!notchWindow || notchWindow.isDestroyed()) return;
     try {
-      const nb = computeNotchBounds(436);
+      const nb = computeNotchBounds(520);
       notchWindow.setBounds(nb, false);
       notchWindow.setAlwaysOnTop(true, 'screen-saver');
     } catch {}
@@ -104,7 +106,7 @@ function createWindowManager({
 
   function createNotchWindow() {
     if (notchWindow && !notchWindow.isDestroyed()) return notchWindow;
-    const nb = computeNotchBounds(436);
+    const nb = computeNotchBounds(520);
     notchLoaded = false;
 
     notchWindow = new BrowserWindow({
@@ -241,10 +243,9 @@ function createWindowManager({
   }
 
   function createWindow() {
-    // Separate manual launch from Windows startup launch:
-    // Manual launch ALWAYS opens the main window; startup launch respects user's startupBehavior preference.
+    // First launch shows setup. Once onboarding is complete, JEEVA starts Notch-first.
     const launchedAtStartup = isStartupLaunch();
-    const startHidden = launchedAtStartup && prefs.startupBehavior !== 'open_window';
+    const startHidden = Boolean(prefs.onboardingComplete) || (launchedAtStartup && prefs.startupBehavior !== 'open_window');
 
     mainWindow = new BrowserWindow({
       width: 1200,

@@ -253,7 +253,7 @@ app.whenReady().then(() => {
   windowManager.setupTray();
 
   const wPrefs = windowManager.getPrefs();
-  if (mainWin && !mainWin.isVisible() && wPrefs.startupBehavior === 'notch_standby' && !wPrefs.notchUserHidden) {
+  if (mainWin && !mainWin.isVisible() && (wPrefs.onboardingComplete || wPrefs.startupBehavior === 'notch_standby') && !wPrefs.notchUserHidden) {
     setTimeout(() => {
       windowManager.updateNotchState({ visible: true, standby: true, orbState: 'idle' });
     }, 350);
@@ -450,9 +450,9 @@ ipcMain.handle('window:setMode', (_, mode) => {
 });
 ipcMain.handle('window:wakeRestore', (_, preferredMode = 'notch') => windowManager.wakeRestore(preferredMode));
 ipcMain.handle('window:hideToTray', () => windowManager.getMainWindow()?.hide());
-ipcMain.handle('notch:update', (_, state) => {
+ipcMain.handle('notch:update', (_, state, options = {}) => {
   if (!state || typeof state !== 'object') return false;
-  return windowManager.updateNotchState(state);
+  return windowManager.updateNotchState(state, options);
 });
 ipcMain.handle('notch:action', (_, action, payload = '') => {
   const act = String(action || '').toLowerCase();
@@ -469,14 +469,14 @@ ipcMain.handle('notch:action', (_, action, payload = '') => {
   if (act === 'open_chat') {
     windowManager.setNotchUserHidden(false);
     windowManager.updateNotchState({ visible: false, standby: false }, { force: true });
-    windowManager.applyWindowMode('full');
+    windowManager.applyWindowMode('cortana');
     return { ok: true };
   }
-  if (act === 'open_dashboard') {
+  if (act === 'open_settings' || act === 'open_dashboard') {
     windowManager.setNotchUserHidden(false);
     windowManager.updateNotchState({ visible: false, standby: false }, { force: true });
-    windowManager.applyWindowMode('full');
-    setTimeout(() => emitRendererEvent('ui:openPcControl', 'system'), 120);
+    windowManager.applyWindowMode('cortana');
+    setTimeout(() => emitRendererEvent('ui:openSettings', true), 120);
     return { ok: true };
   }
   if (act === 'toggle_mic') {
@@ -485,6 +485,15 @@ ipcMain.handle('notch:action', (_, action, payload = '') => {
   }
   if (act === 'send_text' && String(payload || '').trim()) {
     emitRendererEvent('notch:event', { action: 'send_text', text: String(payload).trim().slice(0, 2000) });
+    return { ok: true };
+  }
+  if (act === 'send_attachment' && payload && typeof payload === 'object') {
+    const name = String(payload.name || 'attachment').slice(0, 180);
+    const type = String(payload.type || 'application/octet-stream').slice(0, 120);
+    const dataUrl = String(payload.dataUrl || '');
+    const declaredSize = Number(payload.size || 0);
+    if (!dataUrl.startsWith('data:') || !Number.isFinite(declaredSize) || declaredSize <= 0 || declaredSize > 8 * 1024 * 1024 || dataUrl.length > 12 * 1024 * 1024) return { ok: false, error: 'File must be 8 MB or smaller.' };
+    emitRendererEvent('notch:event', { action: 'send_attachment', text: String(payload.prompt || '').slice(0, 2000), attachment: { name, type, mimeType: type, size: declaredSize, dataUrl, isImage: type.startsWith('image/'), isDocument: /\.(pdf|docx|pptx|xlsx|txt|md|csv|json|log)$/i.test(name) } });
     return { ok: true };
   }
   return { ok: false };

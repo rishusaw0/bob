@@ -467,10 +467,12 @@ export default function App() {
       if (tab) setPcControlTab(tab);
       setShowPcControl(true);
     });
+    const unsubSettings = api.onOpenSettings?.(() => setShowSettings(true));
     return () => {
       unsubMode?.();
       unsubWake?.();
       unsubPcControl?.();
+      unsubSettings?.();
     };
   }, []);
 
@@ -1402,7 +1404,12 @@ export default function App() {
             onSaveApiKey={setApiKey}
             onSaveCloudUrl={updateCloudApiUrl}
             onUnlockOwner={unlockOwnerKey}
-            onComplete={() => setShowWizard(false)}
+            onComplete={() => {
+              setShowWizard(false);
+              window.electronAPI?.saveWindowPrefs?.({ onboardingComplete: true });
+              window.electronAPI?.updateNotchState?.({ visible: true, standby: true, orbState: 'idle' }, { explicitShow: true });
+              window.electronAPI?.hideToTray?.();
+            }}
           />
         )}
       </Suspense>

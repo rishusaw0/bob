@@ -100,6 +100,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('ui:openPcControl', listener);
     return () => ipcRenderer.removeListener('ui:openPcControl', listener);
   },
+  onOpenSettings: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('ui:openSettings', listener);
+    return () => ipcRenderer.removeListener('ui:openSettings', listener);
+  },
   onSchedulerFired: (cb) => {
     const handler = (_, payload) => cb(payload);
     ipcRenderer.on('scheduler:fired', handler);
@@ -143,7 +148,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('hotkey:wake', handler);
     return () => ipcRenderer.removeListener('hotkey:wake', handler);
   },
-  updateNotchState: (state) => ipcRenderer.invoke('notch:update', state),
+  updateNotchState: (state, options) => ipcRenderer.invoke('notch:update', state, options),
   notchAction: (action, payload) => ipcRenderer.invoke('notch:action', action, payload),
   getWindowPrefs: () => ipcRenderer.invoke('window:getPrefs'),
   saveWindowPrefs: (patch) => ipcRenderer.invoke('window:savePrefs', patch),
