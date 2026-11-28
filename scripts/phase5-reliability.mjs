@@ -80,7 +80,7 @@ check(pkg.build.files.includes('!electron/win-voice.ps1'), 'exclude native local
 const mainSource = read('electron/main.cjs');
 const preloadSource = read('electron/preload.cjs');
 const appSource = read('src/App.jsx');
-const quickBrain = read('src/services/localQuickBrain.js');
+const quickBrain = read('src/services/pcCommandRouter.js');
 const voiceCapture = read('src/services/voiceCapture.js');
 const speech = read('src/services/speech.js');
 const voiceEngine = read('src/services/useVoiceEngine.js');
@@ -91,7 +91,7 @@ check(!mainSource.includes('createLocalBrainManager'), 'Electron main does not s
 check(!mainSource.includes('createOfflineVoice'), 'Electron main does not start local Whisper/SAPI');
 check(!preloadSource.includes('localBrainChat') && !preloadSource.includes('offlineVoiceDictate'), 'preload exposes no local-model IPC');
 check(mainSource.includes("for (const legacyDir of ['local-brain', 'voice-models'])"), 'old JEEVA model cache is cleaned');
-check(appSource.includes('runLocalQuickBrain'), 'deterministic PC command adapter remains enabled');
+check(appSource.includes('runLocalQuickBrain') && appSource.includes('pcCommandRouter'), 'deterministic PC command adapter remains enabled');
 check(!appSource.includes('runLocalSlmTurn') && !appSource.includes('runLocalDocumentTurn'), 'chat has no local LLM/document answer path');
 check(quickBrain.includes('tryFastVoiceAction') && quickBrain.includes('tryLocalSlotAction'), 'basic deterministic Windows actions remain');
 check(voiceCapture.includes("return await transcribeAudio(wavBase64, 'audio/wav', opts)"), 'voice transcription goes to Gemini');
