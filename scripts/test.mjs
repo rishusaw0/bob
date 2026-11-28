@@ -105,17 +105,15 @@ const actionKeys = [...actionsBlock.matchAll(/^\s{4}(?:async\s+)?([a-zA-Z0-9_]+)
 const guardCases = new Set(
   [...guardSrc.slice(guardSrc.indexOf('getActionCategory'), guardSrc.indexOf('isActionHighRisk')).matchAll(/case\s*'([a-zA-Z0-9_]+)'/g)].map((m) => m[1])
 );
-const remoteActions = new Set([...bridgeSrc.matchAll(/callRemoteAction\(['"]([a-zA-Z0-9_]+)['"]/g)].map((m) => m[1]));
+assert.ok(bridgeSrc.includes('return isDesktopElectron() ? window.electronAPI : null'), 'system bridge exposes only local Electron IPC');
+assert.ok(!bridgeSrc.includes('callRemoteAction'), 'browser/LAN/cloud remote PC execution is removed');
 
 for (const act of actionKeys) {
   assert.ok(guardCases.has(act), `Action "${act}" missing in permission-guard.cjs`);
-  if (!['liveStats', 'saveImage'].includes(act)) {
-    assert.ok(remoteActions.has(act), `Action "${act}" missing in bridge.js remote actions`);
-  }
 }
 console.log(`   Verified ${declaredTools.length} tools, ${preloadInvokes.length} IPC handlers, ${actionKeys.length} actions.`);
 
-// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard, security guardrails, memory RAG, server store & WS codec
+// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard, security guardrails, memory RAG
 console.log('[3/6] Testing coord-mapper, updater, scheduler, guardrails, memory RAG & auto-launch...');
 const { mapCoordsToPhysical } = require(path.join(ROOT, 'electron/coord-mapper.cjs'));
 const { compareSemver } = require(path.join(ROOT, 'electron/updater.cjs'));
