@@ -1,5 +1,7 @@
 import { defineConfig } from 'vite';
-import { resolve } from 'node:path';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const __dirname = dirname(fileURLToPath(import.meta.url));
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => ({
@@ -15,7 +17,7 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: 'dist',
     rollupOptions: {
-      input: resolve(__dirname, mode === 'public' ? 'landing.html' : 'index.html'),
+      input: { index: resolve(__dirname, mode === 'public' ? 'landing.html' : 'index.html') },
     },
     rolldownOptions: {
       output: {
