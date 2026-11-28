@@ -128,7 +128,10 @@ function getScheduler() {
     userDataDir: app.getPath('userData'),
     NotificationClass: Notification,
     onFire: (item) => emitRendererEvent('scheduler:fired', item),
-    onExecuteCommand: async (command) => await pcActionKit.actions.runCommand(command),
+    onExecuteCommand: async (command) => {
+      await permissionGuard.authorizeRemoteAction({ action: 'runCommand', args: [command], sourceLabel: 'JEEVA Scheduler' });
+      return pcActionKit.actions.runCommand(command);
+    },
     onListUpdate: (items) => emitRendererEvent('scheduler:updated', items),
   });
   pcScheduler.init();
