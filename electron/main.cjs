@@ -493,7 +493,7 @@ ipcMain.handle('notch:action', (_, action, payload = '') => {
     const dataUrl = String(payload.dataUrl || '');
     const declaredSize = Number(payload.size || 0);
     if (!dataUrl.startsWith('data:') || !Number.isFinite(declaredSize) || declaredSize <= 0 || declaredSize > 8 * 1024 * 1024 || dataUrl.length > 12 * 1024 * 1024) return { ok: false, error: 'File must be 8 MB or smaller.' };
-    emitRendererEvent('notch:event', { action: 'send_attachment', text: String(payload.prompt || '').slice(0, 2000), attachment: { name, type, size: declaredSize, dataUrl, isImage: type.startsWith('image/') } });
+    emitRendererEvent('notch:event', { action: 'send_attachment', text: String(payload.prompt || '').slice(0, 2000), attachment: { name, type, mimeType: type, size: declaredSize, dataUrl, isImage: type.startsWith('image/'), isDocument: /\.(pdf|docx|pptx|xlsx|txt|md|csv|json|log)$/i.test(name) } });
     return { ok: true };
   }
   return { ok: false };
