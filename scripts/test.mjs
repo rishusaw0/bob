@@ -26,6 +26,19 @@ for (const rel of jsTargets) {
   execFileSync(process.execPath, ['-c', path.join(ROOT, rel)], { stdio: 'pipe' });
 }
 
+// Verify every relative CommonJS dependency required by Electron main resolves in source.
+console.log('[1b/6] Checking Electron relative module dependencies...');
+const electronDir = path.join(ROOT, 'electron');
+for (const file of fs.readdirSync(electronDir).filter((f) => f.endsWith('.cjs'))) {
+  const source = fs.readFileSync(path.join(electronDir, file), 'utf8');
+  for (const hit of source.matchAll(/require\\(\\s*['\"](\\.\\/?[^'\"]+)['\"]\\s*\\)/g)) {
+    const target = path.resolve(electronDir, hit[1]);
+    const candidates = [target, target + '.cjs', target + '.js', path.join(target, 'index.cjs'), path.join(target, 'index.js')];
+    assert.ok(candidates.some((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile()),
+      `Missing relative Electron dependency ${hit[1]} required by ${file}`);
+  }
+}
+
 // 2. Cross-wiring static audit (icons, tools, IPCs, actions, permissions)
 console.log('[2/6] Running full cross-wiring audit...');
 function checkIcons(dir) {
