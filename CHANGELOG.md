@@ -1,5 +1,15 @@
 # Changelog — JEEVA AI
 
+## [1.0.6] — 2026-11-28
+
+### Fixed
+- Connected saved Custom System Instructions to Gemini requests and persisted them across restarts.
+- Applied the selected English/Hindi/Hinglish voice profile to the speech engine and persisted Auto Voice Replies.
+- Fixed the Ask Gemini action so it bypasses deterministic local PC-command handling.
+- Prevented ordinary Hinglish requests such as "main Chrome kholo" and recall questions such as "Mera naam kya hai?" from being saved as personal memory facts.
+- Prevented voice wake-up from issuing duplicate native window-mode changes.
+- Added regression coverage for the settings, memory parsing, escalation and wake-up paths.
+
 ## [1.0.5] — 2026-11-28
 
 ### Fixed
