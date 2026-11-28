@@ -11,8 +11,6 @@ let previousInteractionId = null;
 let preferredModel = 'gemini-3.5-flash-lite';
 let customInstructions = '';
 let assistantName = 'Jeeva';
-let usingServerProxy = false;
-let lastInitOptions = { apiKey: '', useServerProxy: false, proxyBaseUrl: '', appToken: '' };
 
 export const SMOKE_CANDIDATE_MODELS = [
   'gemini-3.5-flash-lite',
@@ -52,99 +50,15 @@ LANGUAGE & CONFIRMATION RULE: Always reply in the SAME language and script style
   return `${base}${styleHint}${customBlock}${voiceBlock}`;
 }
 
-export function isUsingServerProxy() {
-  return usingServerProxy;
-}
-
-function createTempClient({ apiKey, useServerProxy, proxyBaseUrl, appToken } = {}) {
-  if (useServerProxy) {
-    const origin = (
-      proxyBaseUrl ||
-      (typeof window !== 'undefined' && window.location.protocol.startsWith('http') ? window.location.origin : '')
-    ).replace(/\/+$/, '');
-    if (!origin) {
-      throw new Error('Render Cloud Server URL is required for proxy mode');
-    }
-    const baseUrl = `${origin}/api/gemini`;
-    const headers = appToken ? { 'x-app-token': appToken } : {};
-    return new GoogleGenAI({
-      apiKey: 'server-proxy',
-      apiVersion: 'v1beta',
-      httpOptions: { baseUrl, headers },
-    });
-  }
+function createTempClient(apiKey) {
   if (!apiKey) throw new Error('API key is required');
   return new GoogleGenAI({ apiKey, apiVersion: 'v1beta' });
 }
 
-export function initGemini(apiKey, options = {}) {
-  lastInitOptions = {
-    apiKey: String(apiKey || '').trim(),
-    useServerProxy: Boolean(options?.useServerProxy),
-    proxyBaseUrl: (options?.proxyBaseUrl || '').trim().replace(/\/+$/, ''),
-    appToken: options?.appToken || '',
-  };
-  client = createTempClient(lastInitOptions);
-  usingServerProxy = lastInitOptions.useServerProxy;
+export function initGemini(apiKey) {
+  client = createTempClient(String(apiKey || '').trim());
   previousInteractionId = null;
   return true;
-}
-
-export function getGeminiConnectionInfo() {
-  const origin =
-    lastInitOptions.proxyBaseUrl ||
-    (typeof window !== 'undefined' && window.location.protocol.startsWith('http') ? window.location.origin : '');
-  return {
-    ...lastInitOptions,
-    proxyBaseUrl: origin.replace(/\/+$/, ''),
-  };
-}
-
-/**
- * Verifies live Gemini API connectivity and finds a responsive model automatically if the selected ID is unsupported.
- */
-export async function testGeminiConnection({
-  apiKey = '',
-  useServerProxy = false,
-  proxyBaseUrl = '',
-  appToken = '',
-  model = preferredModel,
-} = {}) {
-  assertCloudAllowed('Gemini Connection Test');
-  const startedAt = Date.now();
-  let testClient;
-  try {
-    testClient = createTempClient({ apiKey, useServerProxy, proxyBaseUrl, appToken });
-  } catch (err) {
-    return { ok: false, error: err?.message || 'Configuration incomplete' };
-  }
-
-  const candidates = Array.from(new Set([model, ...SMOKE_CANDIDATE_MODELS].filter(Boolean)));
-  let lastError = 'No responsive Gemini model found';
-
-  for (const candidate of candidates) {
-    try {
-      const res = await testClient.interactions.create({
-        model: candidate,
-        input: 'Reply with OK',
-        store: false,
-      });
-      return {
-        ok: true,
-        activeModel: candidate,
-        fallbackUsed: candidate !== model,
-        latencyMs: Date.now() - startedAt,
-        sample: (res?.output_text || 'OK').trim().slice(0, 40),
-      };
-    } catch (err) {
-      lastError = err?.message || String(err);
-      // Auth/401/403 should fail immediately instead of probing fallback models
-      if (/401|403|API_KEY_INVALID|API key not valid|Owner Server Key locked/i.test(lastError)) {
-        return { ok: false, error: lastError, latencyMs: Date.now() - startedAt };
-      }
-    }
-  }
-  return { ok: false, error: lastError, latencyMs: Date.now() - startedAt };
 }
 
 export function setModel(model) {
