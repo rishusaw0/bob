@@ -69,7 +69,7 @@ equal(offlineRoute.forceLocal, false, 'offline must not use a local LLM');
 
 // Installer/runtime contract: model manager, Whisper and native speech are not shipped or initialized.
 const pkg = JSON.parse(read('package.json'));
-equal(pkg.version, '1.0.5', 'lightweight installer version');
+equal(pkg.version, '1.0.6', 'lightweight installer version');
 check(pkg.build.files.includes('!electron/local-brain.cjs'), 'exclude legacy local LLM runtime');
 check(pkg.build.files.includes('!electron/offline-voice.cjs'), 'exclude legacy Whisper/SAPI runtime');
 check(pkg.build.files.includes('!electron/win-voice.ps1'), 'exclude native local dictation script');
@@ -92,6 +92,14 @@ check(appSource.includes('runPcCommand') && appSource.includes('pcCommandRouter'
 check(appSource.includes('const switchWindowMode = useCallback'), 'App defines the window mode switch handler');
 check(appSource.includes('window.electronAPI?.setWindowMode'), 'window mode handler updates the native Electron window');
 check(appSource.includes('onWindowModeChange'), 'App listens for native window mode changes');
+check(appSource.includes('setGeminiInstructions(customInstructions)'), 'saved custom instructions are applied to Gemini');
+check(appSource.includes("localStorage.setItem('jeeva_custom_instructions', customInstructions)"), 'custom instructions persist across restarts');
+check(appSource.includes('setSpeechVoiceMode(voiceMode)'), 'selected voice profile is synchronized with speech engine');
+check(appSource.includes("localStorage.setItem('jeeva_tts', String(ttsEnabled))"), 'auto voice replies preference persists across restarts');
+check(appSource.includes('if (!attachment && !forceCloud)'), 'Ask Gemini escalation bypasses deterministic PC command routing');
+const voiceEngineSource = read('src/services/useVoiceEngine.js');
+check(voiceEngineSource.includes('const nativeWakeRestore = window.electronAPI?.wakeRestore'), 'native wake restoration is handled through one Electron call');
+check(voiceEngineSource.includes('else if (targetMode !== \'notch\')'), 'browser wake mode changes use the non-Electron callback only');
 check(!appSource.includes('runLocalSlmTurn') && !appSource.includes('runLocalDocumentTurn'), 'chat has no local LLM/document answer path');
 check(quickBrain.includes('tryFastVoiceAction') && quickBrain.includes('tryLocalSlotAction'), 'basic deterministic Windows actions remain');
 check(voiceCapture.includes("return await transcribeAudio(wavBase64, 'audio/wav', opts)"), 'voice transcription goes to Gemini');

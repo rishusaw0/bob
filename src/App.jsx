@@ -100,6 +100,25 @@ export default function App() {
     } catch {}
   }, []);
 
+  // Keep saved Preferences connected to the actual Gemini and speech services.
+  useEffect(() => {
+    setGeminiInstructions(customInstructions);
+    try {
+      localStorage.setItem('jeeva_custom_instructions', customInstructions);
+    } catch {}
+  }, [customInstructions]);
+
+  useEffect(() => {
+    setSpeechVoiceMode(voiceMode);
+  }, [voiceMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('jeeva_tts', String(ttsEnabled));
+    } catch {}
+  }, [ttsEnabled]);
+
+
   // Resolve permission prompts through the modal before any protected PC action runs.
   const requestPermission = useCallback((request = {}) => new Promise((resolve) => {
     // Never leave an earlier action waiting if another permission prompt replaces it.
@@ -380,7 +399,7 @@ export default function App() {
       const userAskedSpeech = /\b(read aloud|speak|sunao|bolkar|bol kar|awaz mein)\b/i.test(promptText);
 
       // Keep deterministic PC actions local; all natural-language answers use Gemini.
-      if (!attachment) {
+      if (!attachment && !forceCloud) {
         const quick = await runPcCommand(promptText, { requestPermission, historyMessages: messages });
         if (quick?.handled) {
           finalizeReply({
