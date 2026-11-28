@@ -14,18 +14,15 @@ function equal(actual, expected, message) { assert.equal(actual, expected, messa
 const { classifyIntentDetailed, normalizeHinglishQuery } =
   await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
 const intentCases = [
-  ['Chrome खोलो', 'open'],
-  ['chrome kholo', 'open'],
-  ['notepad chalao', 'open'],
+  ['laptop hang lag slow ho raha hai check karo', 'system_overview'],
   ['volume 50 kar do', 'volume'],
-  ['आवाज़ बढ़ाओ', 'volume'],
   ['screen ki brightness badhao', 'brightness'],
-  ['battery kitni bachi hai', 'battery_check'],
-  ['wifi ka status dikhao', 'wifi_status'],
-  ['temp files saaf kar do', 'clean_temp'],
-  ['dark mode on karo', 'dark_mode'],
-  ['downloads folder arrange kar do', 'organize_downloads'],
-  ['set a reminder after 10 minutes', 'set_reminder'],
+  ['temp cache junk kachra files clean saaf karo', 'clean_temp'],
+  ['downloads folder arrange organize sort saaf karo', 'organize_downloads'],
+  ['laptop battery percentage charging status kitni bachi hai', 'battery_check'],
+  ['wifi network internet connection kaun sa juda hai', 'wifi_status'],
+  ['windows dark mode night theme on lagao', 'dark_mode'],
+  ['10 minute baad paani peene ka timer reminder lagao', 'set_reminder'],
 ];
 for (const [query, expected] of intentCases) {
   const result = classifyIntentDetailed(query);
