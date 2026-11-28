@@ -102,6 +102,9 @@ check(settings.includes('No Ollama, llama.cpp, Qwen, Gemma'), 'Settings disclose
 check(gemini.includes("const GEMINI_MODEL_ID = 'gemini-3.5-flash-lite'"), 'single fixed chat/transcription model');
 check(gemini.includes("const GEMINI_TTS_MODEL_ID = 'gemini-3.8-flash-lite-tts'"), 'dedicated Gemini voice output endpoint');
 check(gemini.includes('const cfg = { ...config, model: GEMINI_MODEL_ID }'), 'chat retries cannot switch model');
+check(gemini.includes("model: GEMINI_TTS_MODEL_ID") && gemini.includes("responseModalities: ['AUDIO']"), 'voice output uses the dedicated Gemini TTS API');
+check(gemini.includes('client.models.generateContent') && gemini.includes('inlineData: { mimeType, data: base64Data }'), 'voice transcription is sent to Gemini through the supported multimodal API');
+check(!gemini.includes('generateImage') && !read('src/services/tools.js').includes('generate_image_tool'), 'no secondary image model is shipped');
 check(!gemini.includes('gemini-4-') && !gemini.includes('gemini-2.5-') && !gemini.includes('gemini-nano-banana'), 'no alternate chat/image models');
 
 const { isStrictOfflineMode, setStrictOfflineMode } =
