@@ -61,17 +61,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   browserControl: (sub, value) => ipcRenderer.invoke('system:browserControl', sub, value),
 
-  // Offline SAPI Voice Engine & Auto-Updater
-    const listener = (_, ev) => cb(ev);
-    ipcRenderer.on('voice:offlineEvent', listener);
-    return () => ipcRenderer.removeListener('voice:offlineEvent', listener);
-  },
+  // Auto-Updater
   checkForUpdates: (cfg) => ipcRenderer.invoke('updater:check', cfg),
   downloadUpdate: (url) => ipcRenderer.invoke('updater:download', url),
   getUpdaterState: () => ipcRenderer.invoke('updater:getState'),
-    const listener = (_, ev) => cb(ev);
-    ipcRenderer.on('brain:progress', listener);
-    return () => ipcRenderer.removeListener('brain:progress', listener);
+  onUpdaterStatus: (cb) => {
+    const listener = (_, st) => cb(st);
+    ipcRenderer.on('updater:status', listener);
+    return () => ipcRenderer.removeListener('updater:status', listener);
   },
   episodicLog: (entry) => ipcRenderer.invoke('episodic:log', entry),
   episodicQuery: (filters) => ipcRenderer.invoke('episodic:query', filters),
