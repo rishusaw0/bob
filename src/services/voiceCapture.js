@@ -2,8 +2,7 @@
 // 1. 16 kHz Mono PCM Pre-Roll Ring Buffer + Goertzel Vocal-Band Speech Scoring + WAV Capture
 // 2. Adaptive Utterance Silence Grace (snappy for short cmds, patient for multi-step sentences)
 // 3. Real-Time Barge-In Monitor during TTS / Audio Playback
-import { transcribeAudio, getGeminiConnectionInfo } from './gemini.js';
-import { isStrictOfflineMode } from './offlineMode.js';
+import { transcribeAudio } from './gemini.js';
 import { matchWakePhrase, getAiName } from './voiceRouter.js';
 
 let speechApiBrokenInRuntime = false;
@@ -91,12 +90,9 @@ export function normalizePcmForStt(pcm16k, sampleRate = 16000) {
 }
 
 export function isBrowserSpeechSupported() {
-  if (typeof window === 'undefined') return false;
-  if (window.electronAPI) return false;
-  if (isStrictOfflineMode()) return false;
-  return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition) && !speechApiBrokenInRuntime;
+  // Voice input must be sent to the configured Gemini API, never browser/cloud speech services.
+  return false;
 }
-
 /**
  * Centralized local-first audio transcription adapter.
  * Enforces Strict Offline Mode: NEVER sends mic audio to Gemini Cloud when Strict Offline is ON.
@@ -110,42 +106,7 @@ export function isBrowserSpeechSupported() {
  * In Strict Offline mode every network transcription path is blocked.
  */
 export async function transcribeCapturedAudio(wavBase64, opts = {}) {
-  const api = typeof window !== 'undefined' ? window.electronAPI : null;
-  const language = opts.language || 'auto';
-  let whisperReason = '';
-  if (api?.offlineVoiceTranscribe) {
-    try {
-      const local = await api.offlineVoiceTranscribe(wavBase64, { language });
-      if (local?.ok && local?.text) {
-        console.info('[JEEVA STT] transcription engine: whisper.cpp');
-        return local.text;
-      }
-      whisperReason = local?.reason || 'Whisper.cpp returned no transcript';
-    } catch (err) {
-      whisperReason = err?.message || 'Whisper.cpp failed';
-    }
-  } else {
-    whisperReason = 'Local Whisper.cpp bridge is unavailable';
-  }
-
-  if (api?.offlineVoiceDictate) {
-    try {
-      const dictation = await api.offlineVoiceDictate(7, { language });
-      const localText = cleanSttTranscript(dictation?.text || '');
-      if (localText) {
-        console.info(`[JEEVA STT] transcription engine: windows-sapi (fallback, ${dictation?.culture || language})`);
-        return localText;
-      }
-      if (dictation?.reason) whisperReason += `; Windows SAPI: ${dictation.reason}`;
-    } catch (err) {
-      whisperReason += `; Windows SAPI failed: ${err?.message || 'unknown error'}`;
-    }
-  }
-
-  if (isStrictOfflineMode()) {
-    throw new Error(`Strict Offline Mode: cloud transcription blocked. Local Whisper.cpp and Windows SAPI produced no transcript. ${whisperReason}`);
-  }
-  console.info('[JEEVA STT] transcription engine: gemini-cloud (local engines unavailable; Strict Offline is OFF)');
+  // Only Gemini performs speech recognition. Offline PC commands can still be typed.
   return await transcribeAudio(wavBase64, 'audio/wav', opts);
 }
 
@@ -652,33 +613,7 @@ export function startVoiceCapture({
       startPcmCommandCapture();
     }
   } else {
-    // If offline or no Gemini Cloud STT configured, try Windows SAPI dictation directly first so user doesn't speak twice
-    const conn = getGeminiConnectionInfo?.() || {};
-    const canUseCloudStt =
-      (typeof navigator === 'undefined' || navigator.onLine !== false) &&
-      Boolean(conn.apiKey || conn.useServerProxy);
-    const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!canUseCloudStt && api?.offlineVoiceDictate) {
-      onStatus('offline-dictating');
-      onInterim('Listening (offline speech engine)...');
-      api.offlineVoiceDictate(7)
-        .then((dict) => {
-          if (stopped) return;
-          const offText = cleanSttTranscript(dict?.text || '');
-          if (offText) {
-            stopped = true;
-            cleanup();
-            onResult(offText, { pcm16k: null });
-          } else {
-            startPcmCommandCapture();
-          }
-        })
-        .catch(() => {
-          if (!stopped) startPcmCommandCapture();
-        });
-    } else {
-      startPcmCommandCapture();
-    }
+    startPcmCommandCapture();
   }
 
   return {
