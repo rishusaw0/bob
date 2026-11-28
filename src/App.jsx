@@ -213,6 +213,15 @@ export default function App() {
     setIsReady(false);
   }, [apiKey]);
 
+  // Initialize live system telemetry and watchdog state used throughout the UI.
+  const { liveStats, watchdogAlert, applyWatchdogFix } = useWatchdogAndStats({
+    isElectron: Boolean(window.electronAPI),
+    onOpenControlTab: (tab) => {
+      setPcControlTab(tab);
+      setShowPcControl(true);
+    },
+  });
+
   const handleSend = useCallback(async (text, attachment = null, meta = null) => {
     if (!text.trim() && !attachment) return;
 
