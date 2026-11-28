@@ -725,6 +725,7 @@ assert.equal(isLoopbackEndpoint('http://127.0.0.1:11434'), true);
 assert.equal(isLoopbackEndpoint('https://example.com/v1'), false);
 assert.ok(LOW_END_MODELS.some((m) => m.id === 'qwen2.5:1.5b'));
 const allowedLocalTool = validateLocalToolCall('open_application', { app_name: 'chrome' }, ['open_application']);
+assert.equal(validateLocalToolCall('run_system_command', { command: 'whoami' }, ['run_system_command']).ok, false);
 assert.equal(allowedLocalTool.ok, true);
 assert.equal(validateLocalToolCall('run_system_command', { command: 'whoami' }, ['open_application']).ok, false);
 assert.equal(validateLocalToolCall('open_application', { app_name: 42 }, ['open_application']).ok, false);
