@@ -63,7 +63,7 @@ export default function LandingPage({
   const activeDemo = DEMO_SCENARIOS[demoIdx];
 
   const LATEST_INSTALLER_URL =
-    'https://github.com/rishusaw0/bob/releases/latest/download/JEEVA.AI.Setup.1.0.2.exe';
+    'https://github.com/rishusaw0/bob/releases/latest/download/JEEVA.AI.Setup.1.0.1.exe';
   const resolvedInstallerUrl =
     installerUrl && /JEEVA\.AI\.Setup\.1\.0\.2\.exe(?:$|[?#])/i.test(installerUrl) ? installerUrl : LATEST_INSTALLER_URL;
 
@@ -428,7 +428,7 @@ export default function LandingPage({
               </button>
             </div>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Download the latest Windows installer (<code className="text-emerald-300">JEEVA AI Setup 1.0.2.exe</code>) from GitHub Releases, or set <code className="text-sky-300">INSTALLER_DOWNLOAD_URL</code> on Render for instant 1-click download.
+              Download the latest Windows installer (<code className="text-emerald-300">JEEVA AI Setup 1.0.1.exe</code>) from GitHub Releases, or set <code className="text-sky-300">INSTALLER_DOWNLOAD_URL</code> on Render for instant 1-click download.
             </p>
             <div className="flex items-center justify-end gap-2">
               <a
