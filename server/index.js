@@ -54,7 +54,7 @@ const server = http.createServer((req, res) => {
   if (pathname.includes('\\') || pathname.includes('\0')) {
     return send(res, 400, 'Bad Request');
   }
-  const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  const relative = pathname === '/' ? 'landing.html' : pathname.replace(/^\/+/, '');
   const filePath = path.resolve(DIST, relative);
   if (filePath !== DIST && !filePath.startsWith(DIST + path.sep)) {
     return send(res, 403, 'Forbidden');
