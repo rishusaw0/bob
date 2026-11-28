@@ -117,6 +117,24 @@ function cosineSim(vecA, vecB) {
 
 const INTENT_DEFINITIONS = [
   {
+    id: 'brightness',
+    tool: 'brightness_control',
+    args: (raw) => {
+      const text = normalizeHinglishQuery(raw);
+      const percent = text.match(/\\b(\\d{1,3})\\s*%?/);
+      if (/\\b(down|decrease|lower|kam|ghatao)\\b/.test(text)) return { action: 'down' };
+      if (percent && Number(percent[1]) <= 100) return { action: 'set', level: Number(percent[1]) };
+      if (/\\b(get|status|kitna|kitni)\\b/.test(text)) return { action: 'get' };
+      return { action: 'up' };
+    },
+    phrases: [
+      'screen ki brightness badhao', 'laptop brightness badha do',
+      'screen roshni tez karo', 'brightness increase display light',
+      'screen brightness kam karo', 'brightness decrease',
+      'brightness 70 percent set karo', 'screen ki brightness kitni hai',
+    ],
+  },
+  {
     id: 'system_overview',
     tool: 'system_diagnostics',
     args: () => ({ action: 'overview' }),
