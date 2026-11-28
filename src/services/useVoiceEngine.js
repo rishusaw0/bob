@@ -395,7 +395,7 @@ export function useVoiceEngine({
       clearTimeout(timer);
       stopWakeListener();
     };
-  }, [enabled, aiName, wakeTrigger, wakeEnabled, orbState, externalMicBusy, liveActive, handleWakeActivation, stopWakeListener]);
+  }, [enabled, aiName, wakeTrigger, wakeEnabled, orbState, externalMicBusy, handleWakeActivation, stopWakeListener]);
 
   const toggleOrb = useCallback(() => {
     if (speechState.isPlaying) {
