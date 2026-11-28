@@ -22,7 +22,7 @@ import {
   resetConversation,
   generateTitle,
 } from './services/gemini';
-import { speakText, stopSpeech, getVoiceMode, setVoiceMode as setSpeechVoiceMode, createStreamingSpeaker, getSpeechSpeedMode } from './services/speech';
+import { speakText, stopSpeech, getVoiceMode, setVoiceMode as setSpeechVoiceMode, createStreamingSpeaker } from './services/speech';
 import { playWakeChime } from './services/earcon';
 import { startVoiceCapture } from './services/voiceCapture';
 import {
@@ -33,16 +33,12 @@ import {
 import { getAiName, getStrictVoiceMode, getWakeOpenMode } from './services/voiceRouter';
 import { getDocSummaryPref, setDocSummaryPref, getReplyStyle, setReplyStyle } from './services/userPrefs';
 import { runLocalQuickBrain, buildLocalTitle } from './services/localQuickBrain';
-import { runLocalSlmTurn } from './services/localLlm';
 import {
-  getBrainMode,
-  setBrainMode as persistBrainMode,
   assessQueryRouting,
   recordBrainUsage,
   compactHistoryForCloud,
 } from './services/brainRouter';
 import { logEpisodicTurn } from './services/episodicMemory';
-import { isTextOrDocAttachment, runLocalDocumentTurn } from './services/docExtractor';
 import { useVoiceEngine } from './services/useVoiceEngine';
 import { useWatchdogAndStats } from './hooks/useWatchdogAndMemory';
 import ToastContainer from './components/ToastContainer';
@@ -61,9 +57,7 @@ export default function App() {
   const [apiKey, setApiKey] = useState(
     () => (window.electronAPI ? '' : (localStorage.getItem('jeeva_api_key') || import.meta.env.VITE_GEMINI_API_KEY || ''))
   );
-  const [model, setModel] = useState(
-    () => localStorage.getItem('jeeva_model') || 'gemini-3.5-flash-lite'
-  );
+  const [model, setModel] = useState('gemini-3.5-flash-lite');
   const [customInstructions, setCustomInstructions] = useState(
     () => localStorage.getItem('jeeva_custom_instructions') || ''
   );
@@ -82,7 +76,6 @@ export default function App() {
   const [docSummaryPref, setDocSummaryPrefState] = useState(() => getDocSummaryPref());
   const [replyStyle, setReplyStyleState] = useState(() => getReplyStyle());
   const [aiName, setAiNameState] = useState(() => getAiName());
-  const [brainMode, setBrainModeState] = useState(() => getBrainMode());
   const [permissionRequest, setPermissionRequest] = useState(null);
   const [showWizard, setShowWizard] = useState(
     () => Boolean(window.electronAPI) && localStorage.getItem('jeeva_onboarding_done') !== 'true'
@@ -383,7 +376,7 @@ export default function App() {
           switchWindowMode('full');
           setShowSettings(true);
         }
-        throw new Error('Is heavy task ke liye Gemini API key ya Cloud AI URL Settings me connect karein (chhote PC tasks aur date memory bina key ke bhi chalte hain).');
+        throw new Error('Gemini API key Settings mein connect karein. JEEVA ke AI answers ke liye Gemini 3.5 Flash-Lite zaroori hai. Basic PC controls internet/API ke bina bhi available hain.');
       }
 
       if (messages.length === 0 && promptText.trim()) {
@@ -398,10 +391,9 @@ export default function App() {
 
       const historyDigest = compactHistoryForCloud(messages);
       const wantSpeech = Boolean(ttsEnabled || fromVoice || userAskedSpeech);
-      const streamSpeaker =
-        wantSpeech && getSpeechSpeedMode() !== 'cloud_studio'
-          ? createStreamingSpeaker({ label: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Answering...' })
-          : null;
+      const streamSpeaker = wantSpeech
+        ? createStreamingSpeaker({ label: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Answering...' })
+        : null;
       try {
         const response = await sendMessage(
           promptText,
@@ -463,7 +455,7 @@ export default function App() {
       voiceprintMismatchRef.current = false;
       setIsLoading(false);
     }
-  }, [isReady, brainMode, liveStats, ttsEnabled, requestPermission, apiKey, switchWindowMode, messages]);
+  }, [isReady, liveStats, ttsEnabled, requestPermission, apiKey, switchWindowMode, messages]);
 
   // Persistent Always-On Wake Word & Mic Engine:
   // - On Electron Desktop: active 24/7 across Full, Minimized, Tray, Speaker & Cortana modes once API/Cloud is ready
@@ -475,8 +467,7 @@ export default function App() {
     autoListenSignal,
     requestPermission,
     enabled: Boolean(
-      ((window.electronAPI && (isReady || brainMode !== 'cloud')) ||
-        (isReady && windowMode !== 'full'))
+      (isReady && (window.electronAPI || windowMode !== 'full'))
     ),
     onWakeOpen: (mode) => {
       if (mode && mode !== 'notch') setWindowMode(mode);
@@ -720,8 +711,6 @@ export default function App() {
             onSend={handleSend}
             isLoading={isLoading}
             isReady={isReady}
-            brainMode={brainMode}
-            onBrainModeChange={(m) => setBrainModeState(persistBrainMode(m))}
             ttsEnabled={ttsEnabled}
             onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
             voiceMode={voiceMode}
