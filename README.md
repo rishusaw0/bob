@@ -9,7 +9,7 @@ The hosted website is intentionally limited to a public product landing page and
 - Voice/chat assistant with Hindi, Hinglish and English support.
 - Direct Gemini API connection from the Windows desktop app. The API key is stored using the Windows encrypted vault.
 - PC automation for apps, Windows settings, files, screenshots, keyboard/mouse, browser tabs, software management and diagnostics.
-- Local model support, memory, reminders, scheduled tasks and workflows.
+- Deterministic local memory, reminders, scheduled tasks, workflows and basic Windows PC utilities; no local AI model is installed.
 - Desktop voice modes, Camera Notch overlay, Windows tray and auto-start.
 - Local permission controls and audit log.
 - Windows desktop auto-updates from GitHub Releases.
@@ -24,7 +24,8 @@ The hosted website is intentionally limited to a public product landing page and
 
 - Windows 10 or Windows 11 (x64).
 - Node.js 22 for development/build.
-- A Gemini API key for Gemini-powered features. Enter it in the app's setup wizard or Settings; do not commit it to source control.
+- Internet access and a Gemini API key for AI answers and voice. Enter the key in the app's setup wizard or Settings; do not commit it to source control.
+- Gemini 3.5 Flash-Lite is the only conversational/transcription model. Spoken replies use Google's dedicated Gemini TTS service.
 
 ## Development
 
@@ -49,34 +50,14 @@ This builds the static download-only site into dist/. The Render blueprint uses 
 
 This uses the separate Electron desktop entry point and writes the NSIS installer to release/. The public website bundle is never packaged into the Windows installer.
 
-## Offline voice recognition (Whisper.cpp / Windows SAPI)
+## AI and voice architecture
 
-JEEVA uses this local-first speech-to-text order:
-
-1. **Whisper.cpp** when its executable and a multilingual model are installed.
-2. **Windows SAPI DictationGrammar** as a separate local fallback when Whisper is missing or fails. The matching Windows speech recognition language pack must be installed.
-3. **Gemini cloud transcription** only when Strict Offline Mode is OFF and local recognition did not produce text.
-
-Strict Offline Mode never reaches Gemini transcription. If both local engines fail, voice capture returns an error rather than sending microphone audio to the cloud.
-
-### Install Whisper.cpp assets
-
-Create a voice-models folder inside JEEVA's Electron user-data directory (normally %APPDATA%\\jeeva-ai\\voice-models) and place these files directly inside it:
-
-- whisper-cli.exe (recommended) or legacy main.exe from a compatible whisper.cpp Windows build.
-- One multilingual Whisper.cpp model file named ggml-*.bin (for example, a multilingual ggml-small.bin). Do not use an .en.bin English-only model if Hindi/Hinglish is required.
-
-Expected layout:
-
-    %APPDATA%\\jeeva-ai\\voice-models\\
-      whisper-cli.exe
-      ggml-small.bin
-
-JEEVA sends 16 kHz, mono, 16-bit PCM WAV audio to Whisper.cpp. The model and executable are kept in the user's app-data folder and are not bundled into the installer. Vosk is not currently supported or detected as a ready engine; a Vosk model folder alone will not enable transcription.
-
-### Windows SAPI fallback
-
-SAPI uses the installed Windows Speech Recognition pack through System.Speech. Hindi dictation requires an installed Hindi recognizer; English uses an installed English recognizer. Hinglish quality depends on the selected installed recognizer and is not equivalent to multilingual Whisper.cpp.
+- **Gemini 3.5 Flash-Lite only** handles conversational answers, tool planning and audio transcription. JEEVA does not silently switch to a different chat model.
+- **Gemini TTS** generates spoken replies through Google's dedicated speech-generation endpoint. This is a specialized Gemini speech service, not a local TTS engine.
+- No Ollama, llama.cpp, Qwen, Gemma, Whisper.cpp, Windows SAPI dictation or browser SpeechRecognition model/runtime is installed or used by JEEVA.
+- Microphone audio is sent to Gemini for transcription; voice input and spoken output require internet and a configured API key.
+- When offline, supported deterministic PC controls, saved memory, reminders, timers, file operations and Windows OCR can still work. AI answers and Gemini voice are unavailable until internet returns.
+- On upgrade, JEEVA removes its own legacy `%APPDATA%\\jeeva-ai\\local-brain` and `voice-models` caches. It does **not** uninstall a system-wide Ollama installation or touch other applications' data.
 
 ## Release and update flow
 
@@ -84,7 +65,7 @@ Publish versioned Windows installers to GitHub Releases. The in-app updater read
 
 ## Uninstall and saved data
 
-The interactive Windows uninstaller always removes JEEVA's own login-start registry entries and Startup-folder shortcut. It then asks whether to also remove JEEVA's saved profile. **No is the default** and keeps the Gemini key, chats, preferences, PC permission policies/audit data, memories, routines and local AI model files for a later reinstall. Choosing **Yes** deletes only JEEVA-specific directories under the current Windows user's AppData; it does not delete personal files, other applications, or change Windows-wide privacy permissions. Silent uninstall and installer-driven updates keep the profile without showing a prompt.
+The interactive Windows uninstaller always removes JEEVA's own login-start registry entries and Startup-folder shortcut. It then asks whether to also remove JEEVA's saved profile. **No is the default** and keeps the Gemini key, chats, preferences, PC permission policies/audit data, memories and routines for a later reinstall. Choosing **Yes** deletes only JEEVA-specific directories under the current Windows user's AppData; it does not delete personal files, other applications, or change Windows-wide privacy permissions. Silent uninstall and installer-driven updates keep the profile without showing a prompt.
 
 ## Security
 
