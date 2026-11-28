@@ -67,8 +67,6 @@ export default function SettingsPanel({
   onToggleTTS,
   voiceMode,
   onVoiceModeChange,
-  model,
-  onModelChange,
   customInstructions,
   onCustomInstructionsChange,
   onExportChat,
