@@ -1,5 +1,16 @@
 # Changelog — JEEVA AI
 
+## [1.0.3] — 2026-11-28
+
+### Added
+- **Wi-Fi adapter controls**: Voice and PC actions can now explicitly enable or disable physical Wi-Fi adapters, with adapter detection that does not depend on an English adapter name.
+- **Release/download consistency checks**: The hosted download route, landing-page version label, package metadata, and Windows installer artifact name are kept aligned.
+
+### Fixed
+- **Hindi/Hinglish semantic intent matching**: Exact phrases from the offline intent catalog now resolve deterministically, including "screen ki brightness badhao", preventing false low-confidence or ambiguous results.
+- **Voice action reliability**: Fast voice actions now report execution failures accurately instead of returning success when the underlying PC action fails.
+
+
 ## [1.0.0] — 2026-11-27
 
 ### Added
