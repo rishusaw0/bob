@@ -31,7 +31,7 @@ import {
 } from './services/voicePermissionPrompt';
 import { getAiName, getStrictVoiceMode, getWakeOpenMode } from './services/voiceRouter';
 import { getDocSummaryPref, setDocSummaryPref, getReplyStyle, setReplyStyle } from './services/userPrefs';
-import { runLocalQuickBrain } from './services/localQuickBrain';
+import { runLocalQuickBrain } from './services/pcCommandRouter';
 import {
   assessQueryRouting,
   compactHistoryForCloud,
