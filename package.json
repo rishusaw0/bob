@@ -91,5 +91,13 @@
     "protobufjs@7.6.6": true,
     "esbuild@0.21.5": true,
     "electron@45.5.0": true
+  },
+  "overrides": {
+    "@electron/universal": {
+      "minimatch": "^11.0.1"
+    },
+    "app-builder-lib": {
+      "minimatch": "^11.0.1"
+    }
   }
 }
