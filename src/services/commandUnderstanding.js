@@ -30,7 +30,8 @@ export function extractCommandEntities(input, now = new Date()) {
     date = localDateKey(now);
   }
 
-  const appMatch = text.match(/\b(?:open|launch|start|close|quit|exit|band|kholo|chalao)\s+(chrome|edge|firefox|brave|spotify|notepad|calculator|calc|vscode|vs code|visual studio code|explorer|file explorer|paint|word|excel|powerpoint|discord|telegram|whatsapp|steam)\b/i);
+  const appMatch = text.match(/\b(?:open|launch|start|close|quit|exit|band|kholo|chalao)\s+(chrome|edge|firefox|brave|spotify|notepad|calculator|calc|vscode|vs code|visual studio code|explorer|file explorer|paint|word|excel|powerpoint|discord|telegram|whatsapp|steam)\b/i)
+    || text.match(/\b(chrome|edge|firefox|brave|spotify|notepad|calculator|calc|vscode|vs code|visual studio code|explorer|file explorer|paint|word|excel|powerpoint|discord|telegram|whatsapp|steam)\s+(?:open|launch|start|close|quit|exit|band|kholo|chalao)\b/i);
   return {
     appName: appMatch?.[1]?.replace(/\s+/g, ' ').trim() || null,
     filePath: pathMatch?.[0]?.trim() || null,
