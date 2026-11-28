@@ -45,7 +45,6 @@ const DEMO_SCENARIOS = [
 ];
 
 export default function LandingPage({
-  installerUrl,
   canInstallPWA,
   onInstallPWA,
   onEnterWorkspace,
@@ -62,10 +61,10 @@ export default function LandingPage({
 
   const activeDemo = DEMO_SCENARIOS[demoIdx];
 
-  const LATEST_INSTALLER_URL =
-    'https://github.com/rishusaw0/bob/releases/latest/download/JEEVA.AI.Setup.1.0.2.exe';
+  // Keep the public landing-page download pinned to the verified v1.0.2 asset.
+  // Do not trust a stale INSTALLER_DOWNLOAD_URL returned by an older relay deployment.
   const resolvedInstallerUrl =
-    installerUrl && /JEEVA\.AI\.Setup\.1\.0\.2\.exe(?:$|[?#])/i.test(installerUrl) ? installerUrl : LATEST_INSTALLER_URL;
+    'https://github.com/rishusaw0/bob/releases/download/v1.0.2/JEEVA.AI.Setup.1.0.2.exe';
 
   const handleDownloadExe = () => {
     window.open(resolvedInstallerUrl, '_blank', 'noopener,noreferrer');
