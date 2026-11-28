@@ -34,7 +34,6 @@ import { getDocSummaryPref, setDocSummaryPref, getReplyStyle, setReplyStyle } fr
 import { runLocalQuickBrain } from './services/localQuickBrain';
 import {
   assessQueryRouting,
-  recordBrainUsage,
   compactHistoryForCloud,
 } from './services/brainRouter';
 import { logEpisodicTurn } from './services/episodicMemory';
@@ -291,9 +290,6 @@ export default function App() {
       shouldSpeak = ttsEnabled || fromVoice,
       speakLabel = 'Reading response...',
     }) => {
-      if (tier && tier !== 'offline-guard') {
-        recordBrainUsage(tier, promptText.length);
-      }
       setMessages(prev =>
         prev.map(m =>
           m.id === typingId
