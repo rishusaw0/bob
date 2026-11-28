@@ -21,7 +21,6 @@ import {
 } from './voiceRouter.js';
 import { captureVoiceContextSnapshot } from './voiceContext.js';
 import { verifySpeakerVoiceprint } from './speakerVerify.js';
-import { startLiveVoiceCall } from './liveAudio.js';
 
 export function useVoiceEngine({
   aiName,
@@ -38,7 +37,6 @@ export function useVoiceEngine({
   const [micBands, setMicBands] = useState([0, 0, 0, 0, 0]);
   const [wakeEnabled, setWakeEnabled] = useState(() => getWakeWordEnabled());
   const [wakeTrigger, setWakeTrigger] = useState(() => getWakeTriggerPhrase());
-  const [offlineWakeStatus, setOfflineWakeStatus] = useState({ available: null, running: false, culture: '' });
   const [externalMicBusy, setExternalMicBusy] = useState(false);
   const [speechState, setSpeechState] = useState({
     isPlaying: false,
@@ -46,15 +44,11 @@ export function useVoiceEngine({
     audioLevel: 0,
     freqBands: [0, 0, 0, 0, 0],
   });
-  const [liveActive, setLiveActive] = useState(false);
-  const [liveState, setLiveState] = useState('idle');
 
   const captureRef = useRef(null);
   const wakeListenerRef = useRef(null);
   const bargeInRef = useRef(null);
-  const liveSessionRef = useRef(null);
   const phaseRef = useRef('idle');
-  const offlineUnsupportedRef = useRef(false);
   const voiceFollowUpPendingRef = useRef(false);
   const prevSpeakingRef = useRef(false);
   const followUpTimerRef = useRef(null);
@@ -65,10 +59,6 @@ export function useVoiceEngine({
     phaseRef.current = phase;
   }, [phase]);
 
-  useEffect(() => {
-    offlineUnsupportedRef.current = false;
-  }, [aiName]);
-
   useEffect(() => subscribeSpeech(setSpeechState), []);
 
   useEffect(() => {
@@ -76,7 +66,6 @@ export function useVoiceEngine({
       if (typeof ev?.detail === 'boolean') setWakeEnabled(ev.detail);
     };
     const onTriggerChanged = () => {
-      offlineUnsupportedRef.current = false;
       setWakeTrigger(getWakeTriggerPhrase());
     };
     const onExternalMic = (ev) => {
@@ -92,17 +81,13 @@ export function useVoiceEngine({
     };
   }, []);
 
-  const orbState = liveActive
-    ? liveState === 'connecting'
-      ? 'thinking'
-      : liveState
-    : isLoading
-      ? 'thinking'
-      : speechState.isPlaying
-        ? 'speaking'
-        : phase === 'listening'
-          ? 'listening'
-          : 'idle';
+  const orbState = isLoading
+    ? 'thinking'
+    : speechState.isPlaying
+      ? 'speaking'
+      : phase === 'listening'
+        ? 'listening'
+        : 'idle';
 
   const activeAudioLevel = orbState === 'speaking' ? (speechState.audioLevel || 0) : micLevel;
   const activeFreqBands = orbState === 'speaking' ? speechState.freqBands : micBands;
@@ -306,7 +291,7 @@ export function useVoiceEngine({
 
   // Real-time Barge-In monitor while JEEVA TTS is speaking (say "Ruk" / "Stop" or interrupt naturally)
   useEffect(() => {
-    if (!enabled || !wakeEnabled || liveActive || !speechState.isPlaying || externalMicBusy || phase !== 'idle') {
+    if (!enabled || !wakeEnabled || !speechState.isPlaying || externalMicBusy || phase !== 'idle') {
       stopBargeIn();
       return;
     }
@@ -336,7 +321,6 @@ export function useVoiceEngine({
   }, [
     enabled,
     wakeEnabled,
-    liveActive,
     speechState.isPlaying,
     externalMicBusy,
     phase,
@@ -357,14 +341,13 @@ export function useVoiceEngine({
       voiceFollowUpPendingRef.current &&
       enabled &&
       wakeEnabled &&
-      !liveActive &&
       !externalMicBusy &&
       !isLoading &&
       phaseRef.current === 'idle'
     ) {
       voiceFollowUpPendingRef.current = false;
       followUpTimerRef.current = setTimeout(() => {
-        if (!liveActive && !isLoading && phaseRef.current === 'idle') {
+        if (!isLoading && phaseRef.current === 'idle') {
           startCommandListening({ isFollowUp: true, noSpeechTimeoutMs: 4500 });
         }
       }, 280);
@@ -375,11 +358,11 @@ export function useVoiceEngine({
       }, 1200);
       return () => clearTimeout(clearTimer);
     }
-  }, [speechState.isPlaying, enabled, wakeEnabled, liveActive, externalMicBusy, isLoading, startCommandListening]);
+  }, [speechState.isPlaying, enabled, wakeEnabled, externalMicBusy, isLoading, startCommandListening]);
 
   // Persistent Always-On Wake Word Listener ("Hey <AiName>") across ALL window states
   useEffect(() => {
-    if (!enabled || !wakeEnabled || orbState !== 'idle' || externalMicBusy || liveActive) {
+    if (!enabled || !wakeEnabled || orbState !== 'idle' || externalMicBusy) {
       stopWakeListener();
       return;
     }
@@ -414,73 +397,7 @@ export function useVoiceEngine({
     };
   }, [enabled, aiName, wakeTrigger, wakeEnabled, orbState, externalMicBusy, liveActive, handleWakeActivation, stopWakeListener]);
 
-  const stopLiveCall = useCallback(() => {
-    if (liveSessionRef.current) {
-      liveSessionRef.current.stop();
-      liveSessionRef.current = null;
-    }
-    setLiveActive(false);
-    setLiveState('idle');
-    setMicLevel(0);
-    setMicBands([0, 0, 0, 0, 0]);
-  }, []);
-
-  const toggleLiveCall = useCallback(async () => {
-    if (liveActive || liveSessionRef.current) {
-      stopLiveCall();
-      return;
-    }
-    stopSpeech();
-    stopWakeListener();
-    stopBargeIn();
-    stopCommandCapture(false);
-    setLiveTranscript('Connecting Gemini Live Call...');
-    setLiveActive(true);
-    setLiveState('connecting');
-
-    try {
-      const sess = await startLiveVoiceCall({
-        aiName,
-        requestPermission,
-        onStateChange: (st) => {
-          setLiveState(st);
-          if (st === 'idle') {
-            liveSessionRef.current = null;
-            setLiveActive(false);
-          }
-        },
-        onTranscript: ({ role, text }) => {
-          if (text) setLiveTranscript(`${role === 'user' ? 'You' : aiName}: ${text}`);
-        },
-        onAudioMetrics: (lvl, bands) => {
-          setMicLevel(lvl);
-          if (bands) setMicBands(bands);
-        },
-        onError: (errMsg) => {
-          setLiveTranscript(errMsg || 'Live Call ended');
-        },
-      });
-      liveSessionRef.current = sess;
-    } catch (err) {
-      setLiveActive(false);
-      setLiveState('idle');
-      setLiveTranscript(err?.message || 'Gemini Live failed to connect');
-    }
-  }, [
-    liveActive,
-    stopLiveCall,
-    stopWakeListener,
-    stopBargeIn,
-    stopCommandCapture,
-    aiName,
-    requestPermission,
-  ]);
-
   const toggleOrb = useCallback(() => {
-    if (liveActive) {
-      stopLiveCall();
-      return;
-    }
     if (speechState.isPlaying) {
       voiceFollowUpPendingRef.current = false;
       fadeOutAndStopSpeech(110);
@@ -491,7 +408,7 @@ export function useVoiceEngine({
     } else if (!isLoading) {
       startCommandListening();
     }
-  }, [liveActive, stopLiveCall, speechState.isPlaying, phase, isLoading, stopCommandCapture, startCommandListening]);
+  }, [speechState.isPlaying, phase, isLoading, stopCommandCapture, startCommandListening]);
 
   const toggleWake = useCallback(() => {
     setWakeEnabled((prev) => persistWakeEnabled(!prev));
@@ -524,9 +441,8 @@ export function useVoiceEngine({
       stopCommandCapture(false);
       stopWakeListener();
       stopBargeIn();
-      stopLiveCall();
     };
-  }, [stopCommandCapture, stopWakeListener, stopBargeIn, stopLiveCall]);
+  }, [stopCommandCapture, stopWakeListener, stopBargeIn]);
 
   return {
     phase,
@@ -536,12 +452,8 @@ export function useVoiceEngine({
     micLevel: activeAudioLevel,
     freqBands: activeFreqBands,
     wakeEnabled,
-    offlineWakeStatus,
     toggleWake,
     speechState,
     toggleOrb,
-    liveActive,
-    liveState,
-    toggleLiveCall,
   };
 }
