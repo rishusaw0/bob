@@ -51,15 +51,15 @@ function writeStorage(key, val) {
 }
 
 export function getVoiceAccent() {
-  const v = readStorage(VOICE_ACCENT_KEY, 'indian');
-  return v === 'global' ? 'global' : 'indian';
+  // JEEVA ships with an Indian-only voice policy. Migrate legacy Global preference silently.
+  if (readStorage(VOICE_ACCENT_KEY, 'indian') !== 'indian') writeStorage(VOICE_ACCENT_KEY, 'indian');
+  return 'indian';
 }
 
-export function setVoiceAccent(accent) {
-  const clean = accent === 'global' ? 'global' : 'indian';
-  writeStorage(VOICE_ACCENT_KEY, clean);
+export function setVoiceAccent() {
+  writeStorage(VOICE_ACCENT_KEY, 'indian');
   resetRegionalVoiceCache();
-  return clean;
+  return 'indian';
 }
 
 export function getVoicePersona() {
@@ -127,8 +127,36 @@ export function getAvailableSpeechVoices() {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return [];
   const voices = window.speechSynthesis.getVoices() || [];
   return voices
-    .filter((v) => /^(en|hi)/i.test(v.lang || ''))
+    // Keep the offline voice list strictly Indian; never expose US/UK voices as Indian options.
+    .filter((v) => /^(en-IN|hi-IN)$/i.test(String(v.lang || '').replace('_', '-')))
     .map((v) => ({ name: v.name, lang: v.lang, localService: v.localService }));
+}
+
+// Chromium/Electron may return an empty voice list on first launch. Wait briefly for
+// Windows SAPI voices to populate before deciding whether an Indian offline voice exists.
+function waitForIndianNativeVoices(timeoutMs = 1400) {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return Promise.resolve([]);
+  const synth = window.speechSynthesis;
+  const readIndian = () => (synth.getVoices() || []).filter((v) =>
+    /^(en-IN|hi-IN)$/i.test(String(v.lang || '').replace('_', '-'))
+  );
+  const existing = readIndian();
+  if (existing.length) return Promise.resolve(existing);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      synth.removeEventListener?.('voiceschanged', onChanged);
+      resolve(readIndian());
+    };
+    const onChanged = () => { if (readIndian().length) finish(); };
+    const timer = setTimeout(finish, timeoutMs);
+    synth.addEventListener?.('voiceschanged', onChanged);
+    // Trigger Chromium's lazy voice enumeration.
+    try { synth.getVoices(); } catch { finish(); }
+  });
 }
 
 // Warm up Chromium speechSynthesis voices asynchronously on startup
@@ -380,23 +408,18 @@ function scoreVoiceCandidate(v, targetLangOrder) {
 }
 
 function pickNativeVoice(profile) {
-  const voices = window.speechSynthesis?.getVoices?.() || [];
+  const voices = (window.speechSynthesis?.getVoices?.() || []).filter((v) =>
+    /^(en-IN|hi-IN)$/i.test(String(v.lang || '').replace('_', '-'))
+  );
   if (!voices.length) return null;
 
   const preferredName = getPreferredNativeVoice();
-  if (preferredName && profile !== 'hindi') {
+  if (preferredName) {
     const manual = voices.find((v) => v.name === preferredName);
-    if (manual) return manual;
+    if (manual && (profile !== 'hindi' || /^hi-IN$/i.test(manual.lang))) return manual;
   }
 
-  const indianAccent = getVoiceAccent() === 'indian';
-  const targetLangOrder =
-    profile === 'hindi'
-      ? ['hi-in', 'hi', 'en-in']
-      : profile === 'hinglish' || indianAccent
-        ? ['en-in', 'hi-in', 'en-gb', 'en-us', 'en']
-        : ['en-us', 'en-gb', 'en-in', 'en'];
-
+  const targetLangOrder = profile === 'hindi' ? ['hi-in', 'en-in'] : ['en-in', 'hi-in'];
   let best = null;
   let bestScore = -1;
   for (const v of voices) {
@@ -406,7 +429,8 @@ function pickNativeVoice(profile) {
       best = v;
     }
   }
-  return best || voices[0];
+  // Do not silently fall back to a foreign voice. Windows may use its configured en-IN/hi-IN default.
+  return best;
 }
 
 function speakChunkNative(text, profile) {
@@ -416,12 +440,21 @@ function speakChunkNative(text, profile) {
       return;
     }
     const utterance = new SpeechSynthesisUtterance(text);
-    const indianAccent = getVoiceAccent() === 'indian';
-    utterance.lang = profile === 'hindi' ? 'hi-IN' : indianAccent || profile === 'hinglish' ? 'en-IN' : 'en-US';
-    const voice = pickNativeVoice(profile);
-    if (voice) utterance.voice = voice;
-    utterance.rate = Math.min(1.5, Math.max(0.82, currentState.rate * 0.98));
-    utterance.pitch = 1.02;
+    utterance.lang = profile === 'hindi' ? 'hi-IN' : 'en-IN';
+    // Do not let Electron silently pick a US/UK default voice when an Indian pack is absent.
+    waitForIndianNativeVoices().then((voices) => {
+      if (stopRequested) { resolve(); return; }
+      const voice = pickNativeVoice(profile);
+      if (!voice || !voices.some((candidate) => candidate.name === voice.name)) {
+        currentState = { ...currentState, isLoading: false, engine: 'offline-indian-voice-unavailable' };
+        notify();
+        resolve();
+        return;
+      }
+      utterance.voice = voice;
+    // Slightly measured pacing and neutral pitch sound clearer on Indian Windows voices.
+    utterance.rate = Math.min(1.28, Math.max(0.88, currentState.rate * 0.94));
+    utterance.pitch = 1.0;
 
     let done = false;
     let pulseTimer = setInterval(() => {
@@ -466,7 +499,8 @@ function speakChunkNative(text, profile) {
     activeUtterance = utterance;
     utterance.onend = finish;
     utterance.onerror = finish;
-    window.speechSynthesis.speak(utterance);
+      window.speechSynthesis.speak(utterance);
+    }).catch(() => resolve());
   });
 }
 

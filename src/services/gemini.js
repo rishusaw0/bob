@@ -514,45 +514,46 @@ const PERSONA_VOICES = {
   },
 };
 
-async function getRegionalVoices(accent = 'indian', persona = 'natural_warm') {
-  const key = accent === 'global' ? 'global' : 'indian';
+async function getRegionalVoices(_accent = 'indian', persona = 'natural_warm') {
+  // Resolve only India-localized voices. Never request en-US or global voice fallbacks.
   const personaKey = PERSONA_VOICES[persona] ? persona : 'natural_warm';
-  const personaFallback = PERSONA_VOICES[personaKey][key];
-  if (personaKey !== 'natural_warm') return personaFallback;
-
-  if (regionalVoiceCache.has(key)) return regionalVoiceCache.get(key);
-  const fallback = personaFallback;
+  const fallback = PERSONA_VOICES[personaKey].indian;
+  if (regionalVoiceCache.has(personaKey)) return regionalVoiceCache.get(personaKey);
   if (!client?.voices?.list) return fallback;
 
-  // Background refresh without blocking first spoken word latency (0ms stall)
-  if (!regionalVoiceCache.has(`${key}_warming`)) {
-    regionalVoiceCache.set(`${key}_warming`, fallback);
-    Promise.all([
-      client.voices.list({ language_code: ['hi-IN'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
-      client.voices.list({ language_code: ['en-IN'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
-      client.voices.list({ language_code: ['en-US'], contexts: ['Conversational'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
-    ])
-      .then(([hiRes, inRes, enRes]) => {
-        regionalVoiceCache.set(key, {
-          hindi: hiRes?.voices?.[0]?.id || fallback.hindi,
-          hinglish: inRes?.voices?.[0]?.id || hiRes?.voices?.[1]?.id || fallback.hinglish,
-          english: key === 'indian' ? inRes?.voices?.[0]?.id || fallback.english : enRes?.voices?.[0]?.id || fallback.english,
-        });
-      })
-      .catch(() => {});
+  const warmingKey = `${personaKey}_warming`;
+  if (!regionalVoiceCache.has(warmingKey)) {
+    const request = Promise.all([
+      client.voices.list({ language_code: ['hi-IN'], type: ['prebuilt'], page_size: 8 }).catch(() => null),
+      client.voices.list({ language_code: ['en-IN'], type: ['prebuilt'], page_size: 8 }).catch(() => null),
+    ]).then(([hiRes, enRes]) => {
+      const hi = (hiRes?.voices || []).filter((v) => v?.id);
+      const en = (enRes?.voices || []).filter((v) => v?.id);
+      const personaIndex = { natural_warm: 0, calm_pro: 1, crisp_studio: 2, conversational: 3 }[personaKey] ?? 0;
+      const resolved = {
+        hindi: hi[personaIndex]?.id || hi[0]?.id || fallback.hindi,
+        english: en[personaIndex]?.id || en[0]?.id || fallback.english,
+        hinglish: en[personaIndex]?.id || en[0]?.id || hi[personaIndex]?.id || fallback.hinglish,
+      };
+      regionalVoiceCache.set(personaKey, resolved);
+      regionalVoiceCache.delete(warmingKey);
+      return resolved;
+    }).catch(() => {
+      regionalVoiceCache.delete(warmingKey);
+      return fallback;
+    });
+    regionalVoiceCache.set(warmingKey, request);
   }
-  return fallback;
+  return regionalVoiceCache.get(warmingKey) || fallback;
 }
 
 const VOICE_STYLE_HINTS = {
   english:
-    'realistic human Indian English speaker (en-IN), warm conversational studio presence, natural micro-pauses at punctuation, subtle expressive emphasis, never robotic or monotonous',
-  english_global:
-    'realistic human studio narrator, warm articulate conversational tone, natural breathing pauses and genuine human inflection without sounding synthetic',
+    'Native Indian English (en-IN), natural educated Indian speaker, warm confident studio delivery, clear consonants and Indian vowel sounds, varied but restrained intonation, connected phrasing, short natural pauses at sentence boundaries, medium-slow pace, no exaggerated accent or robotic monotone.',
   hindi:
-    'realistic native Indian Hindi human speaker, warm expressive voice with natural conversational cadence, soft breathing pauses, and crisp authentic pronunciation',
+    'Native Indian Hindi (hi-IN), authentic contemporary Hindi pronunciation, warm human conversational delivery, crisp but soft articulation, natural sentence melody and breath groups, medium-slow pace, no artificial pauses between every word, no foreign accent.',
   hinglish:
-    'realistic bilingual Indian human assistant (en-IN / hi-IN), friendly conversational warmth, effortless code-switching between English and Hindi with natural human rhythm',
+    'Native Indian bilingual speaker switching naturally between Indian English (en-IN) and Hindi (hi-IN), fluent everyday Hinglish, preserve English technical terms with Indian pronunciation, smooth code-switching, warm expressive delivery, natural connected rhythm, short punctuation pauses, never robotic or overly dramatic.',
 };
 
 export async function createReplicatedVoice({
@@ -618,7 +619,7 @@ export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
     'natural_warm';
   const voices = await getRegionalVoices(accent, persona);
   const voice = customVoiceId || voices[profile] || voices.hinglish;
-  const styleKey = profile === 'english' && accent === 'global' ? 'english_global' : profile;
+  const styleKey = profile;
   const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;
   const ttsModels = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
 

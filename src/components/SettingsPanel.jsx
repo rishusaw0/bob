@@ -1225,7 +1225,7 @@ export default function SettingsPanel({
                       English Voice Accent &amp; Clarity
                     </p>
                     <p className="text-[10px] text-obsidian-muted mt-0.5">
-                      Clear Indian English (en-IN) pronunciation for both Cloud TTS and Offline speech
+                      Indian-only voices for Cloud and Offline speech · Natural Hindi, Indian English and Hinglish
                     </p>
                   </div>
                   <button
@@ -1264,12 +1264,11 @@ export default function SettingsPanel({
                     onChange={(e) => {
                       const next = setVoiceAccent(e.target.value);
                       setVoiceAccentState(next);
-                      toast.success(`English voice accent: ${next === 'indian' ? 'Indian English (en-IN)' : 'Global'}`);
+                      toast.success('Indian voice profile enabled (en-IN / hi-IN)');
                     }}
                     className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
                   >
-                    <option value="indian">Accent: Indian English (en-IN · Clear)</option>
-                    <option value="global">Accent: Global Studio (en-US)</option>
+                    <option value="indian">Indian Voices Only (en-IN · hi-IN)</option>
                   </select>
 
                   <select
@@ -1294,7 +1293,7 @@ export default function SettingsPanel({
                     }}
                     className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
                   >
-                    <option value="">Offline Voice: Auto Best Natural Voice</option>
+                    <option value="">Offline Voice: Auto Best Indian Voice</option>
                     {availableVoices.map((v) => (
                       <option key={v.name} value={v.name}>
                         {v.name} ({v.lang})
@@ -1302,6 +1301,11 @@ export default function SettingsPanel({
                     ))}
                   </select>
                 </div>
+                {availableVoices.length === 0 && (
+                  <p className="text-[10px] text-amber-300/90">
+                    No Indian offline voice pack detected. Install an en-IN or hi-IN Windows speech voice for offline read-aloud; Cloud Studio uses Indian voice settings.
+                  </p>
+                )}
 
                 <div className="flex items-center justify-between gap-2 pt-1 border-t border-obsidian-border/50">
                   <span className="text-[10px] text-obsidian-muted">Mic Noise &amp; VAD Sensitivity:</span>
