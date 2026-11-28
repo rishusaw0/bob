@@ -1083,7 +1083,7 @@ export default function SettingsPanel({
                               onClick={() => handleLocalBrainAction('install_ollama')}
                               className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 disabled:opacity-40"
                             >
-                              {brainBusy ? 'Installing...' : '1-Click Install Ollama'}
+                              {brainBusy ? 'Installing...' : 'Install / Retry Local AI'}
                             </button>
                           )}
                           {(localBrain.catalog || []).map((m) => {
@@ -1105,7 +1105,7 @@ export default function SettingsPanel({
                                 }`}
                                 title={m.description}
                               >
-                                {isInstalled ? `Use ${m.id}` : `Pull ${m.id} (${m.sizeMb}MB)`}
+                                {isInstalled ? `Use ${m.id}` : `Download ${m.id} (${m.sizeMb}MB)`}
                               </button>
                             );
                           })}

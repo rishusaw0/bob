@@ -238,6 +238,16 @@ app.whenReady().then(() => {
     onStatus: (st) => emitRendererEvent('updater:status', st),
   });
 
+  // Provision the local runtime/model after installation without blocking app startup.
+  // Rules-based offline commands stay available while the optional model downloads.
+  if (app.isPackaged) {
+    setTimeout(() => {
+      getLocalBrain().setup('auto_setup').catch((err) => {
+        emitRendererEvent('brain:progress', { stage: 'error', status: err?.message || 'Automatic local AI setup failed.' });
+      });
+    }, 12000);
+  }
+
   const mainWin = windowManager.createWindow();
   windowManager.createNotchWindow();
   windowManager.setupTray();

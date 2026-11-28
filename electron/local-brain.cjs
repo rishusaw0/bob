@@ -409,8 +409,70 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
     });
   }
 
+  let autoSetupPromise = null;
+  const AUTO_SETUP_RETRY_MS = 12 * 60 * 60 * 1000;
+
+  async function waitForOllama(timeoutMs = 90000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const status = await detectOllama(loadConfig().ollamaUrl);
+      if (status.running) return status;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    return { running: false, installed: [] };
+  }
+
+  async function autoSetupLocalBrain() {
+    if (autoSetupPromise) return autoSetupPromise;
+    autoSetupPromise = (async () => {
+      const hw = detectHardwareProfile();
+      const cfg = loadConfig();
+      if (hw.totalGb < 3.5) {
+        onProgress?.({ stage: 'skipped', status: 'PC RAM 3.5 GB se kam hai. Lightweight rules-based offline brain active rahega.' });
+        return { ok: true, skipped: true, reason: 'insufficient_ram' };
+      }
+      const now = Date.now();
+      if (cfg.autoSetupLastAttemptAt && now - Number(cfg.autoSetupLastAttemptAt) < AUTO_SETUP_RETRY_MS) {
+        const current = await detectOllama(cfg.ollamaUrl);
+        if (current.running && current.installed.includes(cfg.preferredModel)) {
+          return { ok: true, alreadyReady: true, model: cfg.preferredModel };
+        }
+        return { ok: false, retryDeferred: true, error: 'Automatic setup recently attempted. Retry is available from Local Brain settings.' };
+      }
+      saveConfig({ autoSetupLastAttemptAt: now });
+      onProgress?.({ stage: 'preparing', status: 'JEEVA local AI setup: PC resources checking...' });
+      let ollama = await detectOllama(cfg.ollamaUrl);
+      if (!ollama.running) {
+        if (process.platform !== 'win32') {
+          return { ok: false, error: 'Automatic Ollama setup is currently supported on Windows only.' };
+        }
+        const install = await installOllamaViaWinget();
+        if (!install.ok) {
+          onProgress?.({ stage: 'error', status: install.error || 'Ollama install failed. Rules-based offline brain remains available.' });
+          return install;
+        }
+        onProgress?.({ stage: 'starting', status: 'Ollama service start hone ka wait...' });
+        ollama = await waitForOllama();
+      }
+      if (!ollama.running) {
+        const error = 'Ollama service start nahi hua. Internet/Windows package manager check karke Settings se retry karein.';
+        onProgress?.({ stage: 'error', status: error });
+        return { ok: false, error };
+      }
+      const target = hw.recommendedModel;
+      if (ollama.installed.includes(target)) {
+        saveConfig({ preferredModel: target });
+        onProgress?.({ stage: 'done', model: target, pct: 100, status: `${target} already installed — Local AI ready!` });
+        return { ok: true, alreadyReady: true, model: target };
+      }
+      onProgress?.({ stage: 'downloading', model: target, pct: 0, status: `Downloading recommended ${target} model. First setup needs internet; after this it runs locally.` });
+      return pullOllamaModel(target);
+    })().finally(() => { autoSetupPromise = null; });
+    return autoSetupPromise;
+  }
+
   async function setup(action, payload = {}) {
-    if (action === 'save_config') {
+    if (action === 'auto_setup') return autoSetupLocalBrain();\n    if (action === 'save_config') {
       return { ok: true, config: saveConfig(payload) };
     }
     if (action === 'pull_model') {
