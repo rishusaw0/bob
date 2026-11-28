@@ -34,4 +34,9 @@ assert.ok(app.includes('window.electronAPI.vaultSaveKey(apiKey)'), 'desktop API 
 assert.ok(app.includes("vaultSaveKey?.('')"), 'clearing API key clears OS vault');
 assert.ok(app.includes("window.electronAPI ? '' : (localStorage.getItem('jeeva_api_key')"), 'desktop startup never reads key from localStorage');
 
-console.log('Security/reliability contracts passed: 14 checks.');
+const permissionGuard = read('electron/permission-guard.cjs');
+assert.ok(permissionGuard.includes("if (!highRisk && (policy === 'always'"), 'high-risk actions cannot inherit persistent allow rules');
+assert.ok(permissionGuard.includes("action === 'manageProcess' || action === 'diagnostics'"), 'process-kill diagnostics are treated as high risk');
+assert.ok(permissionGuard.includes("choice === 'session15' && !highRisk"), 'high-risk actions cannot receive session-wide grants');
+
+console.log('Security/reliability contracts passed: 19 checks.');
