@@ -17,13 +17,13 @@ async function tryDirectMemoryRag(text, lang) {
   const clean = String(text || '').trim();
   const lower = clean.toLowerCase();
   const rememberMatch =
-    clean.match(/^(?:yaad rakho|yaad rakhna|remember that|remember|note kar lo)\\s+(?:ki\\s+)?(.{4,300})$/i) ||
-    clean.match(/^(?:mera naam|my name is|i am called)\\s+([a-z\\u0900-\\u097f][a-z\\u0900-\\u097f\\s]{1,40}?)(?:\\s+hai)?$/i) ||
-    clean.match(/^(?:main|i live in)\\s+([a-z\\u0900-\\u097f][a-z\\u0900-\\u097f\\s,]{1,45}?)(?:\\s+(?:mein|me)\\s+rehta\\s+(?:hoon|hu|hun))?$/i);
+    clean.match(/^(?:yaad rakho|yaad rakhna|remember that|remember|note kar lo)\s+(?:ki\s+)?(.{4,300})$/i) ||
+    clean.match(/^(?:mera naam|my name is|i am called)\s+([a-z\u0900-\u097f][a-z\u0900-\u097f\s]{1,40}?)(?:\s+hai)?$/i) ||
+    clean.match(/^(?:main|i live in)\s+([a-z\u0900-\u097f][a-z\u0900-\u097f\s,]{1,45}?)(?:\s+(?:mein|me)\s+rehta\s+(?:hoon|hu|hun))?$/i);
 
   if (rememberMatch) {
-    const isNameIntro = /\\b(mera naam|my name is|i am called)\\b/i.test(lower);
-    const isCityIntro = /\\b(i live in|rehta hoon|rehta hu|rehta hun)\\b/i.test(lower);
+    const isNameIntro = /\b(mera naam|my name is|i am called)\b/i.test(lower);
+    const isCityIntro = /\b(i live in|rehta hoon|rehta hu|rehta hun)\b/i.test(lower);
     const rawFact = rememberMatch[1].trim();
     const fact = isNameIntro
       ? `User's name is ${rawFact}`
@@ -48,26 +48,26 @@ async function tryDirectMemoryRag(text, lang) {
   }
 
   if (
-    /\\b(memory|yaad kiya|remember|project path|kahan rakha|kahan hai|mera folder|my preference|mera naam|my name|kahan rehta|where do i live)\\b/i.test(lower) &&
+    /\b(memory|yaad kiya|remember|project path|kahan rakha|kahan hai|mera folder|my preference|mera naam|my name|kahan rehta|where do i live)\b/i.test(lower) &&
     clean.length < 110
   ) {
-    const recallQuery = /\\b(mera naam|my name)\\b/i.test(lower)
+    const recallQuery = /\b(mera naam|my name)\b/i.test(lower)
       ? 'user name'
-      : /\\b(kahan rehta|where do i live)\\b/i.test(lower)
+      : /\b(kahan rehta|where do i live)\b/i.test(lower)
         ? 'user lives in'
         : clean;
     const items = await recallRelevantMemories(recallQuery, 3);
     if (Array.isArray(items) && items.length > 0 && (items[0].score === undefined || items[0].score >= 0.16)) {
-      const topList = items.map((m, idx) => `${idx + 1}. ${m.content}`).join('\\n');
+      const topList = items.map((m, idx) => `${idx + 1}. ${m.content}`).join('\n');
       return {
         handled: true,
         tier: 'fast',
         modelLabel: 'Personal Memory',
         replyText: replyByLang(
           lang,
-          `Here is what I remember:\\n${topList}`,
-          `Mujhe yeh yaad hai:\\n${topList}`,
-          `मुझे यह याद है:\\n${topList}`
+          `Here is what I remember:\n${topList}`,
+          `Mujhe yeh yaad hai:\n${topList}`,
+          `मुझे यह याद है:\n${topList}`
         ),
         tools: [{ name: 'memory_rag', status: 'done', args: { action: 'recall', query: clean } }],
       };
@@ -78,7 +78,7 @@ async function tryDirectMemoryRag(text, lang) {
 
 async function tryEpisodicHistoryRecall(text, lang) {
   const lower = String(text || '').toLowerCase();
-  if (/\\b(voice history|voice command history|voice commands history|maine voice se kya|voice se kya kiya|voice se kya bola)\\b/i.test(lower)) {
+  if (/\b(voice history|voice command history|voice commands history|maine voice se kya|voice se kya kiya|voice se kya bola)\b/i.test(lower)) {
     const rows = await queryEpisodicTimeline({ source: 'voice', limit: 8 });
     if (!Array.isArray(rows) || rows.length === 0) {
       return {
@@ -92,12 +92,12 @@ async function tryEpisodicHistoryRecall(text, lang) {
     const list = rows.map((r, i) => {
       const actions = Array.isArray(r.toolsUsed) && r.toolsUsed.length ? ` [${r.toolsUsed.map((t) => String(t).replace(/_/g, ' ')).join(', ')}]` : '';
       return `${i + 1}. [${r.dateKey} · ${r.timeLabel}] "${r.userPrompt}" → ${r.assistantReply || 'Done.'}${actions}`;
-    }).join('\\n');
+    }).join('\n');
     return {
       handled: true,
       tier: 'fast',
       modelLabel: 'Conversation Memory',
-      replyText: replyByLang(lang, `Your recent voice commands:\\n\\n${list}`, `Aapke recent voice commands aur unke actions:\\n\\n${list}`, `आपके हाल के वॉइस कमांड और एक्शन:\\n\\n${list}`),
+      replyText: replyByLang(lang, `Your recent voice commands:\n\n${list}`, `Aapke recent voice commands aur unke actions:\n\n${list}`, `आपके हाल के वॉइस कमांड और एक्शन:\n\n${list}`),
       tools: [{ name: 'episodic_recall', status: 'done', args: { source: 'voice' } }],
     };
   }
@@ -124,15 +124,15 @@ async function tryEpisodicHistoryRecall(text, lang) {
     };
   }
   const formatted = rows.slice(0, 5).map((r, i) => {
-    const reply = r.assistantReply ? `\\n  → JEEVA: ${r.assistantReply.slice(0, 140)}${r.assistantReply.length > 140 ? '...' : ''}` : '';
+    const reply = r.assistantReply ? `\n  → JEEVA: ${r.assistantReply.slice(0, 140)}${r.assistantReply.length > 140 ? '...' : ''}` : '';
     return `${i + 1}. [${r.dateKey} (${r.weekday}) · ${r.timeLabel}] Aapne pucha: "${r.userPrompt.slice(0, 120)}"${reply}`;
-  }).join('\\n');
+  }).join('\n');
   const header = replyByLang(lang, `Here is what you asked/discussed (${scope}):`, `${scope} par aapne ye pucha aur baat ki thi:`, `${scope} पर आपने यह पूछा और बात की थी:`);
   return {
     handled: true,
     tier: 'fast',
     modelLabel: 'Conversation Memory',
-    replyText: `${header}\\n\\n${formatted}`,
+    replyText: `${header}\n\n${formatted}`,
     tools: [{ name: 'episodic_recall', status: 'done', args: parsed }],
   };
 }
