@@ -165,7 +165,23 @@ switch ($Task) {
     }
   }
   "wifi" {
-    if ($Arg1 -eq "off" -or $Arg1 -eq "disconnect") {
+    if ($Arg1 -eq "on" -or $Arg1 -eq "off") {
+      # Match physical 802.11 adapters without assuming an English adapter name ("Wi-Fi").
+      $wifiAdapters = @(Get-NetAdapter -Physical -ErrorAction Stop | Where-Object {
+        $_.NdisPhysicalMedium -eq 9 -or $_.InterfaceDescription -match '802\.11|wireless|wi-?fi'
+      })
+      if ($wifiAdapters.Count -eq 0) {
+        throw "No physical Wi-Fi adapter was found."
+      }
+      foreach ($adapter in $wifiAdapters) {
+        if ($Arg1 -eq "on") {
+          Enable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction Stop | Out-Null
+        } else {
+          Disable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction Stop | Out-Null
+        }
+      }
+      Write-Output ("Wi-Fi adapter(s) " + $Arg1 + " enabled.")
+    } elseif ($Arg1 -eq "disconnect") {
       netsh wlan disconnect | Out-Null
       Write-Output "Wi-Fi disconnected"
     } else {
