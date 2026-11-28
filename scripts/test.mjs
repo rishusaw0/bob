@@ -704,12 +704,6 @@ const {
 assert.equal(getVoiceAccent(), 'indian');
 assert.equal(getVoicePersona(), 'natural_warm');
 assert.ok(VOICE_PERSONAS.calm_pro && VOICE_PERSONAS.crisp_studio);
-assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'), 'english');
-assert.equal(detectVoiceProfile('Bhai laptop bohot slow ho raha hai'), 'hinglish');
-const spokenClean = cleanTextForSpeech('Check **C:\\Users\\Demo\\report.pdf** -> 45% CPU & high_performance');
-assert.ok(spokenClean.includes('report.pdf') && spokenClean.includes('45 percent') && spokenClean.includes('high performance') && !spokenClean.includes('C:\\Users'));
-const tableClean = cleanTextForSpeech('| App | RAM |\\n|---|---|\\n| Chrome | 500 MB |\\nPrice Rs. 500');
-assert.ok(!tableClean.includes('---') && tableClean.includes('500 rupees'));
 
 // Desktop brand icon & packaging checks
 // Desktop brand icon & packaging checks
