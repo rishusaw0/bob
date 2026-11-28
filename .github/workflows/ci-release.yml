@@ -14,18 +14,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Resolve release tag
-        id: release-meta
-        shell: pwsh
-        run: |
-          if ($env:GITHUB_REF -like 'refs/tags/v*') {
-            $tag = $env:GITHUB_REF_NAME
-          } else {
-            $version = node -p "require('./package.json').version"
-            $tag = "v$version"
-          }
-          "tag_name=$tag" >> $env:GITHUB_OUTPUT
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -60,6 +48,18 @@ jobs:
       contents: write
     steps:
       - name: Checkout repository
+      - name: Resolve release tag
+        id: release-meta
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tag = $env:GITHUB_REF_NAME
+          } else {
+            $version = node -p "require('./package.json').version"
+            $tag = "v$version"
+          }
+          "tag_name=$tag" >> $env:GITHUB_OUTPUT
+
         uses: actions/checkout@v4
 
       - name: Setup Node.js
