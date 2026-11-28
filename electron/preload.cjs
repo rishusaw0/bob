@@ -62,13 +62,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   browserControl: (sub, value) => ipcRenderer.invoke('system:browserControl', sub, value),
 
   // Offline SAPI Voice Engine & Auto-Updater
-  offlineVoiceStart: (aiName) => ipcRenderer.invoke('voice:offlineStart', aiName),
-  offlineVoiceStop: () => ipcRenderer.invoke('voice:offlineStop'),
-  offlineVoiceSetName: (aiName) => ipcRenderer.invoke('voice:offlineSetName', aiName),
-  offlineVoiceStatus: () => ipcRenderer.invoke('voice:offlineStatus'),
-  offlineVoiceDictate: (timeoutSec, opts) => ipcRenderer.invoke('voice:offlineDictate', timeoutSec, opts),
-  offlineVoiceTranscribe: (wavBase64, opts) => ipcRenderer.invoke('voice:offlineTranscribe', wavBase64, opts),
-  onOfflineVoiceEvent: (cb) => {
     const listener = (_, ev) => cb(ev);
     ipcRenderer.on('voice:offlineEvent', listener);
     return () => ipcRenderer.removeListener('voice:offlineEvent', listener);
@@ -76,11 +69,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkForUpdates: (cfg) => ipcRenderer.invoke('updater:check', cfg),
   downloadUpdate: (url) => ipcRenderer.invoke('updater:download', url),
   getUpdaterState: () => ipcRenderer.invoke('updater:getState'),
-  localBrainStatus: () => ipcRenderer.invoke('brain:status'),
-  localBrainSetup: (action, payload) => ipcRenderer.invoke('brain:setup', action, payload),
-  localBrainStop: () => ipcRenderer.invoke('brain:stop'),
-  localBrainChat: (opts) => ipcRenderer.invoke('brain:chat', opts),
-  onLocalBrainProgress: (cb) => {
     const listener = (_, ev) => cb(ev);
     ipcRenderer.on('brain:progress', listener);
     return () => ipcRenderer.removeListener('brain:progress', listener);
