@@ -24,11 +24,8 @@ import { getAuditLog } from '../services/permissions';
 import { rememberUserMemory, listAllMemories, forgetMemoryItem } from '../services/memoryRag';
 import { queryEpisodicTimeline, forgetEpisodicDay } from '../services/episodicMemory';
 import { toDateKey } from '../services/dateQueryParser';
-import { getBrainStats } from '../services/brainRouter';
 import {
   SERVICE_CLASSIFICATION,
-  isStrictOfflineMode,
-  setStrictOfflineMode,
   isOnlineNow,
 } from '../services/offlineMode';
 import { speakText, stopSpeech } from '../services/speech';
@@ -95,7 +92,6 @@ export default function PcControlCenterModal({
   const [episodicTopic, setEpisodicTopic] = useState('');
   const [episodicSource, setEpisodicSource] = useState(initialTab === 'voice_history' ? 'voice' : '');
   const [diagReport, setDiagReport] = useState(null);
-  const [strictOffline, setStrictOfflineState] = useState(() => isStrictOfflineMode());
   const [onlineState, setOnlineState] = useState(() => isOnlineNow());
 
   useEffect(() => {
@@ -882,23 +878,13 @@ export default function PcControlCenterModal({
 
           {api && tab === 'audit' && (
             <div className="space-y-4">
-              {/* Hybrid Local Brain API Savings Banner */}
-              {(() => {
-                const bs = getBrainStats();
-                return (
-                  <div className="p-3 rounded-xl bg-obsidian-bg border border-emerald-500/30 flex items-center justify-between gap-2 flex-wrap text-xs">
-                    <div>
-                      <span className="font-mono text-emerald-300 font-semibold">{bs.localPct}% Offline/Local</span>
-                      <span className="text-obsidian-muted ml-2">
-                        ({bs.localFast} instant · {bs.localIntent} semantic · {bs.localSlm} SLM vs {bs.cloudCalls} Gemini)
-                      </span>
-                    </div>
-                    <span className="font-mono text-[11px] text-obsidian-secondary">
-                      ~{bs.estimatedTokensSaved.toLocaleString()} tokens saved
-                    </span>
-                  </div>
-                );
-              })()}
+              <div className="p-3 rounded-xl bg-obsidian-bg border border-emerald-500/30 flex items-start gap-2 text-xs">
+                <LuZap className="w-4 h-4 text-emerald-300 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-mono text-emerald-300 font-semibold">Gemini 3.5 Flash-Lite · Fixed AI Model</p>
+                  <p className="text-obsidian-muted mt-1">All AI answers and voice transcription use Gemini. Windows controls, personal memory, reminders and timers use lightweight deterministic code and remain available offline where supported.</p>
+                </div>
+              </div>
 
               {/* Episodic Timeline Memory (Date & Day Indexed Q&A Log) */}
               <div className="p-3.5 rounded-xl bg-obsidian-bg border border-obsidian-border space-y-2.5">
@@ -1151,21 +1137,7 @@ export default function PcControlCenterModal({
                   }`}>
                     {onlineState ? 'Internet: Online' : 'Internet: Offline'}
                   </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = setStrictOfflineMode(!strictOffline);
-                      setStrictOfflineState(next);
-                      toast.info(next ? 'Strict Offline Mode ON — Cloud API calls blocked' : 'Strict Offline Mode OFF');
-                    }}
-                    className={`px-3 py-1 rounded-full text-[11px] font-mono border transition-colors ${
-                      strictOffline
-                        ? 'bg-sky-500/20 border-sky-500/45 text-sky-200'
-                        : 'bg-obsidian-bg border-obsidian-border text-obsidian-secondary'
-                    }`}
-                  >
-                    Strict Offline Mode: {strictOffline ? 'ON' : 'OFF'}
-                  </button>
+
                 </div>
 
                 <button
@@ -1173,7 +1145,7 @@ export default function PcControlCenterModal({
                   onClick={async () => {
                     stopSpeech();
                     await window.electronAPI?.emergencyStop?.();
-                    toast.info('Emergency Stop triggered — voice, sidecar & speech halted.');
+                    toast.info('Emergency Stop triggered — voice, speech and active PC actions halted.');
                   }}
                   className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-semibold"
                 >
@@ -1217,9 +1189,7 @@ export default function PcControlCenterModal({
                     const d = diagReport || (await window.electronAPI?.getDiagnostics?.()) || {};
                     const safeReport = {
                       ...d,
-                      strictOfflineMode: strictOffline,
                       browserOnline: isOnlineNow(),
-                      brainStats: getBrainStats(),
                       services: SERVICE_CLASSIFICATION,
                     };
                     const blob = new Blob([JSON.stringify(safeReport, null, 2)], { type: 'application/json' });
@@ -1247,8 +1217,8 @@ export default function PcControlCenterModal({
                     <p className="font-mono text-obsidian-text">{diagReport.usedMemPct ?? 0}% ({diagReport.freeMemMb ?? 0} MB free)</p>
                   </div>
                   <div className="p-2.5 rounded-lg bg-obsidian-bg border border-obsidian-border">
-                    <p className="text-[10px] text-obsidian-muted">Offline Wake</p>
-                    <p className="font-mono text-obsidian-text">{diagReport.offlineVoice?.running ? 'Running' : diagReport.offlineVoice?.available === false ? 'Unavailable' : 'Standby'}</p>
+                    <p className="text-[10px] text-obsidian-muted">Gemini Voice</p>
+                    <p className="font-mono text-obsidian-text">{onlineState ? 'Internet required' : 'Offline'}</p>
                   </div>
                   <div className="p-2.5 rounded-lg bg-obsidian-bg border border-obsidian-border">
                     <p className="text-[10px] text-obsidian-muted">Scheduled Tasks</p>
@@ -1259,7 +1229,7 @@ export default function PcControlCenterModal({
 
               <div className="p-3 rounded-xl bg-obsidian-bg border border-obsidian-border space-y-2">
                 <p className="text-[11px] font-mono uppercase tracking-wider text-obsidian-muted">
-                  Service Offline Classification
+                  Service availability
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
                   {SERVICE_CLASSIFICATION.map((svc) => (
