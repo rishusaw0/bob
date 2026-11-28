@@ -338,6 +338,9 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '', sp
           try {
             const obj = JSON.parse(trimmed);
             if (obj.type === 'dictation') return finish(obj);
+            if (obj.type === 'unavailable') {
+              return finish({ type: 'dictation', text: '', unavailable: true, reason: obj.reason || 'Windows SAPI recognizer unavailable' });
+            }
           } catch {}
         }
         finish({ type: 'dictation', text: '', reason: 'Windows SAPI returned no dictation result' });
