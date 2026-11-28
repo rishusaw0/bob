@@ -18,23 +18,6 @@ export const VOICE_PERSONAS = {
 
 const VOICE_ACCENT_KEY = 'jeeva_voice_accent';
 const VOICE_PERSONA_KEY = 'jeeva_voice_persona';
-const CUSTOM_VOICE_ID_KEY = 'jeeva_custom_voice_id';
-const CUSTOM_VOICES_LIST_KEY = 'jeeva_custom_voices_list';
-const PREFERRED_NATIVE_VOICE_KEY = 'jeeva_native_voice';
-const SPEECH_SPEED_MODE_KEY = 'jeeva_speech_speed';
-
-const ttsAudioCache = new Map();
-
-export function getSpeechSpeedMode() {
-  const v = readStorage(SPEECH_SPEED_MODE_KEY, 'hybrid_fast');
-  return ['hybrid_fast', 'instant_local', 'cloud_studio'].includes(v) ? v : 'hybrid_fast';
-}
-
-export function setSpeechSpeedMode(mode) {
-  const clean = ['hybrid_fast', 'instant_local', 'cloud_studio'].includes(mode) ? mode : 'hybrid_fast';
-  writeStorage(SPEECH_SPEED_MODE_KEY, clean);
-  return clean;
-}
 
 function readStorage(key, fallback = '') {
   try {
@@ -72,75 +55,6 @@ export function setVoicePersona(persona) {
   writeStorage(VOICE_PERSONA_KEY, clean);
   resetRegionalVoiceCache();
   return clean;
-}
-
-export function getActiveCustomVoiceId() {
-  return readStorage(CUSTOM_VOICE_ID_KEY, '');
-}
-
-export function setActiveCustomVoiceId(voiceId) {
-  const clean = String(voiceId || '').trim();
-  writeStorage(CUSTOM_VOICE_ID_KEY, clean);
-  return clean;
-}
-
-export function getCustomClonedVoices() {
-  try {
-    const raw = readStorage(CUSTOM_VOICES_LIST_KEY, '[]');
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveCustomClonedVoice({ id, displayName }) {
-  const list = getCustomClonedVoices().filter((v) => v.id !== id);
-  list.unshift({
-    id,
-    displayName: displayName || 'My Cloned Voice',
-    createdAt: new Date().toLocaleString('en-IN'),
-  });
-  writeStorage(CUSTOM_VOICES_LIST_KEY, JSON.stringify(list.slice(0, 8)));
-  setActiveCustomVoiceId(id);
-  return list;
-}
-
-export function removeCustomClonedVoice(voiceId) {
-  const list = getCustomClonedVoices().filter((v) => v.id !== voiceId);
-  writeStorage(CUSTOM_VOICES_LIST_KEY, JSON.stringify(list));
-  if (getActiveCustomVoiceId() === voiceId) {
-    setActiveCustomVoiceId('');
-  }
-  return list;
-}
-
-export function getPreferredNativeVoice() {
-  return readStorage(PREFERRED_NATIVE_VOICE_KEY, '');
-}
-
-export function setPreferredNativeVoice(voiceName) {
-  writeStorage(PREFERRED_NATIVE_VOICE_KEY, String(voiceName || ''));
-}
-
-export function getAvailableSpeechVoices() {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return [];
-  const voices = window.speechSynthesis.getVoices() || [];
-  return voices
-    .filter((v) => /^(en|hi)/i.test(v.lang || ''))
-    .map((v) => ({ name: v.name, lang: v.lang, localService: v.localService }));
-}
-
-// Warm up Chromium speechSynthesis voices asynchronously on startup
-if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-  try {
-    window.speechSynthesis.getVoices();
-    window.speechSynthesis.onvoiceschanged = () => {
-      try {
-        window.speechSynthesis.getVoices();
-      } catch {}
-    };
-  } catch {}
 }
 
 const ROMAN_HINDI_PHONETIC = new Map([
@@ -194,7 +108,6 @@ let currentState = {
 
 let listeners = new Set();
 let activeAudio = null;
-let activeUtterance = null;
 let activeGain = null;
 let activeAudioCtx = null;
 let activeAudioNodes = null;
@@ -352,122 +265,6 @@ export function splitIntoChunks(text, maxLen = 220, firstChunkMax = 100) {
   }
   if (buffer) chunks.push(buffer);
   return chunks;
-}
-
-function scoreVoiceCandidate(v, targetLangOrder) {
-  const lang = String(v.lang || '').toLowerCase();
-  const name = String(v.name || '').toLowerCase();
-  let langScore = 0;
-  for (let i = 0; i < targetLangOrder.length; i++) {
-    if (lang.startsWith(targetLangOrder[i])) {
-      langScore = (targetLangOrder.length - i) * 100;
-      break;
-    }
-  }
-  if (!langScore) return -1;
-
-  let qualityBonus = 0;
-  if (/natural|neural|online/i.test(name)) qualityBonus += 120;
-  if (/google/i.test(name)) qualityBonus += 60;
-  if (/neerja|prabhat|swara|madhur|ava|andrew|aria|guy|jenny|veena|rishi|google\s+.*india|google हिन्दी/i.test(name)) {
-    qualityBonus += 75;
-  }
-  if (/india/i.test(name)) qualityBonus += 45;
-  if (/\b(david|zira|mark|heera|ravi|kalpana|hemant)\b/i.test(name) && !/natural|neural|online/i.test(name)) {
-    qualityBonus -= 45;
-  }
-  return langScore + qualityBonus;
-}
-
-function pickNativeVoice(profile) {
-  const voices = window.speechSynthesis?.getVoices?.() || [];
-  if (!voices.length) return null;
-
-  const preferredName = getPreferredNativeVoice();
-  if (preferredName && profile !== 'hindi') {
-    const manual = voices.find((v) => v.name === preferredName);
-    if (manual) return manual;
-  }
-
-  const indianAccent = getVoiceAccent() === 'indian';
-  const targetLangOrder =
-    profile === 'hindi'
-      ? ['hi-in', 'hi', 'en-in']
-      : profile === 'hinglish' || indianAccent
-        ? ['en-in', 'hi-in', 'en-gb', 'en-us', 'en']
-        : ['en-us', 'en-gb', 'en-in', 'en'];
-
-  let best = null;
-  let bestScore = -1;
-  for (const v of voices) {
-    const sc = scoreVoiceCandidate(v, targetLangOrder);
-    if (sc > bestScore) {
-      bestScore = sc;
-      best = v;
-    }
-  }
-  return best || voices[0];
-}
-
-function speakChunkNative(text, profile) {
-  return new Promise((resolve) => {
-    if (!('speechSynthesis' in window) || stopRequested) {
-      resolve();
-      return;
-    }
-    const utterance = new SpeechSynthesisUtterance(text);
-    const indianAccent = getVoiceAccent() === 'indian';
-    utterance.lang = profile === 'hindi' ? 'hi-IN' : indianAccent || profile === 'hinglish' ? 'en-IN' : 'en-US';
-    const voice = pickNativeVoice(profile);
-    if (voice) utterance.voice = voice;
-    utterance.rate = Math.min(1.5, Math.max(0.82, currentState.rate * 0.98));
-    utterance.pitch = 1.02;
-
-    let done = false;
-    let pulseTimer = setInterval(() => {
-      if (stopRequested) return;
-      const lvl = 0.28 + Math.random() * 0.45;
-      currentState = {
-        ...currentState,
-        audioLevel: lvl,
-        freqBands: [lvl * 0.8, lvl, lvl * 0.9, lvl * 0.7, lvl * 0.5],
-      };
-      notify();
-    }, 90);
-
-    const safetyMs = Math.max(4500, text.length * 140);
-    let safetyTimer = null;
-
-    const finish = () => {
-      if (done) return;
-      done = true;
-      if (activeUtterance === utterance) activeUtterance = null;
-      if (safetyTimer) clearTimeout(safetyTimer);
-      if (pulseTimer) {
-        clearInterval(pulseTimer);
-        pulseTimer = null;
-      }
-      currentState = { ...currentState, audioLevel: 0, freqBands: [0, 0, 0, 0, 0] };
-      notify();
-      resolve();
-    };
-    const scheduleSafety = () => {
-      if (done) return;
-      safetyTimer = setTimeout(() => {
-        if (done) return;
-        if (currentState.isPaused) {
-          scheduleSafety();
-          return;
-        }
-        finish();
-      }, safetyMs);
-    };
-    scheduleSafety();
-    activeUtterance = utterance;
-    utterance.onend = finish;
-    utterance.onerror = finish;
-    window.speechSynthesis.speak(utterance);
-  });
 }
 
 function clearTtsMeter() {
@@ -637,7 +434,6 @@ export async function speakText(text, { label = 'Reading aloud...', forceProfile
       const audioUrl = await textToSpeech(chunks[i], chunkProfile, {
         accent: getVoiceAccent(),
         persona: getVoicePersona(),
-        customVoiceId: getActiveCustomVoiceId(),
       });
       if (stopRequested || myToken !== playbackToken) break;
       currentState = { ...currentState, isLoading: false, engine: 'gemini' };
@@ -686,11 +482,6 @@ export function pauseSpeech() {
     notify();
     return;
   }
-  if (window.speechSynthesis?.speaking && !window.speechSynthesis.paused) {
-    window.speechSynthesis.pause();
-    currentState = { ...currentState, isPaused: true };
-    notify();
-  }
 }
 
 export function resumeSpeech() {
@@ -700,18 +491,12 @@ export function resumeSpeech() {
     notify();
     return;
   }
-  if (window.speechSynthesis?.paused) {
-    window.speechSynthesis.resume();
-    currentState = { ...currentState, isPaused: false };
-    notify();
-  }
 }
 
 export function stopSpeech() {
   stopRequested = true;
   duckScale = 1;
   playbackToken++;
-  activeUtterance = null;
   if (activeAudio) {
     activeAudio.pause();
     activeAudio.src = '';
@@ -722,9 +507,6 @@ export function stopSpeech() {
     const ctx = activeAudioCtx;
     activeAudioCtx = null;
     try { if (ctx.state !== 'closed') ctx.close().catch(() => {}); } catch {}
-  }
-  if ('speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
   }
   currentState = {
     ...currentState,
