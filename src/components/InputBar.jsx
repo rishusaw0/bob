@@ -420,8 +420,8 @@ export default function InputBar({
           />
 
           {/* Bottom Toolbar */}
-          <div className="flex items-center justify-between pt-2 mt-1 border-t border-obsidian-border/60">
-            <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 mt-1 border-t border-obsidian-border/60">
+            <div className="flex flex-wrap items-center gap-1 min-w-0">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
@@ -553,7 +553,7 @@ export default function InputBar({
               </button>
             </div>
 
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto">
               <button
                 type="button"
                 onClick={isRecording ? stopRecording : startRecording}

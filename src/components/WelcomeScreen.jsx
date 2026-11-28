@@ -54,8 +54,8 @@ export default function WelcomeScreen({ onSuggestionClick, isReady, onSetupClick
   ];
 
   return (
-    <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center px-6 py-10">
-      <div className="w-full max-w-2xl">
+    <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center px-6 py-8">
+      <div className="w-full max-w-2xl my-auto">
         <div className="mb-7">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-obsidian-surface border border-obsidian-border text-xs text-obsidian-secondary mb-4">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />

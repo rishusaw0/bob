@@ -7,7 +7,9 @@ import {
   LuSquare,
   LuX,
   LuCpu,
+  LuSmartphone,
   LuAudioLines,
+  LuDownload,
   LuVolume2,
   LuRadio,
   LuEyeOff,
@@ -19,12 +21,15 @@ export default function TitleBar({
   onSettingsClick,
   onNewChat,
   onOpenPalette,
+  onOpenMobileModal,
   onOpenPcControl,
   onSwitchCortana,
   onSwitchSpeaker,
   wakeEnabled = false,
   orbState = 'idle',
   onToggleWake,
+  canInstallPWA,
+  onInstallPWA,
   model,
   onModelChange,
   liveStats,
@@ -32,9 +37,9 @@ export default function TitleBar({
   const isElectron = !!window.electronAPI;
 
   return (
-    <header className="title-bar h-11 flex items-center justify-between px-3 bg-obsidian-surface border-b border-obsidian-border flex-shrink-0 select-none">
+    <header className="title-bar h-11 flex items-center justify-between gap-2 px-3 bg-obsidian-surface border-b border-obsidian-border flex-shrink-0 select-none min-w-0">
       {/* Left: Sidebar Toggle + Model Selector */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0 flex-shrink-0">
         <button
           onClick={onMenuClick}
           className="p-1.5 rounded-md text-obsidian-secondary hover:text-obsidian-text hover:bg-obsidian-elevated transition-colors"
@@ -66,7 +71,7 @@ export default function TitleBar({
       {/* Center: Command Palette Trigger */}
       <button
         onClick={onOpenPalette}
-        className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-md bg-obsidian-bg border border-obsidian-border text-xs text-obsidian-muted hover:text-obsidian-secondary hover:border-zinc-700 transition-colors min-w-[210px] justify-between"
+        className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-md bg-obsidian-bg border border-obsidian-border text-xs text-obsidian-muted hover:text-obsidian-secondary hover:border-zinc-700 transition-colors min-w-0 w-48 xl:w-56 justify-between flex-shrink"
         title="Command Palette (Ctrl+K)"
       >
         <span className="flex items-center gap-1.5">
@@ -157,7 +162,26 @@ export default function TitleBar({
           <LuPlus className="w-4 h-4" />
         </button>
 
-remove title PWA + mobile actions        <button
+        {!isElectron && canInstallPWA && (
+          <button
+            onClick={onInstallPWA}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-[11px] font-medium text-emerald-300 transition-colors mr-1"
+            title="Install JEEVA AI App on this device"
+          >
+            <LuDownload className="w-3 h-3" />
+            <span className="hidden sm:inline">Install App</span>
+          </button>
+        )}
+
+        <button
+          onClick={onOpenMobileModal}
+          className="p-1.5 rounded-md text-obsidian-secondary hover:text-obsidian-text hover:bg-obsidian-elevated transition-colors"
+          title={isElectron ? 'Remote & Render Link' : 'Connect to PC'}
+        >
+          <LuSmartphone className="w-4 h-4" />
+        </button>
+
+        <button
           onClick={onSettingsClick}
           className="p-1.5 rounded-md text-obsidian-secondary hover:text-obsidian-text hover:bg-obsidian-elevated transition-colors"
           title="Preferences"
