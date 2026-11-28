@@ -1,6 +1,6 @@
 {
   "name": "jeeva-ai",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "JEEVA AI - Personal AI Assistant powered by Gemini",
   "main": "electron/main.cjs",
   "scripts": {
@@ -55,6 +55,9 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "!electron/local-brain.cjs",
+      "!electron/offline-voice.cjs",
+      "!electron/win-voice.ps1",
       "public/**/*",
       "package.json"
     ],
