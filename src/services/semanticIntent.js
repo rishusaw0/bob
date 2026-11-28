@@ -117,6 +117,25 @@ function cosineSim(vecA, vecB) {
 
 const INTENT_DEFINITIONS = [
   {
+    id: 'volume',
+    tool: 'control_volume',
+    args: (raw) => {
+      const text = normalizeHinglishQuery(raw);
+      const percent = text.match(/\\b(\\d{1,3})\\s*%?/);
+      if (/\\b(mute|silent)\\b/.test(text)) return { action: 'mute' };
+      if (/\\b(unmute)\\b/.test(text)) return { action: 'unmute' };
+      if (/\\b(down|decrease|lower|kam|ghatao)\\b/.test(text)) return { action: 'down' };
+      if (percent && Number(percent[1]) <= 100) return { action: 'set', level: Number(percent[1]) };
+      if (/\\b(get|status|kitna|kitni)\\b/.test(text)) return { action: 'get' };
+      return { action: 'up' };
+    },
+    phrases: [
+      'volume 50 kar do', 'volume badhao', 'volume kam karo',
+      'awaz badhao', 'sound increase', 'audio volume 70 percent set karo',
+      'volume mute karo', 'volume unmute karo', 'current volume kitna hai',
+    ],
+  },
+  {
     id: 'brightness',
     tool: 'brightness_control',
     args: (raw) => {
