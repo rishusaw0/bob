@@ -1,8 +1,10 @@
-# JEEVA AI Desktop
+# JEEVA AI
 
-JEEVA AI is a **Windows PC desktop assistant** built with Electron, React, PowerShell automation and Gemini AI. The repository also contains an optional browser/PWA workspace and hosted companion relay/API service; these cloud features are separate from the Windows desktop installer and must be deployed/configured to use them.
+JEEVA AI is a **Windows desktop AI assistant** built with Electron, React, PowerShell automation and Gemini AI.
 
-## Desktop capabilities
+The hosted website is intentionally limited to a public product landing page and a Windows installer download link. It does **not** provide a browser AI workspace, PWA, mobile pairing, PC relay, server-managed Gemini proxy, or remote PC-control API. All assistant and PC-control functionality runs in the installed Windows desktop application.
+
+## Windows desktop capabilities
 
 - Voice/chat assistant with Hindi, Hinglish and English support.
 - Direct Gemini API connection from the Windows desktop app. The API key is stored using the Windows encrypted vault.
@@ -11,7 +13,12 @@ JEEVA AI is a **Windows PC desktop assistant** built with Electron, React, Power
 - Desktop voice modes, Camera Notch overlay, Windows tray and auto-start.
 - Local permission controls and audit log.
 - Windows desktop auto-updates from GitHub Releases.
-- Optional browser workspace/PWA and mobile-to-PC relay when the companion server is deployed.
+
+## Website and downloads
+
+- Public website: static landing page only.
+- Download button: redirects to the official latest Windows installer asset on GitHub Releases.
+- Render server: serves static files, a health-check endpoint and the installer redirect only. No user credentials or AI API keys are stored on the website server.
 
 ## Requirements
 
@@ -21,18 +28,26 @@ JEEVA AI is a **Windows PC desktop assistant** built with Electron, React, Power
 
 ## Development
 
-```bash
-npm ci
-npm run dev
-```
+    npm ci
+    npm run dev
 
 ## Tests
 
-```bash
-npm test
-npm run test:phase5
-npm run test:security
-```
+    npm test
+    npm run test:phase5
+    npm run test:security
+
+## Build the public landing page
+
+    npm run build
+
+This builds the static download-only site into dist/. The Render blueprint uses this build.
+
+## Build the Windows installer
+
+    npm run build:desktop
+
+This uses the separate Electron desktop entry point and writes the NSIS installer to release/. The public website bundle is never packaged into the Windows installer.
 
 ## Offline voice recognition (Whisper.cpp / Windows SAPI)
 
@@ -46,34 +61,24 @@ Strict Offline Mode never reaches Gemini transcription. If both local engines fa
 
 ### Install Whisper.cpp assets
 
-Create a `voice-models` folder inside JEEVA's Electron user-data directory (normally `%APPDATA%\jeeva-ai\voice-models`) and place these files directly inside it:
+Create a voice-models folder inside JEEVA's Electron user-data directory (normally %APPDATA%\\jeeva-ai\\voice-models) and place these files directly inside it:
 
-- `whisper-cli.exe` (recommended) or legacy `main.exe` from a compatible whisper.cpp Windows build.
-- One multilingual Whisper.cpp model file named `ggml-*.bin` (for example, a multilingual `ggml-small.bin`). **Do not use an `.en.bin` English-only model** if Hindi/Hinglish is required.
+- whisper-cli.exe (recommended) or legacy main.exe from a compatible whisper.cpp Windows build.
+- One multilingual Whisper.cpp model file named ggml-*.bin (for example, a multilingual ggml-small.bin). Do not use an .en.bin English-only model if Hindi/Hinglish is required.
 
-The expected layout is:
+Expected layout:
 
-```text
-%APPDATA%\jeeva-ai\voice-models\
-  whisper-cli.exe
-  ggml-small.bin
-```
+    %APPDATA%\\jeeva-ai\\voice-models\\
+      whisper-cli.exe
+      ggml-small.bin
 
 JEEVA sends 16 kHz, mono, 16-bit PCM WAV audio to Whisper.cpp. The model and executable are kept in the user's app-data folder and are not bundled into the installer. Vosk is not currently supported or detected as a ready engine; a Vosk model folder alone will not enable transcription.
 
 ### Windows SAPI fallback
 
-SAPI uses the installed Windows Speech Recognition pack through `System.Speech`. Hindi dictation requires an installed Hindi recognizer; English uses an installed English recognizer. Hinglish quality depends on the selected installed recognizer and is not equivalent to multilingual Whisper.cpp.
+SAPI uses the installed Windows Speech Recognition pack through System.Speech. Hindi dictation requires an installed Hindi recognizer; English uses an installed English recognizer. Hinglish quality depends on the selected installed recognizer and is not equivalent to multilingual Whisper.cpp.
 
-## Build Windows installer
-
-```bash
-npm run build:desktop
-```
-
-The NSIS installer is written to release/.
-
-## Release/update flow
+## Release and update flow
 
 Publish versioned Windows installers to GitHub Releases. The in-app updater reads the latest release metadata and requires HTTPS plus a SHA-256 digest before allowing an installer to run.
 
@@ -85,15 +90,4 @@ The interactive Windows uninstaller always removes JEEVA's own login-start regis
 
 The Electron renderer runs with context isolation enabled, Node integration disabled, and Chromium sandboxing enabled. IPC handlers accept requests only from the trusted main application window and local development origins. Privileged PC actions pass through the host permission guard; workflow steps and scheduled shell commands are also permission-gated.
 
-On Windows desktop, Gemini API keys are stored with Electron `safeStorage` in the OS-backed encrypted vault and are not duplicated in renderer `localStorage`. Browser/PWA mode uses browser-local storage for a user-provided key; do not use a shared/public browser profile for sensitive credentials.
-
-### Hosted companion server configuration
-
-When deploying the optional Render service:
-
-- `GEMINI_API_KEY` is optional; it enables the server-managed Gemini proxy and Live token endpoint.
-- `APP_PIN` must be set to a strong owner access PIN whenever `GEMINI_API_KEY` is configured. If it is missing, server-managed Gemini access fails closed and remains locked.
-- `SESSION_SECRET` should be a long random secret. The Render blueprint generates one automatically; keep it stable across restarts and deployments.
-- `RELAY_SECRET` is an optional separate secret for owner relay authentication.
-
-Never commit these values to the repository. Configure them as protected environment variables in the hosting dashboard.
+On Windows desktop, Gemini API keys are stored with Electron safeStorage in the OS-backed encrypted vault and are not duplicated in renderer localStorage. The public website does not collect or store API keys.
