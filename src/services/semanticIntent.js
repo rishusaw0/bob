@@ -60,8 +60,16 @@ const SYNONYM_MAP = {
   'कितना': 'status', 'कितनी': 'status', 'स्थिति': 'status',
   'आवाज़': 'volume', 'आवाज': 'volume', 'वॉल्यूम': 'volume',
   'रोशनी': 'brightness', 'चमक': 'brightness', 'बैटरी': 'battery',
-  'वाईफाई': 'wifi', 'वाइफाइ': 'wifi', 'साफ': 'clean',
+  'वाईफाई': 'wifi', 'वाइफाइ': 'wifi', 'साफ': 'clean', 'साफ़': 'clean',
   'कचरा': 'temp', 'जगह': 'space', 'समय': 'time',
+  'बढ़ाओ': 'badhao', 'बढ़ा': 'badha', 'घटाओ': 'ghatao',
+  'कम': 'kam', 'ज्यादा': 'zyada', 'ज़्यादा': 'zyada',
+  'तेज': 'tez', 'तेज़': 'tez', 'धीमा': 'dheema',
+  'बढ़ा दो': 'badhao', 'कम करो': 'kam',
+  'करो': 'karo', 'कर': 'kar', 'करना': 'karna',
+  'मुझे': 'mujhe', 'मेरा': 'mera', 'मेरी': 'meri',
+  'लैपटॉप': 'laptop', 'कंप्यूटर': 'computer', 'स्क्रीन': 'screen',
+  'फ़ाइल': 'file', 'फाइल': 'file', 'फ़ोल्डर': 'folder', 'फोल्डर': 'folder',
 };
 
 export function normalizeHinglishQuery(text) {
