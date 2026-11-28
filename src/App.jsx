@@ -56,7 +56,6 @@ export default function App() {
   const [apiKey, setApiKey] = useState(
     () => (window.electronAPI ? '' : (localStorage.getItem('jeeva_api_key') || import.meta.env.VITE_GEMINI_API_KEY || ''))
   );
-  const model = 'gemini-3.5-flash-lite';
   const [customInstructions, setCustomInstructions] = useState(
     () => localStorage.getItem('jeeva_custom_instructions') || ''
   );
