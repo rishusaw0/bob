@@ -17,10 +17,8 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     outDir: 'dist',
-    rollupOptions: {
-      input: { index: resolve(__dirname, mode === 'public' ? 'landing.html' : 'index.html') },
-    },
     rolldownOptions: {
+      input: { index: resolve(__dirname, mode === 'public' ? 'landing.html' : 'index.html') },
       output: {
         codeSplitting: {
           groups: [
