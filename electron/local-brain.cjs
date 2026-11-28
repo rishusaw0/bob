@@ -473,7 +473,8 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
     if (action === 'retry_auto_setup') {
       saveConfig({ autoSetupLastAttemptAt: 0 });
       return autoSetupLocalBrain();
-    }\n    if (action === 'save_config') {
+    }
+    if (action === 'save_config') {
       return { ok: true, config: saveConfig(payload) };
     }
     if (action === 'pull_model') {
