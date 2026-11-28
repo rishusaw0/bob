@@ -81,7 +81,7 @@ function createWindowManager({
     return screen.getPrimaryDisplay();
   }
 
-  function computeNotchBounds(width = 436) {
+  function computeNotchBounds(width = 520) {
     const display = getTargetDisplay();
     const b = display.workArea || display.bounds;
     const rawBounds = display.bounds || b;
@@ -98,7 +98,7 @@ function createWindowManager({
   function repositionNotch() {
     if (!notchWindow || notchWindow.isDestroyed()) return;
     try {
-      const nb = computeNotchBounds(436);
+      const nb = computeNotchBounds(520);
       notchWindow.setBounds(nb, false);
       notchWindow.setAlwaysOnTop(true, 'screen-saver');
     } catch {}
@@ -106,7 +106,7 @@ function createWindowManager({
 
   function createNotchWindow() {
     if (notchWindow && !notchWindow.isDestroyed()) return notchWindow;
-    const nb = computeNotchBounds(436);
+    const nb = computeNotchBounds(520);
     notchLoaded = false;
 
     notchWindow = new BrowserWindow({
