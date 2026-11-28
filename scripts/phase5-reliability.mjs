@@ -113,7 +113,7 @@ check(baseTests.includes('offlineVoiceTranscribe') && baseTests.includes('offlin
 const voiceRuntime = fs.readFileSync(path.join(ROOT, 'electron/offline-voice.cjs'), 'utf8');
 check(voiceRuntime.includes('MAX_CRASH_RETRIES = 3'), 'voice engine crash retries bounded');
 check(voiceRuntime.includes('timedOut: true'), 'voice transcription timeout reported');
-check(voiceRuntime.includes('proc.on(\\'error\\''), 'voice process spawn/runtime errors handled');
+check(voiceRuntime.includes("proc.on('error'"), 'voice process spawn/runtime errors handled');
 const localRuntime = fs.readFileSync(path.join(ROOT, 'electron/local-brain.cjs'), 'utf8');
 check(localRuntime.includes('35000'), 'local model request timeout bounded');
 check(localRuntime.includes('num_gpu: 0'), 'local inference defaults to CPU');
