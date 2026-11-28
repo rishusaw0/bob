@@ -129,4 +129,17 @@ check(workflow.includes('npm run build'), 'production bundle CI step');
 check(workflow.includes('electron-builder --win nsis'), 'Windows installer CI step');
 check(workflow.includes('if-no-files-found: error'), 'installer artifact required');
 
+// PC command execution correctness regressions.
+const wifiActionSource = fs.readFileSync(path.join(ROOT, 'electron/pc-actions.cjs'), 'utf8');
+const wifiScriptSource = fs.readFileSync(path.join(ROOT, 'electron/win-control.ps1'), 'utf8');
+const routerSource = fs.readFileSync(path.join(ROOT, 'src/services/voiceRouter.js'), 'utf8');
+check(wifiActionSource.includes("['status', 'on', 'off', 'disconnect']"), 'Wi-Fi ON/OFF accepted by PC action bridge');
+check(wifiScriptSource.includes('Enable-NetAdapter') && wifiScriptSource.includes('Disable-NetAdapter'), 'Wi-Fi ON/OFF toggles adapter instead of only querying status');
+check(wifiScriptSource.includes('No physical Wi-Fi adapter was found'), 'Wi-Fi missing adapter reported as failure');
+check(routerSource.includes("decision: 'execution failed'"), 'fast path logs execution failures');
+check(routerSource.includes("if (out.ok) lastVoiceAppTarget = appTarget"), 'successful app launch stores contextual follow-up target');
+check(routerSource.includes("if (out.ok && lastVoiceAppTarget?.toLowerCase() === appTarget.toLowerCase()) lastVoiceAppTarget = null"), 'successful app close clears contextual target');
+check(routerSource.includes("typeof process !== 'undefined'"), 'renderer-safe test runtime detection');
+const semanticSource = fs.readFileSync(path.join(ROOT, 'src/services/semanticIntent.js'), 'utf8');
+check(semanticSource.includes("text.match(/\\b(\\d{1,3})"), 'semantic percentage parser regex');
 console.log('PHASE5_RELIABILITY_PASSED', checks, 'checks');
