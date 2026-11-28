@@ -1,6 +1,6 @@
 {
   "name": "jeeva-ai",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "JEEVA AI - Personal AI Assistant powered by Gemini",
   "main": "electron/main.cjs",
   "scripts": {
