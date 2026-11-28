@@ -1,0 +1,240 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    background-color: #07080d;
+    background-image:
+      radial-gradient(65% 45% at 50% -10%, rgba(56, 189, 248, 0.08), transparent 65%),
+      radial-gradient(45% 40% at 88% 12%, rgba(16, 185, 129, 0.05), transparent 65%);
+    color: #f4f4f5;
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Futuristic cyber-glass surfaces */
+.glass-panel {
+  background: linear-gradient(180deg, rgba(17, 20, 29, 0.88), rgba(11, 13, 20, 0.92));
+  backdrop-filter: blur(16px) saturate(135%);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.cyber-card {
+  position: relative;
+  background: linear-gradient(160deg, rgba(19, 23, 34, 0.82), rgba(12, 14, 21, 0.92));
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), border-color 180ms ease, box-shadow 200ms ease, background 180ms ease;
+}
+.cyber-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(56, 189, 248, 0.42);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42), 0 0 20px rgba(56, 189, 248, 0.1), inset 0 1px 0 rgba(125, 211, 252, 0.15);
+}
+
+.cyber-pill {
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+.cyber-pill:hover {
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(30, 41, 59, 0.75);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.12);
+}
+
+/* Subtle slim scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #27272a;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f3f46;
+}
+
+/* Markdown editorial styling */
+.prose-editorial {
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: #e4e4e7;
+}
+.prose-editorial h1,
+.prose-editorial h2,
+.prose-editorial h3 {
+  color: #fafafa;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin-top: 1.15rem;
+  margin-bottom: 0.45rem;
+}
+.prose-editorial h1 { font-size: 1.2rem; }
+.prose-editorial h2 { font-size: 1.075rem; }
+.prose-editorial h3 { font-size: 0.975rem; }
+.prose-editorial p {
+  margin-bottom: 0.65rem;
+}
+.prose-editorial p:last-child {
+  margin-bottom: 0;
+}
+.prose-editorial ul,
+.prose-editorial ol {
+  margin-left: 1.25rem;
+  margin-bottom: 0.65rem;
+}
+.prose-editorial ul { list-style-type: disc; }
+.prose-editorial ol { list-style-type: decimal; }
+.prose-editorial li {
+  margin-bottom: 0.25rem;
+}
+.prose-editorial strong {
+  color: #fafafa;
+  font-weight: 600;
+}
+.prose-editorial blockquote {
+  border-left: 2px solid #3f3f46;
+  padding-left: 0.85rem;
+  color: #a1a1aa;
+  margin: 0.75rem 0;
+}
+.prose-editorial table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+}
+.prose-editorial th,
+.prose-editorial td {
+  border: 1px solid #27272a;
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+}
+.prose-editorial th {
+  background: #18181b;
+  color: #fafafa;
+  font-weight: 500;
+}
+.prose-editorial a {
+  color: #e4e4e7;
+  text-decoration: underline;
+  text-decoration-color: #52525b;
+  text-underline-offset: 3px;
+}
+.prose-editorial a:hover {
+  color: #ffffff;
+  text-decoration-color: #fafafa;
+}
+
+.typing-dot {
+  animation: typing 1.2s infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* Frameless window drag bar */
+.title-bar {
+  -webkit-app-region: drag;
+}
+.title-bar button,
+.title-bar select,
+.title-bar input {
+  -webkit-app-region: no-drag;
+}
+
+/* Always allow text selection */
+.prose-editorial, input, textarea, pre, code {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Keep highlight.js code blocks seamless inside Obsidian container */
+.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+@keyframes jeevaFloat {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50% { transform: translateY(-10px) scale(1.03); }
+}
+
+@keyframes jeevaEq {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+@keyframes jeevaShimmer {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-jeeva-float {
+  animation: jeevaFloat 6s ease-in-out infinite;
+}
+
+.animate-jeeva-float-slow {
+  animation: jeevaFloat 9s ease-in-out infinite reverse;
+}
+
+.animate-jeeva-eq {
+  animation: jeevaEq 0.9s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.bg-jeeva-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+.text-gradient-futuristic {
+  background: linear-gradient(90deg, #fafafa 0%, #34d399 42%, #38bdf8 75%, #fafafa 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: jeevaShimmer 7s linear infinite;
+}
+
+
+/* Unified futuristic icon system
+   All UI icons use the Lucide (react-icons/lu) family. Keep their geometry
+   consistent across navigation, dialogs, toolbars, chat and controls. */
+svg[viewBox="0 0 24 24"] {
+  stroke-width: 1.75 !important;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+  shape-rendering: geometricPrecision;
+}
+
+button svg[viewBox="0 0 24 24"],
+[role="button"] svg[viewBox="0 0 24 24"],
+nav svg[viewBox="0 0 24 24"],
+aside svg[viewBox="0 0 24 24"],
+header svg[viewBox="0 0 24 24"] {
+  transition: color 160ms ease, opacity 160ms ease, filter 160ms ease,
+    transform 160ms ease;
+}
+
+button:disabled svg[viewBox="0 0 24 24"] {
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  svg[viewBox="0 0 24 24"] {
+    transition: none !important;
+  }
+}
