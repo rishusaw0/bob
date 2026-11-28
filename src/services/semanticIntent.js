@@ -52,12 +52,30 @@ const SYNONYM_MAP = {
   jagah: 'space',
   charge: 'battery',
   charging: 'battery',
+  // Common Devanagari command words
+  'खोलो': 'open', 'खोल': 'open', 'खोलना': 'open', 'चालू': 'open',
+  'बंद': 'close', 'बन्द': 'close',
+  'हटाओ': 'remove', 'हटा': 'remove', 'मिटाओ': 'delete', 'डिलीट': 'delete',
+  'दिखाओ': 'show', 'दिखा': 'show', 'बताओ': 'batao', 'बता': 'batao',
+  'कितना': 'status', 'कितनी': 'status', 'स्थिति': 'status',
+  'आवाज़': 'volume', 'आवाज': 'volume', 'वॉल्यूम': 'volume',
+  'रोशनी': 'brightness', 'चमक': 'brightness', 'बैटरी': 'battery',
+  'वाईफाई': 'wifi', 'वाइफाइ': 'wifi', 'साफ': 'clean', 'साफ़': 'clean',
+  'कचरा': 'temp', 'जगह': 'space', 'समय': 'time',
+  'बढ़ाओ': 'badhao', 'बढ़ा': 'badha', 'घटाओ': 'ghatao',
+  'कम': 'kam', 'ज्यादा': 'zyada', 'ज़्यादा': 'zyada',
+  'तेज': 'tez', 'तेज़': 'tez', 'धीमा': 'dheema',
+  'बढ़ा दो': 'badhao', 'कम करो': 'kam',
+  'करो': 'karo', 'कर': 'kar', 'करना': 'karna',
+  'मुझे': 'mujhe', 'मेरा': 'mera', 'मेरी': 'meri',
+  'लैपटॉप': 'laptop', 'कंप्यूटर': 'computer', 'स्क्रीन': 'screen',
+  'फ़ाइल': 'file', 'फाइल': 'file', 'फ़ोल्डर': 'folder', 'फोल्डर': 'folder',
 };
 
 export function normalizeHinglishQuery(text) {
   const raw = String(text || '')
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s:%._/\\-]/gu, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}\s:%._/\\-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (!raw) return '';
@@ -271,33 +289,113 @@ const PRECOMPUTED_INTENTS = INTENT_DEFINITIONS.map((def) => ({
   vectors: def.phrases.map((p) => tokenizeSemantic(p)),
 }));
 
-export function classifyIntent(query) {
-  const qVec = tokenizeSemantic(query);
-  if (qVec.size === 0) return null;
+const INTENT_STOP_WORDS = new Set([
+  'please', 'plz', 'hey', 'jeeva', 'zara', 'abhi', 'mere', 'mera', 'meri',
+  'the', 'a', 'an', 'is', 'are', 'to', 'for', 'of', 'on', 'in', 'my',
+  'hai', 'hain', 'ho', 'raha', 'rahi', 'kar', 'karo', 'karna', 'krna',
+  'kro', 'kr', 'do', 'de', 'dena', 'batao', 'btao', 'bata', 'dikhao',
+  'please', 'now', 'check', 'tell', 'me', 'kya',
+]);
 
-  // Never auto-route explicitly destructive intents without confirmation or full context
-  const lower = String(query || '').toLowerCase();
-  if (/\b(delete|remove|uninstall|kill|shutdown|restart|reboot|format|erase|hta do|hatao)\b/i.test(lower)) {
-    return null;
+const DESTRUCTIVE_COMMAND_RE =
+  /(?:^|\s)(?:delete|remove|uninstall|kill|shutdown|shut\s*down|restart|reboot|format|erase|wipe|hta\s*do|hatao|hata\s*do|mitao|mita\s*do|डिलीट|हटाओ|हटा|मिटाओ)(?=$|\s)/iu;
+
+function semanticContentTokens(text) {
+  return normalizeHinglishQuery(text)
+    .split(/\s+/)
+    .filter((word) => word && !INTENT_STOP_WORDS.has(word));
+}
+
+function lexicalCoverage(queryTokens, phraseTokens) {
+  if (!queryTokens.length) return 0;
+  const phraseSet = new Set(phraseTokens);
+  let matched = 0;
+  for (const token of queryTokens) {
+    if (phraseSet.has(token) || phraseTokens.some((candidate) =>
+      token.length >= 4 && candidate.length >= 4 &&
+      (candidate.startsWith(token) || token.startsWith(candidate))
+    )) matched++;
+  }
+  return matched / queryTokens.length;
+}
+
+/**
+ * Returns an explainable match or a safe rejection reason.
+ * Low-confidence and near-tie matches are intentionally not routable.
+ */
+export function classifyIntentDetailed(query, options = {}) {
+  const raw = String(query || '').trim();
+  const qVec = tokenizeSemantic(raw);
+  if (!raw || qVec.size === 0) return { match: null, reason: 'empty', confidence: 0, runnerUp: null };
+  if (DESTRUCTIVE_COMMAND_RE.test(raw)) {
+    return { match: null, reason: 'unsafe', confidence: 0, runnerUp: null };
   }
 
-  let best = null;
-  for (const intent of PRECOMPUTED_INTENTS) {
-    let topScore = 0;
-    for (const v of intent.vectors) {
-      const s = cosineSim(qVec, v);
-      if (s > topScore) topScore = s;
+  const queryTokens = semanticContentTokens(raw);
+  if (!queryTokens.length) return { match: null, reason: 'unknown', confidence: 0, runnerUp: null };
+
+  const ranked = PRECOMPUTED_INTENTS.map((intent) => {
+    let bestScore = 0;
+    for (let i = 0; i < intent.vectors.length; i++) {
+      const phrase = semanticContentTokens(intent.phrases[i]);
+      const cosine = cosineSim(qVec, intent.vectors[i]);
+      const coverage = lexicalCoverage(queryTokens, phrase);
+      // Coverage protects short, clear commands; cosine rewards richer sentence similarity.
+      const score = (cosine * 0.58) + (coverage * 0.42);
+      if (score > bestScore) bestScore = score;
     }
-    if (!best || topScore > best.confidence) {
-      best = {
-        id: intent.id,
-        tool: intent.tool,
-        confidence: Number(topScore.toFixed(3)),
-        args: intent.args(query),
-      };
+    return { intent, score: bestScore };
+  }).sort((a, b) => b.score - a.score);
+
+  const best = ranked[0];
+  const second = ranked[1] || null;
+  const threshold = Number.isFinite(options.threshold) ? options.threshold : 0.43;
+  const margin = Number.isFinite(options.margin) ? options.margin : 0.07;
+  const confidence = Number(best?.score.toFixed(3) || 0);
+  const runnerUp = second ? {
+    id: second.intent.id,
+    confidence: Number(second.score.toFixed(3)),
+  } : null;
+
+  if (!best || best.score < threshold) {
+    return { match: null, reason: 'low-confidence', confidence, runnerUp };
+  }
+  if (second && best.score - second.score < margin) {
+    return { match: null, reason: 'ambiguous', confidence, runnerUp };
+  }
+
+  return {
+    match: {
+      id: best.intent.id,
+      tool: best.intent.tool,
+      confidence,
+      args: best.intent.args(raw),
+    },
+    reason: 'matched',
+    confidence,
+    runnerUp,
+  };
+}
+
+export function classifyIntent(query, options = {}) {
+  return classifyIntentDetailed(query, options).match;
+}
+
+/** Static catalog diagnostics used by tests and developer tooling. */
+export function validateIntentCatalog() {
+  const ids = new Set();
+  const phrases = new Set();
+  const issues = [];
+  for (const intent of INTENT_DEFINITIONS) {
+    if (ids.has(intent.id)) issues.push(`duplicate-id:${intent.id}`);
+    ids.add(intent.id);
+    for (const phrase of intent.phrases) {
+      const normalized = normalizeHinglishQuery(phrase);
+      if (phrases.has(normalized)) issues.push(`duplicate-phrase:${normalized}`);
+      phrases.add(normalized);
     }
   }
-  return best;
+  return { ok: issues.length === 0, issues, intentCount: INTENT_DEFINITIONS.length };
 }
 
 const TOOL_DESCRIPTIONS = {
