@@ -865,32 +865,25 @@ assert.ok(summarizeTextLocally('First clear sentence about JEEVA offline AI. Sec
 assert.equal(assessQueryRouting('Screen par kya likha hai padh kar sunao', null, 'cloud', { online: true }).forceCloud, true);
 assert.ok(pickTopToolsForQuery('read active screen and click submit button', 4).includes('screen_reader'));
 
-// Advanced Voice Detection DSP, AGC Normalization, Phonetic Repair & VAD Sensitivity checks
+// Gemini-only transcription: legacy Electron local-ASR bridges must never be called.
 const { applyHighPassRumbleFilter, normalizePcmForStt, getVadSensitivity, transcribeCapturedAudio } = await import(pathToFileURL(path.join(ROOT, 'src/services/voiceCapture.js')).href);
 const { repairVoiceTranscript } = await import(pathToFileURL(path.join(ROOT, 'src/services/voiceRouter.js')).href);
 assert.equal(getVadSensitivity(), 'balanced');
-// Strict Offline must try local Whisper then SAPI, and must never call Gemini after both fail.
 const previousWindow = globalThis.window;
-let cloudFallbackAttempted = false;
+let legacyAsrCalls = 0;
 globalThis.window = {
   electronAPI: {
-    offlineVoiceTranscribe: async () => ({ ok: false, text: '', reason: 'test Whisper unavailable' }),
-    offlineVoiceDictate: async () => ({ type: 'dictation', text: '', reason: 'test SAPI unavailable' }),
+    offlineVoiceTranscribe: async () => { legacyAsrCalls++; return { ok: false, text: '' }; },
+    offlineVoiceDictate: async () => { legacyAsrCalls++; return { type: 'dictation', text: '' }; },
   },
 };
 setStrictOfflineMode(true);
+assert.equal(isStrictOfflineMode(), false, 'Legacy Strict Offline setting is retired');
 await assert.rejects(
   () => transcribeCapturedAudio('UklGRg==', { language: 'auto' }),
-  /Strict Offline Mode: cloud transcription blocked/
+  /Gemini not initialized/
 );
-assert.equal(cloudFallbackAttempted, false);
-globalThis.window = {
-  electronAPI: {
-    offlineVoiceTranscribe: async () => ({ ok: false, text: '' }),
-    offlineVoiceDictate: async (_timeout, opts) => ({ type: 'dictation', text: 'स्थानीय पहचान', culture: opts.language === 'hi' ? 'hi-IN' : 'en-IN' }),
-  },
-};
-assert.equal(await transcribeCapturedAudio('UklGRg==', { language: 'hi' }), 'स्थानीय पहचान');
+assert.equal(legacyAsrCalls, 0, 'Voice transcription must not invoke local Whisper or Windows SAPI');
 setStrictOfflineMode(false);
 if (previousWindow === undefined) delete globalThis.window;
 else globalThis.window = previousWindow;
