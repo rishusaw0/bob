@@ -116,7 +116,10 @@ export async function transcribeCapturedAudio(wavBase64, opts = {}) {
   if (api?.offlineVoiceTranscribe) {
     try {
       const local = await api.offlineVoiceTranscribe(wavBase64, { language });
-      if (local?.ok && local?.text) return local.text;
+      if (local?.ok && local?.text) {
+        console.info('[JEEVA STT] transcription engine: whisper.cpp');
+        return local.text;
+      }
       whisperReason = local?.reason || 'Whisper.cpp returned no transcript';
     } catch (err) {
       whisperReason = err?.message || 'Whisper.cpp failed';
@@ -129,7 +132,10 @@ export async function transcribeCapturedAudio(wavBase64, opts = {}) {
     try {
       const dictation = await api.offlineVoiceDictate(7, { language });
       const localText = cleanSttTranscript(dictation?.text || '');
-      if (localText) return localText;
+      if (localText) {
+        console.info(`[JEEVA STT] transcription engine: windows-sapi (fallback, ${dictation?.culture || language})`);
+        return localText;
+      }
       if (dictation?.reason) whisperReason += `; Windows SAPI: ${dictation.reason}`;
     } catch (err) {
       whisperReason += `; Windows SAPI failed: ${err?.message || 'unknown error'}`;
@@ -139,6 +145,7 @@ export async function transcribeCapturedAudio(wavBase64, opts = {}) {
   if (isStrictOfflineMode()) {
     throw new Error(`Strict Offline Mode: cloud transcription blocked. Local Whisper.cpp and Windows SAPI produced no transcript. ${whisperReason}`);
   }
+  console.info('[JEEVA STT] transcription engine: gemini-cloud (local engines unavailable; Strict Offline is OFF)');
   return await transcribeAudio(wavBase64, 'audio/wav', opts);
 }
 
