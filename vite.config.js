@@ -13,13 +13,15 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     outDir: 'dist',
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom'],
-          'vendor-genai': ['@google/genai'],
-          'vendor-markdown': ['react-markdown', 'highlight.js'],
-          'vendor-icons': ['react-icons'],
+        codeSplitting: {
+          groups: [
+            { name: 'vendor-react', test: /node_modules[\\/](?:react|react-dom)[\\/]/, priority: 30 },
+            { name: 'vendor-genai', test: /node_modules[\\/]@google[\\/]genai[\\/]/, priority: 25 },
+            { name: 'vendor-markdown', test: /node_modules[\\/](?:react-markdown|highlight\\.js)[\\/]/, priority: 20 },
+            { name: 'vendor-icons', test: /node_modules[\\/]react-icons[\\/]/, priority: 15 },
+          ],
         },
       },
     },
