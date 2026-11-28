@@ -43,4 +43,8 @@ const viteConfig = read('vite.config.js');
 assert.ok(viteConfig.includes('codeSplitting:'), 'Vite 8 uses supported Rolldown code-splitting groups');
 assert.ok(!viteConfig.includes('manualChunks:'), 'Vite config avoids the removed object-form manualChunks option');
 
-console.log('Security/reliability contracts passed: 21 checks.');
+const tailwindConfig = read('tailwind.config.js');
+assert.ok(tailwindConfig.includes("'./src/**/*.jsx'"), 'Tailwind scans actual JSX UI components');
+assert.ok(!tailwindConfig.includes("'./src/**/*.{js,jsx}'"), 'Tailwind does not parse service regex source as class candidates');
+
+console.log('Security/reliability contracts passed: 23 checks.');
