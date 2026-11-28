@@ -131,7 +131,7 @@ const INTENT_DEFINITIONS = [
     },
     phrases: [
       'volume 50 kar do', 'volume badhao', 'volume kam karo',
-      'awaz badhao', 'sound increase', 'audio volume 70 percent set karo',
+      'sound increase', 'audio volume 70 percent set karo',
       'volume mute karo', 'volume unmute karo', 'current volume kitna hai',
     ],
   },
