@@ -253,7 +253,7 @@ app.whenReady().then(() => {
   windowManager.setupTray();
 
   const wPrefs = windowManager.getPrefs();
-  if (mainWin && !mainWin.isVisible() && wPrefs.startupBehavior === 'notch_standby' && !wPrefs.notchUserHidden) {
+  if (mainWin && !mainWin.isVisible() && (wPrefs.onboardingComplete || wPrefs.startupBehavior === 'notch_standby') && !wPrefs.notchUserHidden) {
     setTimeout(() => {
       windowManager.updateNotchState({ visible: true, standby: true, orbState: 'idle' });
     }, 350);
