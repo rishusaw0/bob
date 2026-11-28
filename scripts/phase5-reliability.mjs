@@ -105,6 +105,20 @@ try {
   fs.rmSync(temp, { recursive: true, force: true });
 }
 
+// Existing full-suite contract checks: strict-offline blocks cloud transcription,
+// Whisper/SAPI fallback is exercised, and the runtime has bounded timeout/crash recovery.
+const baseTests = fs.readFileSync(path.join(ROOT, 'scripts/test.mjs'), 'utf8');
+check(baseTests.includes('Strict Offline Mode: cloud transcription blocked'), 'Strict Offline blocks cloud fallback');
+check(baseTests.includes('offlineVoiceTranscribe') && baseTests.includes('offlineVoiceDictate'), 'offline Whisper/SAPI fallback covered');
+const voiceRuntime = fs.readFileSync(path.join(ROOT, 'electron/offline-voice.cjs'), 'utf8');
+check(voiceRuntime.includes('MAX_CRASH_RETRIES = 3'), 'voice engine crash retries bounded');
+check(voiceRuntime.includes('timedOut: true'), 'voice transcription timeout reported');
+check(voiceRuntime.includes('proc.on(\\'error\\''), 'voice process spawn/runtime errors handled');
+const localRuntime = fs.readFileSync(path.join(ROOT, 'electron/local-brain.cjs'), 'utf8');
+check(localRuntime.includes('35000'), 'local model request timeout bounded');
+check(localRuntime.includes('num_gpu: 0'), 'local inference defaults to CPU');
+check(localRuntime.includes('stopSidecar'), 'local runtime can be stopped/restarted');
+
 // Build/installer contract checks are paired with the Windows CI workflow.
 const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 check(pkg.scripts['build:desktop'].includes('electron-builder --win nsis'), 'Windows NSIS build script');
