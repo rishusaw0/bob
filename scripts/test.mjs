@@ -31,7 +31,7 @@ console.log('[1b/6] Checking Electron relative module dependencies...');
 const electronDir = path.join(ROOT, 'electron');
 for (const file of fs.readdirSync(electronDir).filter((f) => f.endsWith('.cjs'))) {
   const source = fs.readFileSync(path.join(electronDir, file), 'utf8');
-  for (const hit of source.matchAll(/require\\(\\s*['\"](\\.\\/?[^'\"]+)['\"]\\s*\\)/g)) {
+  for (const hit of source.matchAll(/require\s*\(\s*['"](\.\/?[^'"]+)['"]\s*\)/g)) {
     const target = path.resolve(electronDir, hit[1]);
     const candidates = [target, target + '.cjs', target + '.js', path.join(target, 'index.cjs'), path.join(target, 'index.js')];
     assert.ok(candidates.some((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile()),
