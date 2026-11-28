@@ -724,6 +724,12 @@ assert.ok(ultraProfile.minFreeRamGb > 1.2);
 assert.equal(isLoopbackEndpoint('http://127.0.0.1:11434'), true);
 assert.equal(isLoopbackEndpoint('https://example.com/v1'), false);
 assert.ok(LOW_END_MODELS.some((m) => m.id === 'qwen2.5:1.5b'));
+const localBrainSource = readRel('electron/local-brain.cjs');
+const electronMainSource = readRel('electron/main.cjs');
+assert.ok(localBrainSource.includes("action === 'auto_setup'"), 'Local Brain must expose automatic first-launch setup');
+assert.ok(localBrainSource.includes("action === 'retry_auto_setup'"), 'Local Brain must allow explicit retry after failed setup');
+assert.ok(electronMainSource.includes('if (app.isPackaged)') && electronMainSource.includes("setup('auto_setup')"), 'Packaged app must trigger non-blocking first-launch model setup');
+
 const allowedLocalTool = validateLocalToolCall('open_application', { app_name: 'chrome' }, ['open_application']);
 assert.equal(validateLocalToolCall('run_system_command', { command: 'whoami' }, ['run_system_command']).ok, false);
 assert.equal(allowedLocalTool.ok, true);

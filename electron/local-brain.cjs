@@ -388,7 +388,7 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
     if (process.platform !== 'win32') return { ok: false, error: 'Winget install Windows par hi available hai.' };
     onProgress?.({ stage: 'installing', status: 'Installing Ollama via Windows winget...' });
     return new Promise((resolve) => {
-      const child = spawn('winget', ['install', '-e', '--id', 'Ollama.Ollama', '--accept-source-agreements', '--accept-package-agreements'], {
+      const child = spawn('winget', ['install', '-e', '--id', 'Ollama.Ollama', '--silent', '--accept-source-agreements', '--accept-package-agreements'], {
         windowsHide: true,
       });
       let out = '';
@@ -397,9 +397,6 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
       child.on('close', (code) => {
         if (code === 0) {
           onProgress?.({ stage: 'installed', status: 'Ollama installed! Starting service...' });
-          try {
-            spawn('ollama', ['serve'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-          } catch {}
           resolve({ ok: true, message: 'Ollama installed cleanly!' });
         } else {
           resolve({ ok: false, error: out.slice(-240) || `winget exited with ${code}` });
@@ -472,7 +469,11 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
   }
 
   async function setup(action, payload = {}) {
-    if (action === 'auto_setup') return autoSetupLocalBrain();\n    if (action === 'save_config') {
+    if (action === 'auto_setup') return autoSetupLocalBrain();
+    if (action === 'retry_auto_setup') {
+      saveConfig({ autoSetupLastAttemptAt: 0 });
+      return autoSetupLocalBrain();
+    }\n    if (action === 'save_config') {
       return { ok: true, config: saveConfig(payload) };
     }
     if (action === 'pull_model') {
