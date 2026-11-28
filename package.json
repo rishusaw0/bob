@@ -47,14 +47,6 @@
   "build": {
     "appId": "com.roushan.jeeva-ai",
     "productName": "JEEVA AI",
-    "protocols": [
-      {
-        "name": "JEEVA AI Protocol",
-        "schemes": [
-          "jeeva"
-        ]
-      }
-    ],
     "directories": {
       "output": "release"
     },
