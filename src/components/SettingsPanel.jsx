@@ -116,8 +116,6 @@ export default function SettingsPanel({
   });
   const [displays, setDisplays] = useState([]);
 
-  // Own Voice Cloning (Gemini 3.8 Voice Replication)
-
   const handleEnrollVoiceprint = async () => {
     if (enrollingVoice) return;
     setEnrollingVoice(true);
@@ -129,7 +127,7 @@ export default function SettingsPanel({
         `Aaj ka schedule aur reminders batao`,
       ];
       for (let i = 0; i < 3; i++) {
-        toast.info(`Offline Voiceprint ${i + 1}/3: Boliye "${prompts[i]}"`);
+        toast.info(`Local voice verification sample ${i + 1}/3: Boliye "${prompts[i]}"`);
         const pcm = await new Promise((resolve, reject) => {
           let settled = false;
           const cap = startVoiceCapture({
