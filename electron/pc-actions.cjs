@@ -193,7 +193,7 @@ function createPcActions({
     },
 
     async wifi(mode = 'status') {
-      const safeMode = ['status', 'off', 'disconnect'].includes(mode) ? mode : 'status';
+      const safeMode = ['status', 'on', 'off', 'disconnect'].includes(mode) ? mode : 'status';
       return await runPsScript('win-control.ps1', ['-Task', 'wifi', '-Arg1', safeMode]);
     },
 
