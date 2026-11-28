@@ -216,7 +216,7 @@ export default function LandingPage() {
               </a>
             </div>
             <p className="text-[11px] font-mono text-zinc-500">
-              v1.0.5 · Windows 10 / 11 (64-bit) · Gemini-Powered Lightweight Desktop Software
+              v1.0.6 · Windows 10 / 11 (64-bit) · Gemini-Powered Lightweight Desktop Software
             </p>
           </div>
         </div>
