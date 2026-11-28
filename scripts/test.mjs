@@ -76,7 +76,7 @@ const guardSrc = readRel('electron/permission-guard.cjs');
 const actionsSrc = readRel('electron/pc-actions.cjs');
 const mainSrc = readRel('electron/main.cjs');
 const preloadSrc = readRel('electron/preload.cjs');
-const bridgeSrc = readRel('src/services/bridge.js');
+const bridgeSrc = readRel('src/services/systemApi.js');
 
 const toolsArrayBlock = toolsSrc.slice(toolsSrc.indexOf('export const TOOLS'), toolsSrc.indexOf('function guessDocumentMime'));
 const declaredTools = [...toolsArrayBlock.matchAll(/name:\s*'([a-z_]+)'/g)].map((m) => m[1]);
