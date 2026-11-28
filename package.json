@@ -35,7 +35,7 @@
     "@vitejs/plugin-react": "^5.2.0",
     "autoprefixer": "^10.4.19",
     "concurrently": "^8.2.2",
-    "electron": "^42.11.18",
+    "electron": "^45.5.0",
     "electron-builder": "^26.18.1",
     "postcss": "^8.4.38",
     "react": "^18.3.1",
@@ -90,6 +90,6 @@
   "allowScripts": {
     "protobufjs@7.6.6": true,
     "esbuild@0.21.5": true,
-    "electron@42.11.18": true
+    "electron@45.5.0": true
   }
 }
