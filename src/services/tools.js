@@ -583,6 +583,12 @@ export async function executeFunctionCall(
     !targetBypass &&
     (alwaysAskHigh || sensitiveVoicePrompt || policy === 'ask');
 
+  // Fail closed: never execute a protected action if the UI permission handler is unavailable.
+  if (needsPrompt && typeof requestPermission !== 'function') {
+    appendAuditLog({ tool: name, category, summary, decision: 'blocked (permission handler unavailable)' });
+    return { error: `Cannot execute ${summary}: permission confirmation is unavailable.` };
+  }
+
   if (needsPrompt && requestPermission) {
     const decision = await requestPermission({
       name,
