@@ -687,7 +687,7 @@ const pkgRuntime = JSON.parse(readRel('package.json'));
 assert.ok(geminiSource.includes("const GEMINI_MODEL_ID = 'gemini-3.5-flash-lite'"));
 assert.ok(geminiSource.includes("const cfg = { ...config, model: GEMINI_MODEL_ID }"));
 assert.ok(!/gemini-(?:4-|2\\.5|nano-banana|3\\.8-live)/.test(geminiSource));
-assert.ok(appRuntimeSource.includes('runLocalQuickBrain'));
+assert.ok(appRuntimeSource.includes('runLocalQuickBrain') && appRuntimeSource.includes('pcCommandRouter'));
 assert.ok(!appRuntimeSource.includes('runLocalSlmTurn') && !appRuntimeSource.includes('runLocalDocumentTurn'));
 assert.ok(!electronRuntimeSource.includes('localBrain') && !electronRuntimeSource.includes('offlineVoice'));
 assert.ok(!preloadRuntimeSource.includes('localBrain') && !preloadRuntimeSource.includes('offlineVoice'));
