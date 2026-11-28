@@ -260,7 +260,7 @@ function createWindowManager({
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: true,
       },
       icon: path.join(__dirname, '..', 'public', 'icon.png'),
