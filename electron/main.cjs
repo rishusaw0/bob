@@ -204,6 +204,20 @@ windowManager = createWindowManager({
 
 async function executeMacroStep(step) {
   if (!step || !step.type) return;
+  const permissionByType = {
+    power_plan: ['powerProfile', [step.plan || 'balanced']],
+    open_app: ['openApp', [step.app || 'notepad', step.args || '']],
+    theme: ['theme', [step.mode || 'dark']],
+    volume: ['volume', ['set', Number(step.level ?? 50)]],
+    brightness: ['brightness', ['set', Number(step.level ?? 50)]],
+    minimize_all: ['minimizeAll', []],
+    file_pro: ['filePro', [step.action || 'organize_folder', step.source || 'downloads']],
+    clean_temp: ['filePro', ['clean_temp', '']],
+    diagnostics: ['diagnostics', [step.action || 'overview', '']],
+    run_command: ['runCommand', [step.command || '']],
+  };
+  const permission = permissionByType[step.type];
+  if (permission) await permissionGuard.authorizeRemoteAction({ action: permission[0], args: permission[1], sourceLabel: 'JEEVA Workflow' });
   switch (step.type) {
     case 'power_plan':
       return await actions.powerProfile(step.plan || 'balanced');
