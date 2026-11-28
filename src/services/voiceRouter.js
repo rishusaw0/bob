@@ -297,8 +297,19 @@ export async function runAuthorizedFastTool(name, args, executor, requestPermiss
     appendAuditLog({ tool: name, category, summary, decision: `allowed (${policy})` });
   }
 
-  const res = await executor();
-  return { ok: true, result: res };
+  try {
+    const res = await executor();
+    if (res && typeof res === 'object' && res.ok === false) {
+      const error = res.error || 'The PC action reported failure.';
+      appendAuditLog({ tool: name, category, summary, decision: 'execution failed' });
+      return { ok: false, error };
+    }
+    return { ok: true, result: res };
+  } catch (err) {
+    const error = err?.message || String(err);
+    appendAuditLog({ tool: name, category, summary, decision: 'execution failed' });
+    return { ok: false, error: userLang === 'english' ? error : `Action execute nahi hua: ${error}` };
+  }
 }
 
 function hasAny(text, enRegex, hiTerms = []) {
@@ -384,6 +395,7 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
       const execRes = await executePlannedClause(plan, api, runFast, userLang);
       if (execRes.tools?.length) allTools.push(...execRes.tools);
       if (execRes.replyText) replyParts.push(execRes.replyText.replace(/\.+$/, ''));
+      if (execRes.tools?.some((tool) => tool.status === 'error')) break;
     }
     return {
       handled: true,
@@ -671,7 +683,8 @@ async function executePlannedClause(plan, api, runFast, userLang) {
       const appOut = await runFast('open_application', { app_name: plan.targetApp }, () => api.openApp(plan.targetApp, ''));
       ranTools.push({ name: 'open_application', status: appOut.ok ? 'done' : 'error', args: { app_name: plan.targetApp } });
       if (!appOut.ok) return { replyText: appOut.error, tools: ranTools };
-      await new Promise((r) => setTimeout(r, process?.env?.NODE_ENV ? 25 : 420));
+      const isTestRuntime = typeof process !== 'undefined' && process.env?.NODE_ENV === 'test';
+      await new Promise((r) => setTimeout(r, isTestRuntime ? 25 : 420));
     }
     if (typeof api.typeClipboard !== 'function') return { replyText: 'Typing is not available.', tools: ranTools };
     const typeOut = await runFast('type_text', { text: plan.textToType }, () => api.typeClipboard(plan.textToType));
@@ -967,6 +980,7 @@ async function trySingleFastVoiceAction(rawText, requestPermission = null) {
     const appTarget = openMatch[1].trim();
     if (!/\b(setting|settings|file|folder|tab|url|gaana|gana|music|song|track|volume|brightness|awaz|mode|theme|incognito|private|downloads|history|bookmarks|github|pulls|issues|notifications|terminal|command palette|sidebar)\b/i.test(appTarget)) {
       const out = await runFast('open_application', { app_name: appTarget }, () => api.openApp(appTarget, ''));
+      if (out.ok) lastVoiceAppTarget = appTarget;
       return {
         handled: true,
         replyText: out.ok
