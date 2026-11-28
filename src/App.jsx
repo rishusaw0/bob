@@ -175,7 +175,7 @@ export default function App() {
       unsubSched?.();
       unsubEmergency?.();
     };
-  }, [updateCloudApiUrl]);
+  }, [aiName]);
 
   // Load API key from OS-encrypted safeStorage vault on Electron startup
   useEffect(() => {
@@ -511,7 +511,7 @@ export default function App() {
 
   // Persistent Always-On Wake Word & Mic Engine:
   // - On Electron Desktop: active 24/7 across Full, Minimized, Tray, Speaker & Cortana modes once API/Cloud is ready
-  // - On Web/Mobile: only listens inside /app Voice modes (never triggers unprompted mic popup on Landing Page)
+  // - Runs inside the local Windows desktop app across Full, Minimized, Tray, Speaker & Cortana modes
   const voiceEngine = useVoiceEngine({
     aiName,
     onSend: handleSend,
