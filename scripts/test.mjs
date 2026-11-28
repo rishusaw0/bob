@@ -883,7 +883,7 @@ const sapiVoice = createAsrVoice({
     child.stdin = { end() {} }; child.kill = () => {};
     assert.ok(args.includes('hi'), 'SAPI dictation must receive requested language');
     queueMicrotask(() => {
-      child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'dictation', text: 'नमस्ते', culture: 'hi-IN' }) + '\\n'));
+      child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'dictation', text: 'नमस्ते', culture: 'hi-IN' }) + '\n'));
       child.emit('close', 0);
     });
     return child;
