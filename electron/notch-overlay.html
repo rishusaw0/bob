@@ -309,7 +309,7 @@
   document.getElementById('chatForm').addEventListener('submit', (e) => {
     e.preventDefault();
     const val = (chatInput.value || '').trim();
-    if (!val) return;
+    if (!val && !selectedFile) return;
     chatInput.value = '';
     captionText.textContent = 'You: ' + val;
     previewText.textContent = 'Thinking...';
