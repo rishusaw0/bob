@@ -5,7 +5,7 @@ export function extractCommandEntities(input, now = new Date()) {
   const text = String(input || '').trim();
   const percentMatch = text.match(/(?:^|\s)(\d{1,3})\s*(?:%|percent|percentage)(?=[\s,.;!?]|$)/i);
   const timerMatch = text.match(/\b(\d+(?:\.\d+)?)\s*(seconds?|secs?|sec|minutes?|mins?|min|hours?|hrs?|hr)\b/i)
-    || text.match(/\b(\d+(?:\.\d+)?)\s*(सेकंड|मिनट|घंटे|घंटा)\b/u);
+    || text.match(/(?:^|\s)(\d+(?:\.\d+)?)\s*(सेकंड|मिनट|घंटे|घंटा)(?=$|\s|[.,!?])/u);
   let timerSeconds = null;
   if (timerMatch) {
     const unit = timerMatch[2].toLowerCase();

@@ -1,8 +1,6 @@
 # JEEVA AI Desktop
 
-JEEVA AI is a **Windows PC desktop assistant** built with Electron, React, PowerShell automation and Gemini AI.
-
-This repository builds a Windows .exe installer. It does not include a mobile app, phone-to-PC pairing, a browser workspace, a PWA, or a hosted relay/server.
+JEEVA AI is a **Windows PC desktop assistant** built with Electron, React, PowerShell automation and Gemini AI. The repository also contains an optional browser/PWA workspace and hosted companion relay/API service; these cloud features are separate from the Windows desktop installer and must be deployed/configured to use them.
 
 ## Desktop capabilities
 
@@ -13,6 +11,7 @@ This repository builds a Windows .exe installer. It does not include a mobile ap
 - Desktop voice modes, Camera Notch overlay, Windows tray and auto-start.
 - Local permission controls and audit log.
 - Windows desktop auto-updates from GitHub Releases.
+- Optional browser workspace/PWA and mobile-to-PC relay when the companion server is deployed.
 
 ## Requirements
 
@@ -31,6 +30,8 @@ npm run dev
 
 ```bash
 npm test
+npm run test:phase5
+npm run test:security
 ```
 
 ## Offline voice recognition (Whisper.cpp / Windows SAPI)
@@ -82,6 +83,17 @@ The interactive Windows uninstaller always removes JEEVA's own login-start regis
 
 ## Security
 
-The Electron renderer runs with context isolation, sandboxing, and Node integration disabled. Privileged operations are exposed only through the trusted local IPC bridge and permission guard. The development renderer is bound to loopback.
+The Electron renderer runs with context isolation enabled, Node integration disabled, and Chromium sandboxing enabled. IPC handlers accept requests only from the trusted main application window and local development origins. Privileged PC actions pass through the host permission guard; workflow steps and scheduled shell commands are also permission-gated.
 
-No web server, mobile endpoints, remote PC relay, or browser/PWA entry points are included.
+On Windows desktop, Gemini API keys are stored with Electron `safeStorage` in the OS-backed encrypted vault and are not duplicated in renderer `localStorage`. Browser/PWA mode uses browser-local storage for a user-provided key; do not use a shared/public browser profile for sensitive credentials.
+
+### Hosted companion server configuration
+
+When deploying the optional Render service:
+
+- `GEMINI_API_KEY` is optional; it enables the server-managed Gemini proxy and Live token endpoint.
+- `APP_PIN` must be set to a strong owner access PIN whenever `GEMINI_API_KEY` is configured. If it is missing, server-managed Gemini access fails closed and remains locked.
+- `SESSION_SECRET` should be a long random secret. The Render blueprint generates one automatically; keep it stable across restarts and deployments.
+- `RELAY_SECRET` is an optional separate secret for owner relay authentication.
+
+Never commit these values to the repository. Configure them as protected environment variables in the hosting dashboard.

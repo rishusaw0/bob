@@ -24,12 +24,7 @@ const INSTALLER_DOWNLOAD_URL = (
 ).trim();
 const PRIVATE_LOCK_ALL = process.env.PRIVATE_LOCK_ALL === 'true';
 const GEMINI_RPM_LIMIT = Math.max(5, Number(process.env.GEMINI_RPM_LIMIT) || 40);
-const SESSION_SECRET =
-  process.env.SESSION_SECRET ||
-  crypto
-    .createHash('sha256')
-    .update(`jeeva-v1:${GEMINI_API_KEY}:${APP_PIN || 'open'}`)
-    .digest('hex');
+const SESSION_SECRET = (process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex')).trim();
 
 // Connected PC agents keyed by `${ownerKey}::${deviceId}` for strict multi-user isolation
 const relayAgents = new Map();
@@ -165,13 +160,19 @@ function signToken(pin) {
   return crypto.createHmac('sha256', SESSION_SECRET).update(`jeeva:${pin}`).digest('hex');
 }
 
+function constantTimeEqual(left, right) {
+  const a = Buffer.from(String(left || ''), 'utf8');
+  const b = Buffer.from(String(right || ''), 'utf8');
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+}
+
 function isAuthorized(req) {
-  if (!APP_PIN) return true;
+  // Never expose a server-managed Gemini key when the owner has not configured a PIN.
+  if (!APP_PIN) return false;
   const token = String(req.headers['x-app-token'] || '').trim();
   const pinHeader = String(req.headers['x-app-pin'] || '').trim();
-  if (pinHeader && pinHeader === APP_PIN) return true;
-  if (token && token === signToken(APP_PIN)) return true;
-  return false;
+  return (Boolean(pinHeader) && constantTimeEqual(pinHeader, APP_PIN)) ||
+    (Boolean(token) && constantTimeEqual(token, signToken(APP_PIN)));
 }
 
 function setApiCorsHeaders(res) {
@@ -369,7 +370,7 @@ const server = http.createServer(async (req, res) => {
     const ownerKey = getRelayOwnerKey(req);
     sendJson(res, 200, {
       serverManagedKey: Boolean(GEMINI_API_KEY),
-      requiresPin: Boolean(APP_PIN),
+      requiresPin: Boolean(GEMINI_API_KEY || APP_PIN),
       requiresFullLock: Boolean(PRIVATE_LOCK_ALL && APP_PIN),
       authorized: isAuthorized(req),
       installerUrl: INSTALLER_DOWNLOAD_URL,
@@ -420,9 +421,11 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const body = await readJsonBody(req);
-      if (!APP_PIN || String(body.pin || '').trim() === APP_PIN) {
+      if (!APP_PIN) {
+        sendJson(res, 503, { error: 'Server-managed access is locked. The administrator must configure APP_PIN.' });
+      } else if (constantTimeEqual(String(body.pin || '').trim(), APP_PIN)) {
         unlockAttempts.delete(clientIp);
-        sendJson(res, 200, { ok: true, token: APP_PIN ? signToken(APP_PIN) : 'open' });
+        sendJson(res, 200, { ok: true, token: signToken(APP_PIN) });
       } else {
         state.count++;
         if (state.count >= 5) {
