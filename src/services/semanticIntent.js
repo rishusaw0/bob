@@ -169,7 +169,7 @@ const INTENT_DEFINITIONS = [
     tool: 'control_volume',
     args: (raw) => {
       const text = String(raw || '');
-      const level = text.match(/\\b(\\d{1,3})\\s*(?:%|percent)?\\b/i);
+      const level = text.match(/\b(\d{1,3})\s*(?:%|percent)?\b/i);
       if (level) {
         const value = Math.max(0, Math.min(100, Number(level[1])));
         return { action: 'set', level: value };
