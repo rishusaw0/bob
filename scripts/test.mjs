@@ -676,7 +676,7 @@ st2.close();
 fs.rmSync(tmpStoreDir, { recursive: true, force: true });
 
 // Hybrid Local AI Brain tests (Semantic Intent, Top-4 Tool Pruning, Escalation Gatekeeper & Hardware Profile)
-const { classifyIntent, pickTopToolsForQuery } = await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
+const { pickTopToolsForQuery } = await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
 const { assessQueryRouting, compactHistoryForCloud } = await import(pathToFileURL(path.join(ROOT, 'src/services/brainRouter.js')).href);
 const { detectHardwareProfile, LOW_END_MODELS, getSafeThreadCount, getModelResourceProfile, isLoopbackEndpoint } = require(path.join(ROOT, 'electron/local-brain.cjs'));
 const { validateLocalToolCall } = await import(pathToFileURL(path.join(ROOT, 'src/services/localLlm.js')).href);
