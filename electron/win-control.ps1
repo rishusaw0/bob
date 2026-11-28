@@ -180,7 +180,7 @@ switch ($Task) {
           Disable-NetAdapter -Name $adapter.Name -Confirm:$false -ErrorAction Stop | Out-Null
         }
       }
-      Write-Output ("Wi-Fi adapter(s) " + $Arg1 + " enabled.")
+      Write-Output ("Wi-Fi adapter(s) " + $Arg1 + " operation completed.")
     } elseif ($Arg1 -eq "disconnect") {
       netsh wlan disconnect | Out-Null
       Write-Output "Wi-Fi disconnected"
