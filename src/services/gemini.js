@@ -61,6 +61,42 @@ export function initGemini(apiKey) {
   return true;
 }
 
+export async function testGeminiConnection({ apiKey = '', model = preferredModel } = {}) {
+  assertCloudAllowed('Gemini Connection Test');
+  const startedAt = Date.now();
+  let testClient;
+  try {
+    testClient = createTempClient(String(apiKey || '').trim());
+  } catch (err) {
+    return { ok: false, error: err?.message || 'Configuration incomplete' };
+  }
+
+  const candidates = Array.from(new Set([model, ...SMOKE_CANDIDATE_MODELS].filter(Boolean)));
+  let lastError = 'No responsive Gemini model found';
+  for (const candidate of candidates) {
+    try {
+      const res = await testClient.interactions.create({
+        model: candidate,
+        input: 'Reply with OK',
+        store: false,
+      });
+      return {
+        ok: true,
+        activeModel: candidate,
+        fallbackUsed: candidate !== model,
+        latencyMs: Date.now() - startedAt,
+        sample: (res?.output_text || 'OK').trim().slice(0, 40),
+      };
+    } catch (err) {
+      lastError = err?.message || String(err);
+      if (/401|403|API_KEY_INVALID|API key not valid/i.test(lastError)) {
+        return { ok: false, error: lastError, latencyMs: Date.now() - startedAt };
+      }
+    }
+  }
+  return { ok: false, error: lastError, latencyMs: Date.now() - startedAt };
+}
+
 export function setModel(model) {
   preferredModel = model || 'gemini-3.5-flash-lite';
 }
