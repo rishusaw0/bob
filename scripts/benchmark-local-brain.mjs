@@ -112,11 +112,18 @@ try {
     const after = getWindowsProcessSnapshot() || [];
     const processMemoryMb = after.reduce((sum, p) => sum + p.workingSetMb, 0);
     const processCpuSeconds = after.reduce((sum, p) => sum + p.cpuSeconds, 0);
+    const priorCpuSeconds = before.reduce((sum, p) => sum + p.cpuSeconds, 0);
+    const cpuDeltaSeconds = Math.max(0, processCpuSeconds - priorCpuSeconds);
+    const elapsedSeconds = elapsedMs / 1000;
+    const cpuUtilizationPercent = elapsedSeconds > 0
+      ? (cpuDeltaSeconds / elapsedSeconds / Math.max(1, cpuCount)) * 100
+      : null;
     peakProcessWorkingSetMb = Math.max(peakProcessWorkingSetMb, processMemoryMb);
     maxProcessCpuSeconds = Math.max(maxProcessCpuSeconds, processCpuSeconds);
     const evalSeconds = (Number(result.eval_duration) || 0) / 1e9;
     samples.push({
       elapsedMs: round(elapsedMs, 0),
+      ollamaLlamaCpuPercentOfTotalMachine: round(cpuUtilizationPercent),
       loadMs: round((Number(result.load_duration) || 0) / 1e6, 0),
       promptTokens: Number(result.prompt_eval_count) || 0,
       generatedTokens: Number(result.eval_count) || 0,
@@ -124,7 +131,7 @@ try {
       responseChars: String(result.response || '').length,
       ollamaLlamaProcessRamMb: round(processMemoryMb),
       processCpuSecondsTotal: round(processCpuSeconds),
-      priorProcessCpuSecondsTotal: round(before.reduce((sum, p) => sum + p.cpuSeconds, 0)),
+      processCpuSecondsDelta: round(cpuDeltaSeconds, 3),
     });
   }
 
