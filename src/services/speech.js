@@ -597,373 +597,85 @@ async function waitForSpeechTransition() {
   await new Promise((resolve) => setTimeout(resolve, SPEECH_TRANSITION_MS));
 }
 
-export async function speakText(text, { label = 'Reading aloud...', forceProfile = null, instant = false } = {}) {
-  const wasSpeaking = typeof window !== 'undefined' && Boolean(window.speechSynthesis?.speaking || activeAudio);
+export async function speakText(text, { label = 'Reading aloud...', forceProfile = null } = {}) {
   stopSpeech();
   const rawClean = cleanTextForSpeech(text);
-  if (!rawClean) return;
-  const initialProfile = forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(rawClean) : selectedMode);
-  const clean = normalizeRomanizedHindiForSpeech(rawClean, initialProfile);
-
-  // Brief 12ms yield only when interrupting active Chromium speechSynthesis so the next utterance never drops
-  if (wasSpeaking && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    await new Promise((r) => setTimeout(r, 12));
+  if (!rawClean) return { ok: true, skipped: true };
+  if (!canUseExternalCloud() || !isGeminiReady()) {
+    currentState = { ...currentState, isPlaying: false, isLoading: false, engine: 'gemini-unavailable', label: '' };
+    notify();
+    return { ok: false, reason: 'Gemini API connection is required for voice output.' };
   }
+
+  const profile = forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(rawClean) : selectedMode);
+  const clean = normalizeRomanizedHindiForSpeech(rawClean, profile);
+  const chunks = splitIntoChunks(clean, 220, 100);
+  if (!chunks.length) return { ok: true, skipped: true };
 
   const myToken = ++playbackToken;
   stopRequested = false;
-
-  const chunks = splitIntoChunks(clean, 220, 100);
-  if (!chunks.length) return;
-
-  const speedMode = getSpeechSpeedMode();
-  const canUseStudio = speedMode !== 'instant_local' && canUseExternalCloud() && isGeminiReady() && !instant;
-  const useInstantDirect = !canUseStudio;
-
   currentState = {
     ...currentState,
     isPlaying: true,
     isPaused: false,
-    isLoading: !useInstantDirect,
+    isLoading: true,
     currentChunk: 1,
     totalChunks: chunks.length,
     label,
     voiceMode: selectedMode,
-    detectedProfile: initialProfile,
-    engine: useInstantDirect ? 'instant-local' : 'gemini',
+    detectedProfile: profile,
+    engine: 'gemini',
   };
   notify();
 
-  // Fast Direct Local Voice path (when offline, instant_local mode, or Gemini key not yet configured)
-  if (useInstantDirect) {
+  try {
     for (let i = 0; i < chunks.length; i++) {
       if (stopRequested || myToken !== playbackToken) break;
-      const chunkProfile =
-        forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunks[i]) : selectedMode);
-      currentState = {
-        ...currentState,
-        isLoading: false,
-        currentChunk: i + 1,
-        totalChunks: chunks.length,
-        detectedProfile: chunkProfile,
-        engine: 'instant-local',
-      };
+      const chunkProfile = forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunks[i]) : selectedMode);
+      currentState = { ...currentState, isLoading: true, currentChunk: i + 1, totalChunks: chunks.length, detectedProfile: chunkProfile, engine: 'gemini' };
       notify();
-      await speakChunkNative(chunks[i], chunkProfile);
-      if (i + 1 < chunks.length && !stopRequested && myToken === playbackToken) await waitForSpeechTransition();
+      const audioUrl = await textToSpeech(chunks[i], chunkProfile, {
+        accent: getVoiceAccent(),
+        persona: getVoicePersona(),
+        customVoiceId: getActiveCustomVoiceId(),
+      });
+      if (stopRequested || myToken !== playbackToken) break;
+      currentState = { ...currentState, isLoading: false, engine: 'gemini' };
+      notify();
+      await playAudioUrl(audioUrl);
+      if (i + 1 < chunks.length && !stopRequested && myToken === playbackToken) {
+        await waitForSpeechTransition();
+      }
     }
+    return { ok: true };
+  } catch (err) {
+    // No native/OS voice fallback: voice remains Gemini-only.
+    return { ok: false, error: err?.message || 'Gemini voice generation failed.' };
+  } finally {
     if (myToken === playbackToken) {
-      currentState = {
-        ...currentState,
-        isPlaying: false,
-        isPaused: false,
-        isLoading: false,
-        currentChunk: 0,
-        totalChunks: 0,
-        label: '',
-      };
+      currentState = { ...currentState, isPlaying: false, isPaused: false, isLoading: false, currentChunk: 0, totalChunks: 0, label: '' };
       notify();
     }
-    return;
-  }
-
-  // Prefetch helper with race timeout + phrase cache so Human Studio TTS never hangs
-  const timeoutMs = speedMode === 'cloud_studio' ? 4500 : 2400;
-  const fetchChunkAudio = (idx) => {
-    const chunkText = chunks[idx];
-    const profile =
-      forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunkText) : selectedMode);
-    return fetchStudioChunkAudio(chunkText, profile, timeoutMs);
-  };
-
-  let nextPromise = fetchChunkAudio(0).catch((err) => ({ error: err }));
-
-  for (let i = 0; i < chunks.length; i++) {
-    if (stopRequested || myToken !== playbackToken) break;
-
-    const chunkProfile =
-      forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(chunks[i]) : selectedMode);
-
-    currentState = {
-      ...currentState,
-      isLoading: true,
-      currentChunk: i + 1,
-      totalChunks: chunks.length,
-      detectedProfile: chunkProfile,
-    };
-    notify();
-
-    // Start prefetching next chunk while awaiting/playing current chunk
-    const upcomingPromise =
-      i + 1 < chunks.length ? fetchChunkAudio(i + 1).catch((err) => ({ error: err })) : null;
-
-    const result = await nextPromise;
-    nextPromise = upcomingPromise;
-
-    if (stopRequested || myToken !== playbackToken) break;
-
-    currentState = { ...currentState, isLoading: false };
-    notify();
-
-    if (result && result.url) {
-      currentState = {
-        ...currentState,
-        engine: 'gemini',
-        detectedProfile: result.profile || chunkProfile,
-      };
-      notify();
-      try {
-        await playAudioUrl(result.url);
-        if (i + 1 < chunks.length && !stopRequested && myToken === playbackToken) await waitForSpeechTransition();
-      } catch {
-        currentState = { ...currentState, engine: 'fallback' };
-        notify();
-        await speakChunkNative(chunks[i], chunkProfile);
-        if (i + 1 < chunks.length && !stopRequested && myToken === playbackToken) await waitForSpeechTransition();
-      }
-    } else {
-      // Fallback to OS voice only if Gemini TTS API fails
-      currentState = { ...currentState, engine: 'fallback' };
-      notify();
-      await speakChunkNative(chunks[i], chunkProfile);
-      if (i + 1 < chunks.length && !stopRequested && myToken === playbackToken) await waitForSpeechTransition();
-    }
-  }
-
-  if (myToken === playbackToken) {
-    currentState = {
-      ...currentState,
-      isPlaying: false,
-      isPaused: false,
-      isLoading: false,
-      currentChunk: 0,
-      totalChunks: 0,
-      label: '',
-    };
-    notify();
   }
 }
 
-function fetchStudioChunkAudio(chunkText, profile, timeoutMs = 2400) {
-  const accent = getVoiceAccent();
-  const persona = getVoicePersona();
-  const customVoiceId = getActiveCustomVoiceId();
-  const cacheKey = `${customVoiceId || 'default'}:${accent}:${persona}:${profile}:${chunkText}`;
-  if (ttsAudioCache.has(cacheKey)) {
-    return Promise.resolve({ url: ttsAudioCache.get(cacheKey), profile });
-  }
-  const ttsPromise = textToSpeech(chunkText, profile, { accent, persona, customVoiceId }).then((url) => {
-    if (ttsAudioCache.size >= 24) {
-      const firstKey = ttsAudioCache.keys().next().value;
-      ttsAudioCache.delete(firstKey);
-    }
-    ttsAudioCache.set(cacheKey, url);
-    return { url, profile };
-  });
-  const timerPromise = new Promise((_, rej) =>
-    setTimeout(() => rej(new Error('TTS timeout — fast local fallback')), timeoutMs)
-  );
-  return Promise.race([ttsPromise, timerPromise]);
-}
-
-/**
- * Progressive Streaming Speaker: speaks completed sentences immediately as tokens stream in,
- * using Realistic Human Studio TTS when online & configured, with instant OS fallback.
- */
+/** Buffers streamed text and speaks it using Gemini TTS only when the response is complete. */
 export function createStreamingSpeaker({ label = 'Speaking...', forceProfile = null } = {}) {
-  const wasSpeaking = typeof window !== 'undefined' && Boolean(window.speechSynthesis?.speaking || activeAudio);
-  stopSpeech();
-  const myToken = ++playbackToken;
-  stopRequested = false;
-
-  let consumedLen = 0;
-  let lastRaw = '';
-  let started = false;
-  let streamFinished = false;
-  const queue = [];
-  let draining = false;
-  let spokenChunks = 0;
-  let totalQueued = 0;
-  const prefetchedPromises = new Map();
-
-  const canUseStudioNow = () => {
-    const mode = getSpeechSpeedMode();
-    return mode !== 'instant_local' && canUseExternalCloud() && isGeminiReady();
-  };
-
-  const getChunkProfile = (text) =>
-    forceProfile || (selectedMode === 'auto' ? detectVoiceProfile(text) : selectedMode);
-
-  const primeStudioChunk = (text) => {
-    if (!canUseStudioNow() || prefetchedPromises.has(text)) return;
-    const timeoutMs = getSpeechSpeedMode() === 'cloud_studio' ? 4500 : 2400;
-    const p = fetchStudioChunkAudio(text, getChunkProfile(text), timeoutMs).catch(() => null);
-    prefetchedPromises.set(text, p);
-  };
-
-  const drainQueue = async () => {
-    if (draining) return;
-    draining = true;
-    try {
-      if (wasSpeaking && spokenChunks === 0 && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        await new Promise((r) => setTimeout(r, 12));
-      }
-      while (queue.length > 0 && !stopRequested && myToken === playbackToken) {
-        const nextText = queue.shift();
-        const subChunks = splitIntoChunks(nextText, 220, 100);
-        for (let i = 0; i < subChunks.length; i++) {
-          const chunk = subChunks[i];
-          if (stopRequested || myToken !== playbackToken) break;
-          const profile = getChunkProfile(chunk);
-          spokenChunks++;
-          const useStudio = canUseStudioNow();
-          if (useStudio && i + 1 < subChunks.length) {
-            primeStudioChunk(subChunks[i + 1]);
-          } else if (useStudio && queue.length > 0) {
-            primeStudioChunk(queue[0]);
-          }
-          currentState = {
-            ...currentState,
-            isPlaying: true,
-            isPaused: false,
-            isLoading: useStudio && !prefetchedPromises.has(chunk),
-            currentChunk: spokenChunks,
-            totalChunks: Math.max(spokenChunks, totalQueued),
-            label,
-            voiceMode: selectedMode,
-            detectedProfile: profile,
-            engine: useStudio ? 'gemini' : 'instant-local',
-          };
-          notify();
-
-          let playedStudio = false;
-          if (useStudio) {
-            primeStudioChunk(chunk);
-            const studioRes = await prefetchedPromises.get(chunk);
-            prefetchedPromises.delete(chunk);
-            if (stopRequested || myToken !== playbackToken) break;
-            if (studioRes?.url) {
-              currentState = { ...currentState, isLoading: false, engine: 'gemini' };
-              notify();
-              try {
-                await playAudioUrl(studioRes.url);
-                playedStudio = true;
-              } catch {
-                playedStudio = false;
-              }
-            }
-          }
-          if (!playedStudio && !stopRequested && myToken === playbackToken) {
-            currentState = { ...currentState, isLoading: false, engine: 'instant-local' };
-            notify();
-            await speakChunkNative(chunk, profile);
-          }
-          // Apply the same short, natural transition to streamed assistant replies.
-          if ((i + 1 < subChunks.length || queue.length > 0) && !stopRequested && myToken === playbackToken) {
-            await waitForSpeechTransition();
-          }
-        }
-      }
-    } finally {
-      draining = false;
-      if (streamFinished && queue.length === 0 && myToken === playbackToken) {
-        currentState = {
-          ...currentState,
-          isPlaying: false,
-          isPaused: false,
-          isLoading: false,
-          currentChunk: 0,
-          totalChunks: 0,
-          label: '',
-        };
-        notify();
-      }
-    }
-  };
-
-  const enqueueText = (rawSegment) => {
-    const rawCleaned = cleanTextForSpeech(rawSegment);
-    if (!rawCleaned) return;
-    const cleaned = normalizeRomanizedHindiForSpeech(rawCleaned, getChunkProfile(rawCleaned));
-    started = true;
-    totalQueued++;
-    if (canUseStudioNow() && queue.length < 2) {
-      const firstSub = splitIntoChunks(cleaned, 220, 100)[0];
-      if (firstSub) primeStudioChunk(firstSub);
-    }
-    queue.push(cleaned);
-    drainQueue();
-  };
-
-  const push = (fullTextSoFar) => {
-    if (stopRequested || myToken !== playbackToken) return;
-    const raw = String(fullTextSoFar || '');
-    if (raw.length < consumedLen) {
-      // Stream restarted for a new tool hop; advance safely without clipping previous speech
-      consumedLen = 0;
-    }
-    lastRaw = raw;
-
-    // Avoid cutting inside an unclosed ``` code fence
-    const slice = raw.slice(consumedLen);
-    if ((slice.match(/```/g) || []).length % 2 === 1) return;
-
-    // Extract complete sentences without breaking decimals (or clean word boundary past 105 chars)
-    let searchFrom = 0;
-    while (searchFrom < slice.length) {
-      const rest = slice.slice(searchFrom);
-      const sentEnd = findNextSentenceEnd(rest);
-      if (sentEnd >= 16) {
-        const segment = rest.slice(0, sentEnd + 1);
-        consumedLen += sentEnd + 1;
-        searchFrom += sentEnd + 1;
-        enqueueText(segment);
-      } else if (rest.length >= 105) {
-        const spaceIdx = rest.lastIndexOf(' ', 105);
-        const cut = spaceIdx >= 30 ? spaceIdx : 105;
-        const segment = rest.slice(0, cut);
-        consumedLen += cut;
-        searchFrom += cut;
-        enqueueText(segment);
-      } else {
-        break;
-      }
-    }
-  };
-
-  const finish = (finalText = lastRaw) => {
-    streamFinished = true;
-    if (stopRequested || myToken !== playbackToken) return;
-    const raw = String(finalText || lastRaw || '');
-    const tail = raw.slice(consumedLen).trim();
-    consumedLen = raw.length;
-    if (tail) {
-      enqueueText(tail);
-    } else if (!draining && queue.length === 0 && myToken === playbackToken) {
-      currentState = {
-        ...currentState,
-        isPlaying: false,
-        isPaused: false,
-        isLoading: false,
-        currentChunk: 0,
-        totalChunks: 0,
-        label: '',
-      };
-      notify();
-    }
-  };
-
-  const cancel = () => {
-    streamFinished = true;
-    queue.length = 0;
-    if (myToken === playbackToken) stopSpeech();
-  };
-
+  let text = '';
+  let cancelled = false;
   return {
-    push,
-    finish,
-    cancel,
-    didStart: () => started,
+    push(fullTextSoFar) {
+      if (!cancelled) text = String(fullTextSoFar || '');
+    },
+    finish(finalText = text) {
+      if (!cancelled) speakText(finalText || text, { label, forceProfile }).catch?.(() => {});
+    },
+    cancel() {
+      cancelled = true;
+      text = '';
+      stopSpeech();
+    },
+    didStart: () => Boolean(text),
   };
 }
 
