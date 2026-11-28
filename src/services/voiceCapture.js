@@ -93,18 +93,7 @@ export function isBrowserSpeechSupported() {
   // Voice input must be sent to the configured Gemini API, never browser/cloud speech services.
   return false;
 }
-/**
- * Centralized local-first audio transcription adapter.
- * Enforces Strict Offline Mode: NEVER sends mic audio to Gemini Cloud when Strict Offline is ON.
- */
-/**
- * Local-first STT policy:
- * 1) Whisper.cpp (multilingual model)
- * 2) Windows SAPI DictationGrammar fallback
- * 3) Gemini cloud only when Strict Offline is OFF
- *
- * In Strict Offline mode every network transcription path is blocked.
- */
+// Single transcription path: Gemini API only. Offline voice input is intentionally unavailable.
 export async function transcribeCapturedAudio(wavBase64, opts = {}) {
   // Only Gemini performs speech recognition. Offline PC commands can still be typed.
   return await transcribeAudio(wavBase64, 'audio/wav', opts);
