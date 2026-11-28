@@ -46,7 +46,7 @@ export default function TitleBar({
 
         <span className="text-xs font-medium text-obsidian-text px-2 py-1 rounded-md border border-obsidian-border/60">
           Gemini 3.5 Flash-Lite
-        </span>>
+        </span>
       </div>
 
       {/* Center: Command Palette Trigger */}
