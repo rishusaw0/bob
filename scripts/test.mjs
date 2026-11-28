@@ -14,6 +14,18 @@ function readRel(rel) {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
 }
 
+
+// Installer/release contract: the generated NSIS asset name must exactly match
+// both the landing-page direct-download URL and the Render server fallback.
+const appPackage = JSON.parse(readRel('package.json'));
+const appLock = JSON.parse(readRel('package-lock.json'));
+const expectedInstaller = `JEEVA.AI.Setup.${appPackage.version}.exe`;
+assert.equal(appLock.version, appPackage.version, 'package-lock root version must match package.json');
+assert.equal(appLock.packages?.['']?.version, appPackage.version, 'lockfile root package version must match package.json');
+assert.equal(appPackage.build?.nsis?.artifactName, 'JEEVA.AI.Setup.${version}.${ext}', 'NSIS artifact filename must match the published installer URL');
+assert.ok(readRel('src/components/LandingPage.jsx').includes(`releases/latest/download/${expectedInstaller}`), 'Landing page installer URL must match NSIS artifact filename');
+assert.ok(readRel('server/index.js').includes(`releases/latest/download/${expectedInstaller}`), 'Render fallback installer URL must match NSIS artifact filename');
+
 // 1. Node syntax check on server & all Electron CJS modules
 console.log('[1/6] Checking JS/CJS syntax...');
 const jsTargets = [
