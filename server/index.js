@@ -18,7 +18,10 @@ const PORT = Number(process.env.PORT) || 3000;
 const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || '').trim();
 const APP_PIN = (process.env.APP_PIN || '').trim();
 const RELAY_SECRET = (process.env.RELAY_SECRET || '').trim();
-const INSTALLER_DOWNLOAD_URL = (process.env.INSTALLER_DOWNLOAD_URL || '').trim();
+const INSTALLER_DOWNLOAD_URL = (
+  process.env.INSTALLER_DOWNLOAD_URL ||
+  'https://github.com/rishusaw0/bob/releases/latest/download/JEEVA.AI.Setup.1.0.1.exe'
+).trim();
 const PRIVATE_LOCK_ALL = process.env.PRIVATE_LOCK_ALL === 'true';
 const GEMINI_RPM_LIMIT = Math.max(5, Number(process.env.GEMINI_RPM_LIMIT) || 40);
 const SESSION_SECRET =
