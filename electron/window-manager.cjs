@@ -11,7 +11,6 @@ function createWindowManager({
   powerMonitor,
   actions,
   resolveUnpackedPath,
-  getCloudRelay,
   getAutoLaunchManager,
   emitRendererEvent,
   getWatchdogAlert,
