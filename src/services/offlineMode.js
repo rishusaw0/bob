@@ -15,7 +15,6 @@ export const SERVICE_CLASSIFICATION = [
   { id: 'win_speech', name: 'Windows Speech Recognition (System.Speech)', tier: 'Offline After Setup' },
   { id: 'os_tts', name: 'OS Natural Voices (SpeechSynthesis)', tier: 'Offline After Setup' },
   { id: 'win_ocr', name: 'Windows OCR Screen Reader', tier: 'Requires Windows Capability' },
-  { id: 'cloud_relay', name: 'Render Mobile Companion Relay', tier: 'Requires Internet' },
   { id: 'gemini_cloud', name: 'Gemini Cloud Chat, Live Call & Studio TTS', tier: 'Requires API Key' },
   { id: 'voice_clone', name: 'Gemini 3.8 Voice Replication', tier: 'Requires API Key' },
 ];
