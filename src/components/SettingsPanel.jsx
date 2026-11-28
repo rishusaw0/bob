@@ -842,7 +842,7 @@ export default function SettingsPanel({
 
           {activeTab === 'permissions' && (
             <div className="space-y-4">
-              {isElectron ? (
+              {isElectron && (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border">
                     <div>
