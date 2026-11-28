@@ -91,7 +91,7 @@ check(!mainSource.includes('createLocalBrainManager'), 'Electron main does not s
 check(!mainSource.includes('createOfflineVoice'), 'Electron main does not start local Whisper/SAPI');
 check(!preloadSource.includes('localBrainChat') && !preloadSource.includes('offlineVoiceDictate'), 'preload exposes no local-model IPC');
 check(mainSource.includes("for (const legacyDir of ['local-brain', 'voice-models'])"), 'old JEEVA model cache is cleaned');
-check(appSource.includes('runLocalQuickBrain') && appSource.includes('pcCommandRouter'), 'deterministic PC command adapter remains enabled');
+check(appSource.includes('runPcCommand') && appSource.includes('pcCommandRouter'), 'deterministic PC command adapter remains enabled');
 check(!appSource.includes('runLocalSlmTurn') && !appSource.includes('runLocalDocumentTurn'), 'chat has no local LLM/document answer path');
 check(quickBrain.includes('tryFastVoiceAction') && quickBrain.includes('tryLocalSlotAction'), 'basic deterministic Windows actions remain');
 check(voiceCapture.includes("return await transcribeAudio(wavBase64, 'audio/wav', opts)"), 'voice transcription goes to Gemini');
