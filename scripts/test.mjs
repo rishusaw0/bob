@@ -249,6 +249,53 @@ assert.equal(fallbackMgr.setEnabled(false).enabled, false);
 assert.equal(fallbackMgr.isEnabled(), false);
 fs.rmSync(tmpAutoDir, { recursive: true, force: true });
 
+// 3b. Offline semantic intent confidence, multilingual normalization & safe rejection
+console.log('[3b/6] Testing offline semantic intent classifier...');
+const semanticUrl = pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href;
+const {
+  classifyIntent,
+  classifyIntentDetailed,
+  normalizeHinglishQuery,
+  validateIntentCatalog,
+} = await import(semanticUrl);
+
+assert.equal(normalizeHinglishQuery('जीवा आवाज़ बढ़ाओ'), 'जीवा volume बढ़ाओ');
+assert.equal(normalizeHinglishQuery('Chrome खोलो'), 'chrome open');
+
+const semanticCases = [
+  ['temp cache saaf kar do', 'clean_temp'],
+  ['temporary files clean karo', 'clean_temp'],
+  ['laptop ki battery kitni bachi hai', 'battery_check'],
+  ['battery status batao', 'battery_check'],
+  ['wifi ka status dikhao', 'wifi_status'],
+  ['dark mode on kar do', 'dark_mode'],
+  ['downloads folder arrange kar do', 'organize_downloads'],
+  ['ram kaun kha raha hai', 'heavy_processes'],
+];
+for (const [query, expectedId] of semanticCases) {
+  const result = classifyIntentDetailed(query);
+  assert.equal(result.match?.id, expectedId, `Intent mismatch for "${query}": ${JSON.stringify(result)}`);
+  assert.ok(result.match.confidence >= 0.43, `Confidence below threshold for "${query}"`);
+}
+assert.equal(classifyIntent('random sentence about my weekend'), null);
+assert.equal(classifyIntentDetailed(''), null);
+for (const unsafe of [
+  'delete my files',
+  'chrome uninstall kar do',
+  'shutdown my pc',
+  'format drive',
+  'files hata do',
+  'फाइलें मिटाओ',
+]) {
+  assert.equal(classifyIntent(unsafe), null, `Unsafe intent must not auto-match: "${unsafe}"`);
+  assert.equal(classifyIntentDetailed(unsafe).reason, 'unsafe');
+}
+const ambiguous = classifyIntentDetailed('computer status');
+assert.ok(['ambiguous', 'low-confidence', 'matched'].includes(ambiguous.reason));
+const catalog = validateIntentCatalog();
+assert.equal(catalog.ok, true, `Duplicate intent catalog entries: ${catalog.issues.join(', ')}`);
+assert.equal(classifyIntent('battery status batao')?.id, 'battery_check');
+
 // 4. Voice router verification (including "batao" status exception + battery + browser)
 console.log('[4/6] Testing fast Voice Router rules...');
 const memStore = new Map();
