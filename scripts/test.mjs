@@ -24,7 +24,7 @@ assert.equal(appLock.version, appPackage.version, 'package-lock root version mus
 assert.equal(appLock.packages?.['']?.version, appPackage.version, 'lockfile root package version must match package.json');
 assert.equal(appPackage.build?.nsis?.artifactName, 'JEEVA.AI.Setup.${version}.${ext}', 'NSIS artifact filename must match the published installer URL');
 assert.ok(readRel('src/components/LandingPage.jsx').includes(`releases/download/v${appPackage.version}/${expectedInstaller}`), 'Landing page pinned release URL must match NSIS artifact filename and app version');
-assert.ok(readRel('server/index.js').includes(`releases/latest/download/${expectedInstaller}`), 'Render fallback installer URL must match NSIS artifact filename');
+assert.ok(readRel('server/index.js').includes(`releases/download/v${appPackage.version}/${expectedInstaller}`), 'Render fallback installer URL must match NSIS artifact filename and app version');
 
 // 1. Node syntax check on server & all Electron CJS modules
 console.log('[1/6] Checking JS/CJS syntax...');
