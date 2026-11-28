@@ -79,8 +79,9 @@ function decodePcmWavBase64(input) {
 }
 
 function cleanWhisperOutput(stdout, stderr = '') {
-  const source = String(stdout || '').trim() || String(stderr || '').trim();
-  return source
+  // Different whisper.cpp builds send diagnostics to either stream; inspect both.
+  return [String(stdout || ''), String(stderr || '')]
+    .join('\n')
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line && !/^whisper_(init|model|full|print|timings)|^ggml_|^main:\s*(processing|loading|system_info)/i.test(line))
