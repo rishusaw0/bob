@@ -61,6 +61,11 @@ export function initGemini(apiKey) {
   return true;
 }
 
+// Exposes only whether a direct API key is configured; never returns the key itself.
+export function getGeminiConnectionInfo() {
+  return { apiKey: Boolean(client), useServerProxy: false };
+}
+
 export async function testGeminiConnection({ apiKey = '', model = preferredModel } = {}) {
   assertCloudAllowed('Gemini Connection Test');
   const startedAt = Date.now();
