@@ -61,10 +61,10 @@ export default function LandingPage({
 
   const activeDemo = DEMO_SCENARIOS[demoIdx];
 
-  // Keep the public landing-page download pinned to the verified v1.0.2 asset.
+  // Keep the public landing-page download pinned to the v1.0.3 release asset.
   // Do not trust a stale INSTALLER_DOWNLOAD_URL returned by an older relay deployment.
   const resolvedInstallerUrl =
-    'https://github.com/rishusaw0/bob/releases/download/v1.0.2/JEEVA.AI.Setup.1.0.2.exe';
+    'https://github.com/rishusaw0/bob/releases/download/v1.0.3/JEEVA.AI.Setup.1.0.3.exe';
 
   const handleDownloadExe = () => {
     window.open(resolvedInstallerUrl, '_blank', 'noopener,noreferrer');
@@ -227,7 +227,7 @@ export default function LandingPage({
               </a>
             </div>
             <p className="text-[11px] font-mono text-zinc-500">
-              v1.0.2 · Windows 10 / 11 (64-bit) · Offline-First Desktop Software · Free
+              v1.0.3 · Windows 10 / 11 (64-bit) · Offline-First Desktop Software · Free
             </p>
           </div>
         </div>
