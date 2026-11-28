@@ -1,451 +1,22 @@
-// Zero-API Tier-0 + Tier-1 Local Quick Brain (Unified for Chat + Voice)
+// Deterministic Windows PC command adapter. This module does not contain or call an AI model.
 import { tryFastVoiceAction, repairVoiceTranscript } from './voiceRouter.js';
-import { classifyIntent } from './semanticIntent.js';
-import { rememberUserMemory, recallRelevantMemories } from './memoryRag.js';
-import { isEpisodicHistoryQuery, parseEpisodicDateQuery } from './dateQueryParser.js';
-import { queryEpisodicTimeline } from './episodicMemory.js';
 import { tryLocalSlotAction } from './localSlotActions.js';
-import { detectCommandLanguage } from './voicePermissionPrompt.js';
 import { executeFunctionCall } from './tools.js';
 
-function replyByLang(lang, en, hiMix, hi) {
-  if (lang === 'english') return en;
-  if (lang === 'hindi') return hi;
-  return hiMix;
-}
-
-/**
- * Safe recursive-descent math parser (no eval / no Function constructor).
- */
-function evaluateSafeMathExpr(exprRaw) {
-  const expr = String(exprRaw || '').replace(/\s+/g, '');
-  if (!expr || !/^[0-9+\-*/().%]+$/.test(expr) || expr.length > 80) return null;
-
-  let pos = 0;
-  function peek() {
-    return expr[pos];
-  }
-  function parseNumber() {
-    const start = pos;
-    if (expr[pos] === '-' || expr[pos] === '+') pos++;
-    let sawDigit = false;
-    while (pos < expr.length && /[0-9.]/.test(expr[pos])) {
-      sawDigit = true;
-      pos++;
-    }
-    if (!sawDigit) throw new Error('bad number');
-    const val = Number(expr.slice(start, pos));
-    if (!Number.isFinite(val)) throw new Error('nan');
-    return val;
-  }
-  function parseFactor() {
-    if (peek() === '(') {
-      pos++;
-      const v = parseExpr();
-      if (peek() !== ')') throw new Error('paren');
-      pos++;
-      return v;
-    }
-    return parseNumber();
-  }
-  function parseTerm() {
-    let val = parseFactor();
-    while (peek() === '*' || peek() === '/' || peek() === '%') {
-      const op = expr[pos++];
-      const rhs = parseFactor();
-      if (op === '*') val *= rhs;
-      else if (op === '/') {
-        if (rhs === 0) throw new Error('div0');
-        val /= rhs;
-      } else {
-        val %= rhs;
-      }
-    }
-    return val;
-  }
-  function parseExpr() {
-    let val = parseTerm();
-    while (peek() === '+' || peek() === '-') {
-      const op = expr[pos++];
-      const rhs = parseTerm();
-      val = op === '+' ? val + rhs : val - rhs;
-    }
-    return val;
-  }
-
-  try {
-    const result = parseExpr();
-    if (pos !== expr.length || !Number.isFinite(result)) return null;
-    return Number.isInteger(result) ? result : Number(result.toFixed(4));
-  } catch {
-    return null;
-  }
-}
-
-function tryOfflineMathOrUnit(text, lang) {
-  const clean = String(text || '').trim();
-  const lower = clean.toLowerCase();
-
-  // Percentage: "18% of 2450" or "2450 ka 18 percent"
-  const pctMatch =
-    lower.match(/^(\d+(?:\.\d+)?)\s*(?:%|percent)\s+(?:of|ka)\s+(\d+(?:\.\d+)?)\??$/i) ||
-    lower.match(/^(\d+(?:\.\d+)?)\s+ka\s+(\d+(?:\.\d+)?)\s*(?:%|percent)\??$/i);
-  if (pctMatch) {
-    const a = Number(pctMatch[1]);
-    const b = Number(pctMatch[2]);
-    const isSecondPct = /\d+\s+ka\s+\d+/.test(lower);
-    const pct = isSecondPct ? b : a;
-    const base = isSecondPct ? a : b;
-    const out = Number(((pct / 100) * base).toFixed(4));
-    return {
-      replyText: replyByLang(
-        lang,
-        `${pct}% of ${base} = **${out}**`,
-        `${base} ka ${pct}% = **${out}**`,
-        `${base} का ${pct}% = **${out}**`
-      ),
-    };
-  }
-
-  // Unit conversions: km<->mi, kg<->lb, mb<->gb<->tb, c<->f, hr<->min
-  const unitMatch = lower.match(/^(-?\d+(?:\.\d+)?)\s*(km|mi|miles?|kg|lbs?|pounds?|mb|gb|tb|kb|c|f|hr|hrs|hour|hours|min|mins|minutes?)\s+(?:to|in|me|mein)\s+(km|mi|miles?|kg|lbs?|pounds?|mb|gb|tb|kb|c|f|hr|hrs|hour|hours|min|mins|minutes?)\??$/i);
-  if (unitMatch) {
-    const val = Number(unitMatch[1]);
-    const from = unitMatch[2].replace(/s$/, '');
-    const to = unitMatch[3].replace(/s$/, '');
-    let out = null;
-
-    if (from === 'km' && to.startsWith('mi')) out = val * 0.621371;
-    else if (from.startsWith('mi') && to === 'km') out = val / 0.621371;
-    else if (from === 'kg' && (to === 'lb' || to === 'pound')) out = val * 2.20462;
-    else if ((from === 'lb' || from === 'pound') && to === 'kg') out = val / 2.20462;
-    else if (from === 'c' && to === 'f') out = (val * 9) / 5 + 32;
-    else if (from === 'f' && to === 'c') out = ((val - 32) * 5) / 9;
-    else if ((from === 'hr' || from === 'hour') && to.startsWith('min')) out = val * 60;
-    else if (from.startsWith('min') && (to === 'hr' || to === 'hour')) out = val / 60;
-    else {
-      const storageScale = { kb: 1, mb: 1024, gb: 1024 * 1024, tb: 1024 * 1024 * 1024 };
-      if (storageScale[from] && storageScale[to]) {
-        out = (val * storageScale[from]) / storageScale[to];
-      }
-    }
-
-    if (out !== null) {
-      const rounded = Number.isInteger(out) ? out : Number(out.toFixed(4));
-      return { replyText: `${val} ${unitMatch[2]} = **${rounded} ${unitMatch[3]}**` };
-    }
-  }
-
-  // Raw arithmetic: e.g. "245 * 18", "what is 1500 / 12", "(500 + 200) * 2"
-  const stripped = lower
-    .replace(/^(?:calculate|calc|what is|kitna hoga|batao)\s+/i, '')
-    .replace(/[=?]+$/g, '')
-    .trim();
-  if (/[+\-*/%]/.test(stripped) && /^\(?-?\d/.test(stripped)) {
-    const res = evaluateSafeMathExpr(stripped);
-    if (res !== null) {
-      return { replyText: `${stripped} = **${res}**` };
-    }
-  }
-  return null;
-}
-
-function tryDateTimeOrSmalltalk(text, lang) {
-  const lower = String(text || '').trim().toLowerCase();
-  if (!lower) return null;
-
-  if (/\b(time kya|kya time|abhi time|what time|current time|baje hain)\b/i.test(lower) || /^(time|samay)\??$/i.test(lower)) {
-    const nowStr = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-    return {
-      replyText: replyByLang(lang, `The current time is **${nowStr}**.`, `Abhi **${nowStr}** baj rahe hain.`, `अभी **${nowStr}** बज रहे हैं।`),
-    };
-  }
-
-  if (/\b(aaj date|today date|what is the date|aaj ka din|today day|kaun sa din)\b/i.test(lower) || /^(date|day)\??$/i.test(lower)) {
-    const dateStr = new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    return {
-      replyText: replyByLang(lang, `Today is **${dateStr}**.`, `Aaj **${dateStr}** hai.`, `आज **${dateStr}** है।`),
-    };
-  }
-
-  if (/^(hi|hello|hey|namaste|namaskar|hello jeeva|hi jeeva|hey jeeva)[!.]*$/i.test(lower)) {
-    return {
-      replyText: replyByLang(
-        lang,
-        'Hello! JEEVA Local Brain is ready. Tell me what PC task, draft, or quick question you have.',
-        'Namaste! JEEVA Local Brain ready hai — batayein aaj kaun sa PC task ya kaam karna hai?',
-        'नमस्ते! जीवा लोकल ब्रेन तैयार है — बताइए आज क्या काम करना है?'
-      ),
-    };
-  }
-
-  if (/^(thanks|thank you|shukriya|dhanyawad|thx|ok|okay|theek hai|badhiya|nice)[!.]*$/i.test(lower)) {
-    return {
-      replyText: replyByLang(
-        lang,
-        'You are welcome! Let me know whenever you need anything else.',
-        'Koi baat nahi! Kuch aur kaam ho toh batayein.',
-        'कोई बात नहीं! कोई और काम हो तो बताइए।'
-      ),
-    };
-  }
-
-  if (/\b(kaise ho|kya haal|how are you|tum kaun ho|who are you|tum kya kar sakte ho|what can you do)\b/i.test(lower) && lower.length < 70) {
-    return {
-      replyText: replyByLang(
-        lang,
-        'I am JEEVA AI — your Hybrid PC Assistant. I handle daily PC controls, timers, diagnostics, math, memory & drafts offline using your Local Brain, and call Gemini Cloud only for heavy tasks.',
-        'Main badhiya hoon! Main JEEVA AI hoon — chhote aur moderate PC commands, diagnostics, math, reminders aur memory kaam main bina Gemini API ke Local Brain se kar sakta hoon, aur bade kaam Gemini Cloud se karta hoon.',
-        'मैं बढ़िया हूँ! मैं जीवा AI हूँ — रोज़मर्रा के PC कमांड, डायग्नोस्टिक्स, मेमोरी और रिमाइंडर मैं लोकल ब्रेन से बिना API के कर सकता हूँ।'
-      ),
-    };
-  }
-
-  return null;
-}
-
-async function tryDirectMemoryRag(text, lang) {
-  const clean = String(text || '').trim();
-  const lower = clean.toLowerCase();
-
-  // Save explicit or natural personal intro facts locally without LLM
-  const rememberMatch =
-    clean.match(/^(?:yaad rakho|yaad rakhna|remember that|remember|note kar lo)\s+(?:ki\s+)?(.{4,300})$/i) ||
-    clean.match(/^(?:mera naam|my name is|i am called)\s+([a-z\u0900-\u097f][a-z\u0900-\u097f\s]{1,40}?)(?:\s+hai)?$/i) ||
-    clean.match(/^(?:main|i live in)\s+([a-z\u0900-\u097f][a-z\u0900-\u097f\s,]{1,45}?)(?:\s+(?:mein|me)\s+rehta\s+(?:hoon|hu|hun))?$/i);
-  if (rememberMatch) {
-    const isNameIntro = /\b(mera naam|my name is|i am called)\b/i.test(lower);
-    const isCityIntro = /\b(i live in|rehta hoon|rehta hu|rehta hun)\b/i.test(lower);
-    const rawFact = rememberMatch[1].trim();
-    const fact = isNameIntro
-      ? `User's name is ${rawFact}`
-      : isCityIntro
-        ? `User lives in ${rawFact}`
-        : rawFact;
-    const res = await rememberUserMemory(fact, 'preference');
-    if (res?.success || res?.ok) {
-      return {
-        replyText: replyByLang(
-          lang,
-          `Got it — I'll remember that: "${fact}"`,
-          `Samajh gaya — maine yaad rakh liya: "${fact}"`,
-          `समझ गया — मैंने याद रख लिया: "${fact}"`
-        ),
-        tools: [{ name: 'memory_rag', status: 'done', args: { action: 'remember', content: fact } }],
-      };
-    }
-  }
-
-  // Recall fact locally without LLM (supports natural questions like "mera naam kya hai?", "main kahan rehta hoon?")
-  if (
-    /\b(memory|yaad kiya|remember|project path|kahan rakha|kahan hai|mera folder|my preference|mera naam|my name|kahan rehta|where do i live)\b/i.test(lower) &&
-    clean.length < 110
-  ) {
-    const recallQuery = /\b(mera naam|my name)\b/i.test(lower)
-      ? 'user name'
-      : /\b(kahan rehta|where do i live)\b/i.test(lower)
-        ? 'user lives in'
-        : clean;
-    const items = await recallRelevantMemories(recallQuery, 3);
-    if (Array.isArray(items) && items.length > 0 && (items[0].score === undefined || items[0].score >= 0.16)) {
-      const topList = items.map((m, idx) => `${idx + 1}. ${m.content}`).join('\n');
-      return {
-        replyText: replyByLang(
-          lang,
-          `Here is what I remember:\n${topList}`,
-          `Mujhe yeh yaad hai:\n${topList}`,
-          `मुझे यह याद है:\n${topList}`
-        ),
-        tools: [{ name: 'memory_rag', status: 'done', args: { action: 'recall', query: clean } }],
-      };
-    }
-  }
-
-  return null;
-}
-
-export function buildLocalTitle(text) {
-  const cleaned = String(text || '')
-    .replace(/\s+/g, ' ')
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .trim();
-  const words = cleaned.split(' ').filter(Boolean).slice(0, 5);
-  return words.length ? words.join(' ') : 'Quick Task';
-}
-
-async function tryEpisodicHistoryRecall(text, lang) {
-  const lower = String(text || '').toLowerCase();
-  if (/\b(voice history|voice command history|voice commands history|maine voice se kya|voice se kya kiya|voice se kya bola)\b/i.test(lower)) {
-    const vRows = await queryEpisodicTimeline({ source: 'voice', limit: 8 });
-    if (!Array.isArray(vRows) || vRows.length === 0) {
-      return {
-        replyText: replyByLang(
-          lang,
-          'No voice commands have been recorded yet.',
-          'Abhi tak koi voice command history saved nahi hai.',
-          'अभी तक कोई वॉइस कमांड हिस्ट्री सेव नहीं है।'
-        ),
-        tools: [{ name: 'episodic_recall', status: 'done', args: { source: 'voice' } }],
-      };
-    }
-    const listText = vRows
-      .map((r, i) => {
-        const acts = Array.isArray(r.toolsUsed) && r.toolsUsed.length
-          ? ` [${r.toolsUsed.map((t) => String(t).replace(/_/g, ' ')).join(', ')}]`
-          : '';
-        return `${i + 1}. **[${r.dateKey} · ${r.timeLabel}]** "${r.userPrompt}" → ${r.assistantReply || 'Done.'}${acts}`;
-      })
-      .join('\n');
-    return {
-      replyText: replyByLang(
-        lang,
-        `Your recent voice commands:\n\n${listText}`,
-        `Aapke recent voice commands aur unke actions:\n\n${listText}`,
-        `आपके हाल के वॉइस कमांड और एक्शन:\n\n${listText}`
-      ),
-      tools: [{ name: 'episodic_recall', status: 'done', args: { source: 'voice' } }],
-    };
-  }
-
-  if (!isEpisodicHistoryQuery(text)) return null;
-  const parsed = parseEpisodicDateQuery(text);
-  const rows = await queryEpisodicTimeline({
-    dateKey: parsed.dateKey,
-    dateFrom: parsed.dateFrom,
-    dateTo: parsed.dateTo,
-    weekday: parsed.weekday,
-    timeOfDay: parsed.timeOfDay,
-    topic: parsed.topic,
-    limit: 6,
-  });
-
-  const scopeLabel = [parsed.matchedLabel, parsed.timeOfDay, parsed.topic ? `"${parsed.topic}"` : '']
-    .filter(Boolean)
-    .join(' · ');
-
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return {
-      replyText: replyByLang(
-        lang,
-        `I checked your local timeline (${scopeLabel}), and found no saved questions or commands for that period.`,
-        `Maine aapki timeline (${scopeLabel}) check ki — is time/topic ka koi saved sawal ya command nahi mila.`,
-        `मैंने आपकी टाइमलाइन (${scopeLabel}) देखी — उस समय का कोई सेव किया हुआ सवाल या कमांड नहीं मिला।`
-      ),
-      tools: [{ name: 'episodic_recall', status: 'done', args: parsed }],
-    };
-  }
-
-  const formatted = rows
-    .slice(0, 5)
-    .map((r, i) => {
-      const replyPreview = r.assistantReply ? `\n  → JEEVA: ${r.assistantReply.slice(0, 140)}${r.assistantReply.length > 140 ? '...' : ''}` : '';
-      return `${i + 1}. **[${r.dateKey} (${r.weekday}) · ${r.timeLabel}]** Aapne pucha: "${r.userPrompt.slice(0, 120)}"${replyPreview}`;
-    })
-    .join('\n');
-
-  const header = replyByLang(
-    lang,
-    `Here is what you asked/discussed (${scopeLabel}):`,
-    `${scopeLabel} par aapne ye pucha aur baat ki thi:`,
-    `${scopeLabel} पर आपने यह पूछा और बात की थी:`
-  );
-
-  return {
-    replyText: `${header}\n\n${formatted}`,
-    tools: [{ name: 'episodic_recall', status: 'done', args: parsed }],
-  };
-}
-
-async function tryLocalScreenReader(text, lang, requestPermission) {
-  const clean = String(text || '').trim();
-  const lower = clean.toLowerCase();
-
-  // 1. Read active screen / window + interactive buttons offline (UIA + WinRT OCR)
-  if (
-    /\b(read screen|screen read|screen reader|screen par kya|screen pe kya|read this screen|what is on.*screen|what's on.*screen|screen padh|screen batao|screen ke buttons)\b|स्क्रीन पढ़ो|स्क्रीन पर क्या/i.test(
-      lower
-    )
-  ) {
-    const res = await executeFunctionCall('screen_reader', { action: 'read' }, requestPermission, {
-      fromVoice: false,
-      userPrompt: clean,
-    });
-    if (res?.error) {
-      return { replyText: res.error, tools: [{ name: 'screen_reader', status: 'error', args: { action: 'read' } }] };
-    }
-    let data = {};
-    try {
-      data = JSON.parse(res?.result || '{}');
-    } catch {}
-    const title = data.windowTitle || 'Active Window';
-    const textLines = Array.isArray(data.visibleText) && data.visibleText.length ? data.visibleText : data.ocrText || [];
-    const controls = Array.isArray(data.interactiveElements) ? data.interactiveElements : [];
-
-    const spokenSnippet = textLines.slice(0, 8).join('. ').slice(0, 420);
-    const controlList = controls.slice(0, 10).map((c) => `\`${c.name}\` (${c.type})`).join(', ');
-    const header = replyByLang(
-      lang,
-      `Active window is **${title}**.`,
-      `Abhi screen par **${title}** khula hai.`,
-      `अभी स्क्रीन पर **${title}** खुला है।`
-    );
-    const body = spokenSnippet ? `\n\n**Visible Screen Text:**\n${spokenSnippet}` : '\n\nNo readable text detected in this window.';
-    const controlsBlock = controlList ? `\n\n**Clickable Controls (${controls.length}):** ${controlList}` : '';
-
-    return {
-      replyText: `${header}${body}${controlsBlock}`,
-      autoSpeak: true,
-      tools: [{ name: 'screen_reader', status: 'done', args: { action: 'read' } }],
-    };
-  }
-
-  // 2. Click visible button / text on active screen ("click Submit on screen", "screen par Next dabao")
-  const clickMatch =
-    clean.match(/^(?:screen par|screen pe)\s+(?:click|press|tap|dabao)\s+["']?(.{2,55}?)["']?(?:\s+(?:par|pe|ko|button))?$/i) ||
-    clean.match(/^(?:click|press|tap)\s+["']?(.{2,55}?)["']?\s+(?:on screen|screen par|button on screen)$/i);
-  if (clickMatch && clickMatch[1]) {
-    const target = clickMatch[1].trim();
-    const res = await executeFunctionCall(
-      'screen_reader',
-      { action: 'click_text', target_text: target },
-      requestPermission,
-      { fromVoice: false, userPrompt: clean }
-    );
-    const ok = !res?.error;
-    return {
-      replyText: ok ? String(res.result || `Clicked ${target}`) : res.error,
-      autoSpeak: true,
-      tools: [{ name: 'screen_reader', status: ok ? 'done' : 'error', args: { action: 'click_text', target_text: target } }],
-    };
-  }
-
-  return null;
-}
-
-/**
- * Resolves follow-up app pronouns ("isko band karo", "isme hello likho", "close it") from recent history.
- */
 function resolvePronounFollowUp(text, historyMessages = []) {
   const raw = String(text || '').trim();
-  if (!raw || !/\b(isko|isme|is\s+mein|is\s+app|usko|usme|it|this\s+app|this\s+window)\b/i.test(raw)) {
-    return raw;
-  }
+  if (!raw || !/\b(isko|isme|is\s+mein|is\s+app|usko|usme|it|this\s+app|this\s+window)\b/i.test(raw)) return raw;
   let lastApp = '';
   for (let i = historyMessages.length - 1; i >= Math.max(0, historyMessages.length - 6); i--) {
     const msg = historyMessages[i];
     if (msg?.role !== 'assistant' || !Array.isArray(msg.tools)) continue;
     for (let j = msg.tools.length - 1; j >= 0; j--) {
-      const t = msg.tools[j];
-      const appName = t?.args?.app_name;
-      if (appName && typeof appName === 'string') {
-        lastApp = appName.trim();
-        break;
-      }
+      const appName = msg.tools[j]?.args?.app_name;
+      if (typeof appName === 'string' && appName.trim()) { lastApp = appName.trim(); break; }
     }
     if (lastApp) break;
   }
   if (!lastApp) return raw;
-
   return raw
     .replace(/\b(?:isme|is\s+mein|usme)\b/gi, `${lastApp} mein`)
     .replace(/\b(?:isko|usko|is\s+app\s+ko|this\s+app|this\s+window|\bit\b)\b/gi, lastApp)
@@ -453,129 +24,61 @@ function resolvePronounFollowUp(text, historyMessages = []) {
     .trim();
 }
 
-/**
- * Unified Tier-0 + Tier-1 Local Execution Engine.
- * Works identically for BOTH typed Chat messages and Voice commands.
- */
+async function tryLocalScreenReader(text, requestPermission) {
+  const clean = String(text || '').trim();
+  const lower = clean.toLowerCase();
+  if (/\b(read screen|screen read|screen reader|screen par kya|screen pe kya|read this screen|what is on.*screen|what's on.*screen|screen padh|screen batao|screen ke buttons)\b|स्क्रीन पढ़ो|स्क्रीन पर क्या/i.test(lower)) {
+    const res = await executeFunctionCall('screen_reader', { action: 'read' }, requestPermission, {
+      fromVoice: false, userPrompt: clean,
+    });
+    if (res?.error) return { replyText: res.error, tools: [{ name: 'screen_reader', status: 'error', args: { action: 'read' } }] };
+    let data = {};
+    try { data = JSON.parse(res?.result || '{}'); } catch {}
+    const title = data.windowTitle || 'Active Window';
+    const visible = Array.isArray(data.visibleText) && data.visibleText.length ? data.visibleText : data.ocrText || [];
+    const controls = Array.isArray(data.interactiveElements) ? data.interactiveElements : [];
+    const snippet = visible.slice(0, 8).join('. ').slice(0, 420);
+    const buttons = controls.slice(0, 10).map((c) => `${c.name} (${c.type})`).join(', ');
+    return {
+      replyText: `Active window: ${title}.\n\nVisible text:\n${snippet || 'No readable text detected.'}${buttons ? `\n\nClickable controls: ${buttons}` : ''}`,
+      autoSpeak: true,
+      tools: [{ name: 'screen_reader', status: 'done', args: { action: 'read' } }],
+    };
+  }
+  const clickMatch =
+    clean.match(/^(?:screen par|screen pe)\s+(?:click|press|tap|dabao)\s+["']?(.{2,55}?)["']?(?:\s+(?:par|pe|ko|button))?$/i) ||
+    clean.match(/^(?:click|press|tap)\s+["']?(.{2,55}?)["']?\s+(?:on screen|screen par|button on screen)$/i);
+  if (!clickMatch?.[1]) return null;
+  const target = clickMatch[1].trim();
+  const res = await executeFunctionCall('screen_reader', { action: 'click_text', target_text: target }, requestPermission, {
+    fromVoice: false, userPrompt: clean,
+  });
+  return {
+    replyText: res?.error || String(res?.result || `Clicked ${target}`),
+    autoSpeak: true,
+    tools: [{ name: 'screen_reader', status: res?.error ? 'error' : 'done', args: { action: 'click_text', target_text: target } }],
+  };
+}
+
 export async function runLocalQuickBrain(text, { requestPermission = null, historyMessages = [] } = {}) {
   const repaired = repairVoiceTranscript(text);
   const clean = resolvePronounFollowUp(repaired, historyMessages);
   if (!clean) return { handled: false };
-  const lang = detectCommandLanguage(clean);
 
-  // 0. Zero-API Active Screen Reader & Clicker (UIA + WinRT OCR)
-  const screenHit = await tryLocalScreenReader(clean, lang, requestPermission);
-  if (screenHit) {
-    return {
-      handled: true,
-      tier: 'fast',
-      modelLabel: 'Offline Screen Reader',
-      routeReason: 'Read/used active screen offline via Windows UIA + OCR (0 API calls)',
-      replyText: screenHit.replyText,
-      autoSpeak: Boolean(screenHit.autoSpeak),
-      tools: screenHit.tools || [],
-    };
+  // These are deterministic OS utilities only; all open-ended language responses are Gemini.
+  const screen = await tryLocalScreenReader(clean, requestPermission);
+  if (screen) {
+    return { handled: true, tier: 'fast', modelLabel: 'Windows Screen Utility', routeReason: 'Deterministic screen utility; no local AI', ...screen };
   }
 
-  // 0b. Zero-API Date-Indexed Episodic Memory Q&A ("Kal maine kya pucha tha?", "25 Nov ko kya bola?")
-  const episodicHit = await tryEpisodicHistoryRecall(clean, lang);
-  if (episodicHit) {
-    return {
-      handled: true,
-      tier: 'fast',
-      modelLabel: 'Episodic Date Memory',
-      routeReason: 'Answered locally from date-indexed conversation timeline (0 API calls)',
-      replyText: episodicHit.replyText,
-      tools: episodicHit.tools || [],
-    };
-  }
-
-  // 1. Tier-0 Math & Unit Conversions
-  const mathHit = tryOfflineMathOrUnit(clean, lang);
-  if (mathHit) {
-    return {
-      handled: true,
-      tier: 'fast',
-      modelLabel: 'Instant Math',
-      replyText: mathHit.replyText,
-      tools: [],
-    };
-  }
-
-  // 2. Tier-0 Date, Time & Casual Smalltalk
-  const smallHit = tryDateTimeOrSmalltalk(clean, lang);
-  if (smallHit) {
-    return {
-      handled: true,
-      tier: 'fast',
-      modelLabel: 'Instant Brain',
-      replyText: smallHit.replyText,
-      tools: [],
-    };
-  }
-
-  // 3. Tier-0 Direct Persistent Memory RAG (Save / Recall with 0 LLM tokens)
-  const memHit = await tryDirectMemoryRag(clean, lang);
-  if (memHit) {
-    return {
-      handled: true,
-      tier: 'fast',
-      modelLabel: 'Local Memory RAG',
-      replyText: memHit.replyText,
-      tools: memHit.tools || [],
-    };
-  }
-
-  // 4. Tier-0 Deterministic OS & App Chained Router (now enabled for Chat + Voice!)
   const fastOs = await tryFastVoiceAction(clean, requestPermission);
   if (fastOs?.handled) {
-    return {
-      handled: true,
-      tier: 'fast',
-      modelLabel: 'Instant OS Router',
-      replyText: fastOs.replyText,
-      image: fastOs.image || null,
-      tools: fastOs.tools || [],
-    };
+    return { handled: true, tier: 'fast', modelLabel: 'Windows PC Control', routeReason: 'Deterministic PC action; no local AI', ...fastOs };
   }
 
-  // 4.5 Layer-1 Deterministic Parameterized Slot Actions (Reminders, File Search/Organize, Software, Settings, Power)
-  const slotHit = await tryLocalSlotAction(clean, lang, requestPermission);
-  if (slotHit?.handled) {
-    return slotHit;
-  }
-
-  // 5. Tier-1 Semantic Hinglish/English Intent Classifier (for natural messy phrasing)
-  // Avoid hijacking conversational questions ("how", "explain", "write", "kya hota hai")
-  const looksConversational =
-    /\b(explain|write|draft|code|story|essay|why|samjhao|kya hota|difference between|compare|banao ek)\b/i.test(clean);
-  if (!looksConversational) {
-    const intent = classifyIntent(clean);
-    if (intent && intent.confidence >= 0.56) {
-      const result = await executeFunctionCall(intent.tool, intent.args, requestPermission, {
-        fromVoice: false,
-        userPrompt: clean,
-      });
-      const ok = !result?.error;
-      const msg =
-        result?.result ||
-        result?.error ||
-        (ok ? `Completed ${intent.tool.replace(/_/g, ' ')}.` : 'Action failed.');
-      const formattedObj =
-        msg && typeof msg === 'object'
-          ? Object.entries(msg)
-              .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' ? String(v) : v}`)
-              .join(', ')
-          : '';
-      return {
-        handled: true,
-        tier: 'intent',
-        modelLabel: `Smart Local`,
-        replyText: typeof msg === 'string' ? msg : (formattedObj || `Done: ${intent.tool.replace(/_/g, ' ')}.`),
-        image: result?.screenshot || null,
-        tools: [{ name: intent.tool, status: ok ? 'done' : 'error', args: intent.args }],
-      };
-    }
+  const slot = await tryLocalSlotAction(clean, 'hinglish', requestPermission);
+  if (slot?.handled) {
+    return { ...slot, tier: 'fast', modelLabel: slot.modelLabel || 'Windows PC Control', routeReason: 'Deterministic PC action; no local AI' };
   }
 
   return { handled: false };
