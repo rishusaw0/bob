@@ -170,26 +170,23 @@ const SYSTEM_IPC_ACTIONS = {
   'memory:rag': 'memoryRag',
 };
 const originalIpcHandle = ipcMain.handle.bind(ipcMain);
-ipcMain.handle = (channel, listener) => {
+ipcMain.handle = (channel, listener) => originalIpcHandle(channel, async (event, ...args) => {
+  const mainWindow = windowManager?.getMainWindow?.();
+  if (!mainWindow || event.sender !== mainWindow.webContents) {
+    throw new Error('Blocked IPC request from an untrusted renderer.');
+  }
+  const senderUrl = String(event.senderFrame?.url || event.sender.getURL?.() || '');
+  let trusted = false;
+  try {
+    const parsed = new URL(senderUrl);
+    trusted = parsed.protocol === 'file:' ||
+      (['localhost', '127.0.0.1', '::1'].includes(parsed.hostname) && ['http:', 'https:'].includes(parsed.protocol));
+  } catch {}
+  if (!trusted) throw new Error('Blocked IPC request from an untrusted origin.');
   const action = SYSTEM_IPC_ACTIONS[channel];
-  if (!action) return originalIpcHandle(channel, listener);
-  return originalIpcHandle(channel, (event, ...args) => {
-    const mainWindow = windowManager?.getMainWindow?.();
-    if (!mainWindow || event.sender !== mainWindow.webContents) {
-      throw new Error('Blocked IPC request from an untrusted renderer.');
-    }
-    const senderUrl = String(event.senderFrame?.url || event.sender.getURL?.() || '');
-    let trusted = false;
-    try {
-      const parsed = new URL(senderUrl);
-      trusted = parsed.protocol === 'file:' ||
-        (['localhost', '127.0.0.1', '::1'].includes(parsed.hostname) && ['http:', 'https:'].includes(parsed.protocol));
-    } catch {}
-    if (!trusted) throw new Error('Blocked IPC request from an untrusted origin.');
-    return permissionGuard.authorizeRemoteAction({ action, args, sourceLabel: 'JEEVA Desktop Renderer' })
-      .then(() => listener(event, ...args));
-  });
-};
+  if (action) await permissionGuard.authorizeRemoteAction({ action, args, sourceLabel: 'JEEVA Desktop Renderer' });
+  return listener(event, ...args);
+});
 
 windowManager = createWindowManager({
   app,
