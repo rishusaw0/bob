@@ -100,6 +100,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('ui:openPcControl', listener);
     return () => ipcRenderer.removeListener('ui:openPcControl', listener);
   },
+  onOpenSettings: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('ui:openSettings', listener);
+    return () => ipcRenderer.removeListener('ui:openSettings', listener);
+  },
   onSchedulerFired: (cb) => {
     const handler = (_, payload) => cb(payload);
     ipcRenderer.on('scheduler:fired', handler);
