@@ -106,7 +106,7 @@ function isActionHighRisk(action, args = []) {
   if (action === 'manageSoftware') {
     return ['install', 'uninstall', 'update'].includes(args[0]);
   }
-  if (action === 'manageProcess') {
+  if (action === 'manageProcess' || action === 'diagnostics') {
     return args[0] === 'kill_process';
   }
   if (action === 'filePro') {
@@ -305,6 +305,7 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
       const alwaysBtn = highRisk
         ? ''
         : `${targetScope ? `<button onclick="decide('always_target')" style="background:#0c4a6e;color:#7dd3fc;border:1px solid #0369a1;padding:7px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">Always: ${escapeHtml(targetScope)}</button>` : ''}<button onclick="decide('always')" style="background:#064e3b;color:#6ee7b7;border:1px solid #047857;padding:7px 10px;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600;">Always Category</button>`;
+      const sessionBtn = highRisk ? '' : `<button onclick="decide('session15')" style="background:#18181b;color:#e4e4e7;border:1px solid #3f3f46;padding:7px 10px;border-radius:8px;font-size:11px;cursor:pointer;">Allow 15m</button>`;
 
       const html = `<!doctype html>
 <html>
@@ -332,7 +333,7 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
   </div>
   <div style="display:flex;gap:7px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px;">
     <button onclick="decide('deny')" style="background:#18181b;color:#f87171;border:1px solid #7f1d1d;padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:600;">Deny</button>
-    <button onclick="decide('session15')" style="background:#18181b;color:#e4e4e7;border:1px solid #3f3f46;padding:7px 10px;border-radius:8px;font-size:11px;cursor:pointer;">Allow 15m</button>
+    ${sessionBtn}
     ${alwaysBtn}
     <button onclick="decide('once')" style="background:#f4f4f5;color:#09090b;border:none;padding:7px 14px;border-radius:8px;font-size:12px;cursor:pointer;font-weight:700;">Allow Once</button>
   </div>
@@ -360,7 +361,7 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
 
     const tempUntil = sessionPassUntil.get(category) || 0;
     const isTargetAllowlisted = Boolean(targetScope && !highRisk && (rules.allowedTargets || []).includes(targetScope));
-    if (policy === 'always' || isTargetAllowlisted || Date.now() < tempUntil) {
+    if (!highRisk && (policy === 'always' || isTargetAllowlisted || Date.now() < tempUntil)) {
       appendAudit({ source: sourceLabel, category, action, summary, decision: isTargetAllowlisted ? `allowed-target (${targetScope})` : 'allowed-policy' });
       return Promise.resolve(true);
     }
@@ -372,7 +373,7 @@ function createPermissionGuard({ userDataPath, BrowserWindow }) {
         appendAudit({ source: sourceLabel, category, action, summary, decision: 'allowed-once' });
         return true;
       }
-      if (choice === 'session15') {
+      if (choice === 'session15' && !highRisk) {
         sessionPassUntil.set(category, Date.now() + 15 * 60 * 1000);
         appendAudit({ source: sourceLabel, category, action, summary, decision: 'allowed-15m' });
         return true;
