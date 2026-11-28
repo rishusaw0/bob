@@ -48,15 +48,7 @@ async function tryDirectMemoryRag(text, lang) {
   const memoryFact = extractExplicitMemoryFact(clean);
 
   if (memoryFact) {
-    const fact = memoryFact.fact;  if (rememberMatch) {
-    const isNameIntro = /\b(mera naam|my name is|i am called)\b/i.test(lower);
-    const isCityIntro = /\b(i live in|rehta hoon|rehta hu|rehta hun)\b/i.test(lower);
-    const rawFact = rememberMatch[1].trim();
-    const fact = isNameIntro
-      ? `User's name is ${rawFact}`
-      : isCityIntro
-        ? `User lives in ${rawFact}`
-        : rawFact;
+    const fact = memoryFact.fact;
     const res = await rememberUserMemory(fact, 'preference');
     if (res?.success || res?.ok) {
       return {
