@@ -187,7 +187,7 @@ export default function LandingPage() {
         <div className="max-w-3xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-white/5 border border-emerald-500/30 text-[11px] font-mono text-emerald-300 mb-6 backdrop-blur">
             <LuSparkles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>ZERO-API LOCAL COMMANDS · CAMERA NOTCH UI · CLOUD VISION</span>
+            <span>GEMINI FLASH-LITE · LIGHTWEIGHT PC CONTROLS · CAMERA NOTCH UI</span>
           </div>
 
           <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.08] mb-5 text-gradient-futuristic">
