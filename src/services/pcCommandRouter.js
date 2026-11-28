@@ -34,7 +34,7 @@ export function extractExplicitMemoryFact(text) {
 
   const cityMatch =
     clean.match(/^i live in\\s+([a-z\\u0900-\\u097f][a-z\\u0900-\\u097f\\s,]{1,45})[.!]?$/i) ||
-    clean.match(/^main\\s+([a-z\\u0900-\\u097f][a-z\\u0900-\\u097f\\s,]{1,45}?)\\s+(?:mein|me)\\s+rehti?\\s+(?:hoon|hu|hun)[.!]?$/i);
+    clean.match(/^main\\s+([a-z\\u0900-\\u097f][a-z\\u0900-\\u097f\\s,]{1,45}?)\\s+(?:mein|me)\\s+reht[ai]\\s+(?:hoon|hu|hun)[.!]?$/i);
   if (cityMatch) {
     return { kind: 'city', fact: `User lives in ${cityMatch[1].trim()}` };
   }
