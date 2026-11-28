@@ -8,7 +8,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
 const PORT = Number(process.env.PORT) || 3000;
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
-const DOWNLOAD_URL = `https://github.com/rishusaw0/bob/releases/latest/download/JEEVA.AI.Setup.${APP_VERSION}.exe`;
+const expectedInstaller = `JEEVA.AI.Setup.${APP_VERSION}.exe`;
+const DOWNLOAD_URL = `https://github.com/rishusaw0/bob/releases/latest/download/${expectedInstaller}`;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
