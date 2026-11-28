@@ -132,6 +132,33 @@ export function getAvailableSpeechVoices() {
     .map((v) => ({ name: v.name, lang: v.lang, localService: v.localService }));
 }
 
+// Chromium/Electron may return an empty voice list on first launch. Wait briefly for
+// Windows SAPI voices to populate before deciding whether an Indian offline voice exists.
+function waitForIndianNativeVoices(timeoutMs = 1400) {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return Promise.resolve([]);
+  const synth = window.speechSynthesis;
+  const readIndian = () => (synth.getVoices() || []).filter((v) =>
+    /^(en-IN|hi-IN)$/i.test(String(v.lang || '').replace('_', '-'))
+  );
+  const existing = readIndian();
+  if (existing.length) return Promise.resolve(existing);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      synth.removeEventListener?.('voiceschanged', onChanged);
+      resolve(readIndian());
+    };
+    const onChanged = () => { if (readIndian().length) finish(); };
+    const timer = setTimeout(finish, timeoutMs);
+    synth.addEventListener?.('voiceschanged', onChanged);
+    // Trigger Chromium's lazy voice enumeration.
+    try { synth.getVoices(); } catch { finish(); }
+  });
+}
+
 // Warm up Chromium speechSynthesis voices asynchronously on startup
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   try {
@@ -413,10 +440,18 @@ function speakChunkNative(text, profile) {
       return;
     }
     const utterance = new SpeechSynthesisUtterance(text);
-    const indianAccent = getVoiceAccent() === 'indian';
     utterance.lang = profile === 'hindi' ? 'hi-IN' : 'en-IN';
-    const voice = pickNativeVoice(profile);
-    if (voice) utterance.voice = voice;
+    // Do not let Electron silently pick a US/UK default voice when an Indian pack is absent.
+    waitForIndianNativeVoices().then((voices) => {
+      if (stopRequested) { resolve(); return; }
+      const voice = pickNativeVoice(profile);
+      if (!voice || !voices.some((candidate) => candidate.name === voice.name)) {
+        currentState = { ...currentState, isLoading: false, engine: 'offline-indian-voice-unavailable' };
+        notify();
+        resolve();
+        return;
+      }
+      utterance.voice = voice;
     // Slightly measured pacing and neutral pitch sound clearer on Indian Windows voices.
     utterance.rate = Math.min(1.28, Math.max(0.88, currentState.rate * 0.94));
     utterance.pitch = 1.0;
@@ -464,7 +499,8 @@ function speakChunkNative(text, profile) {
     activeUtterance = utterance;
     utterance.onend = finish;
     utterance.onerror = finish;
-    window.speechSynthesis.speak(utterance);
+      window.speechSynthesis.speak(utterance);
+    }).catch(() => resolve());
   });
 }
 
