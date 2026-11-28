@@ -74,7 +74,7 @@ export default function App() {
   const [windowMode, setWindowMode] = useState('full'); // Always start in Full Chat Workstation
   const [autoListenSignal, setAutoListenSignal] = useState(0);
   const [apiKey, setApiKey] = useState(
-    () => localStorage.getItem('jeeva_api_key') || import.meta.env.VITE_GEMINI_API_KEY || ''
+    () => (window.electronAPI ? '' : (localStorage.getItem('jeeva_api_key') || import.meta.env.VITE_GEMINI_API_KEY || ''))
   );
   const [model, setModel] = useState(
     () => localStorage.getItem('jeeva_model') || 'gemini-3.5-flash-lite'
@@ -312,21 +312,27 @@ export default function App() {
   // Load API key from OS-encrypted safeStorage vault on Electron startup
   useEffect(() => {
     if (!window.electronAPI?.vaultGetKey) return;
+    // Desktop API keys must never be read from or written to renderer localStorage.
+    localStorage.removeItem('jeeva_api_key');
     window.electronAPI.vaultGetKey().then((vaultKey) => {
-      if (vaultKey) {
-        setApiKey(vaultKey);
-      } else if (apiKey) {
-        window.electronAPI.vaultSaveKey?.(apiKey);
-      }
-    }).catch(() => {});
+      if (vaultKey) setApiKey(vaultKey);
+    }).catch((err) => {
+      console.error('Could not read the encrypted API key vault:', err);
+    });
   }, []);
 
   useEffect(() => {
     if (apiKey) {
       try {
         initGemini(apiKey);
-        localStorage.setItem('jeeva_api_key', apiKey);
-        window.electronAPI?.vaultSaveKey?.(apiKey);
+        if (window.electronAPI?.vaultSaveKey) {
+          localStorage.removeItem('jeeva_api_key');
+          window.electronAPI.vaultSaveKey(apiKey).then((saved) => {
+            if (!saved) console.warn('OS encryption is unavailable; API key remains in memory only.');
+          }).catch((err) => console.error('Could not save API key to encrypted vault:', err));
+        } else {
+          localStorage.setItem('jeeva_api_key', apiKey);
+        }
         setIsReady(true);
       } catch (err) {
         console.error('Failed to init Gemini:', err);
