@@ -1168,10 +1168,10 @@ export default function PcControlCenterModal({
                 </button>
                 <button
                   type="button"
-                  onClick={() => speakText('Offline speaker test successful. JEEVA AI ready hai.', { instant: true })}
+                  onClick={() => speakText('Gemini voice test successful. JEEVA AI ready hai.', { instant: true })}
                   className="px-3 py-1.5 rounded-lg bg-obsidian-bg border border-obsidian-border text-xs text-obsidian-text hover:bg-obsidian-elevated"
                 >
-                  Test Offline Speaker
+                  Test Gemini Voice
                 </button>
                 <button
                   type="button"
