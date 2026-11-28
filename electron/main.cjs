@@ -148,6 +148,49 @@ pcActionKit = createPcActions({
 });
 const { actions } = pcActionKit;
 
+// Treat every renderer-to-host system IPC as untrusted input. Only the main
+// application window may request host actions, and every action passes the
+// same permission policy before reaching the privileged implementation.
+const SYSTEM_IPC_ACTIONS = {
+  'system:openApp': 'openApp', 'system:openURL': 'openURL', 'system:openSetting': 'openSetting',
+  'system:theme': 'theme', 'system:battery': 'battery', 'system:wifi': 'wifi',
+  'system:runCommand': 'runCommand', 'system:readFile': 'readFile', 'system:readBinaryFile': 'readBinaryFile',
+  'system:extractDocText': 'extractDocText', 'system:writeFile': 'writeFile', 'system:listFiles': 'listFiles',
+  'system:searchFiles': 'searchFiles', 'system:deleteFile': 'deleteFile', 'system:clipboard': 'clipboard',
+  'system:info': 'systemInfo', 'system:screenshot': 'screenshot', 'system:volume': 'volume',
+  'system:media': 'media', 'system:brightness': 'brightness', 'system:power': 'power',
+  'system:runningApps': 'runningApps', 'system:closeApp': 'closeApp', 'system:typeText': 'typeText',
+  'system:minimizeAll': 'minimizeAll', 'system:saveDesktopFile': 'saveDesktopFile', 'system:saveImage': 'saveImage',
+  'system:liveStats': 'liveStats', 'system:adbControl': 'adbControl', 'system:listInstalledApps': 'listInstalledApps',
+  'system:manageSoftware': 'manageSoftware', 'system:windowControl': 'windowControl', 'system:uiAutomate': 'uiAutomate',
+  'system:screenRead': 'screenRead', 'system:mouseAction': 'mouseAction', 'system:sendHotkey': 'sendHotkey',
+  'system:typeClipboard': 'typeClipboard', 'system:diagnostics': 'diagnostics', 'system:manageProcess': 'manageProcess',
+  'system:filePro': 'filePro', 'system:powerProfile': 'powerProfile', 'system:emptyRecycleBin': 'emptyRecycleBin',
+  'system:browserControl': 'browserControl', 'clipboard:history': 'clipboardHistory', 'scheduler:manage': 'scheduler',
+  'memory:rag': 'memoryRag',
+};
+const originalIpcHandle = ipcMain.handle.bind(ipcMain);
+ipcMain.handle = (channel, listener) => {
+  const action = SYSTEM_IPC_ACTIONS[channel];
+  if (!action) return originalIpcHandle(channel, listener);
+  return originalIpcHandle(channel, (event, ...args) => {
+    const mainWindow = windowManager?.getMainWindow?.();
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error('Blocked IPC request from an untrusted renderer.');
+    }
+    const senderUrl = String(event.senderFrame?.url || event.sender.getURL?.() || '');
+    let trusted = false;
+    try {
+      const parsed = new URL(senderUrl);
+      trusted = parsed.protocol === 'file:' ||
+        (['localhost', '127.0.0.1', '::1'].includes(parsed.hostname) && ['http:', 'https:'].includes(parsed.protocol));
+    } catch {}
+    if (!trusted) throw new Error('Blocked IPC request from an untrusted origin.');
+    return permissionGuard.authorizeRemoteAction({ action, args, sourceLabel: 'JEEVA Desktop Renderer' })
+      .then(() => listener(event, ...args));
+  });
+};
+
 windowManager = createWindowManager({
   app,
   BrowserWindow,
