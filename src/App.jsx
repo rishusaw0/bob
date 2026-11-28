@@ -342,6 +342,7 @@ export default function App() {
     }
 
     localStorage.removeItem('jeeva_api_key');
+    window.electronAPI?.vaultSaveKey?.('').catch?.((err) => console.error('Could not clear API key vault:', err));
 
     if (
       serverConfig.serverManagedKey &&
