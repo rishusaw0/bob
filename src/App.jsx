@@ -266,8 +266,9 @@ export default function App() {
 
     const fromVoice = Boolean(meta?.fromVoice);
     const forceCloud = Boolean(meta?.forceCloud);
-    const routing = assessQueryRouting(text, attachment, forceCloud ? 'cloud' : brainMode, {
+    const routing = assessQueryRouting(text, attachment, 'cloud', {
       batteryLow: Boolean(liveStats?.battery && liveStats.battery < 20 && !liveStats?.charging),
+      strictLocalCommands: false,
     });
     const promptText = routing.cleanText;
 
@@ -347,107 +348,36 @@ export default function App() {
 
     try {
       const userAskedSpeech = /\b(read aloud|speak|sunao|bolkar|bol kar|awaz mein)\b/i.test(promptText);
-      // Tier-0 & Layer-1: Zero-API Deterministic + Slot Extractor + Episodic Date + Semantic Intent Local Brain
-      if (!forceCloud && (!routing.forceCloud || routing.strictNoApi) && !attachment) {
+
+      // Keep deterministic PC actions local; all natural-language answers use Gemini.
+      if (!attachment) {
         const quick = await runLocalQuickBrain(promptText, { requestPermission, historyMessages: messages });
         if (quick?.handled) {
           finalizeReply({
             replyText: quick.replyText || 'Done.',
-            tier: quick.tier || 'fast',
-            modelLabel: quick.modelLabel || 'Instant Local',
-            routeReason: quick.routeReason || routing.routeReason,
+            tier: 'fast',
+            modelLabel: quick.modelLabel || 'PC Control',
+            routeReason: 'Deterministic Windows utility; no local AI model used',
             image: quick.image || null,
             tools: quick.tools || [],
             shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
-            speakLabel: 'Local Brain',
+            speakLabel: 'JEEVA PC Control',
           });
           return;
         }
       }
 
-      // Local Document & PDF Reader Pipeline (0 Gemini API calls for digital PDF, DOCX, TXT, MD, CSV!)
-      if (attachment && isTextOrDocAttachment(attachment) && !forceCloud && !routing.forceCloud) {
-        const docTurn = await runLocalDocumentTurn({
-          attachment,
-          userPrompt: promptText,
-          historyMessages: messages,
-          requestPermission,
-          fromVoice,
-        });
-        if (docTurn?.handled) {
-          finalizeReply({
-            replyText: docTurn.replyText,
-            tier: docTurn.tier || 'fast',
-            modelLabel: docTurn.modelLabel || 'Offline Doc Reader',
-            routeReason: docTurn.routeReason,
-            tools: docTurn.tools || [],
-            shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
-            speakLabel: `Reading: ${attachment.name}`,
-          });
-          return;
-        }
-      }
-
-      // Tier-2: Low-End Friendly Local SLM Brain (with 15s CPU timeout guard)
-      if (routing.shouldTryLocalFirst && !attachment) {
-        const slm = await runLocalSlmTurn({
-          text: promptText,
-          historyMessages: messages,
-          requestPermission,
-          fromVoice,
-          onToolUpdate: (toolsSnapshot) => {
-            setMessages(prev => prev.map(m => (m.id === typingId ? { ...m, tools: toolsSnapshot } : m)));
-          },
-        });
-        if (slm?.handled) {
-          finalizeReply({
-            replyText: slm.replyText,
-            tier: 'local-slm',
-            modelLabel: slm.modelLabel || 'Local SLM',
-            routeReason: !routing.online
-              ? 'Offline auto-switch: answered with Local SLM'
-              : 'Auto Hybrid: solved locally by SLM (0 Gemini API calls)',
-            image: slm.image || null,
-            tools: slm.tools || [],
-            shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
-            speakLabel: 'Local SLM',
-          });
-          return;
-        }
-      }
-
-      // Command-First Local Lock: never silently burn Gemini API on PC commands
-      if (routing.strictNoApi && !forceCloud) {
+      if (!routing.online) {
         finalizeReply({
-          replyText:
-            'PC commands abhi 100% Local AI mode par locked hain, isliye Gemini API use nahi hui. Simple commands jaise "Notepad kholo", "10 minute baad meeting reminder lagao", "Downloads organize karo", ya "YouTube par song play karo" seedhe chalte hain. Advanced multi-step commands ke liye Settings -> Local AI Brain me lightweight offline model enable karein, ya zaroorat ho to neeche "Ask Gemini" dabaiye.',
-          tier: 'local-guard',
-          modelLabel: 'Local Command Lock',
-          routeReason: routing.routeReason,
-          shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
-          speakLabel: 'Local Guard',
-        });
-        return;
-      }
-
-      // Offline-Only Guard (when user selected Offline Mode OR internet is completely disconnected)
-      if (routing.mode === 'offline' || !routing.online) {
-        const offlineNote = !routing.online
-          ? 'Internet offline detected — auto-switched to Local Mode. Is heavy query ke liye Internet connect karein ya Settings -> Local AI Brain me halka offline model pull karein.'
-          : window.electronAPI
-            ? 'Offline Brain Mode ON hai. Is task ke liye Settings -> Local AI Brain me halka model (Qwen 2.5 1.5B / Gemma 3 1B) setup karein, ya Brain Mode ko "Hybrid" par karein.'
-            : 'Offline Brain Mode ON hai. Complex web query ke liye "Hybrid" mode select karein.';
-        finalizeReply({
-          replyText: offlineNote,
+          replyText: 'Internet connection is unavailable. Gemini AI answers and Gemini voice need internet. Basic Windows PC controls, reminders, and timers are still available.',
           tier: 'offline-guard',
-          modelLabel: !routing.online ? 'Offline Auto-Switch' : 'Offline Guard',
-          routeReason: routing.routeReason,
-          shouldSpeak: ttsEnabled || fromVoice,
+          modelLabel: 'Offline · Basic PC Controls',
+          routeReason: 'Gemini unavailable offline; deterministic PC utilities remain available',
+          shouldSpeak: false,
         });
         return;
       }
 
-      // Tier-3: Escalate to Gemini Cloud (heavy/vision/search/low-confidence SLM)
       if (!isReady) {
         if (!fromVoice) {
           switchWindowMode('full');
@@ -513,28 +443,6 @@ export default function App() {
         });
       } catch (cloudErr) {
         streamSpeaker?.cancel();
-        // Reverse Auto-Switch Fallback: if Gemini rate-limited (429) or unreachable, retry with Local SLM!
-        const msg = String(cloudErr?.message || cloudErr);
-        const canFallbackLocal = !attachment && /429|503|quota|rate|fetch|network|timeout|unavailable/i.test(msg);
-        if (canFallbackLocal) {
-          const slmFallback = await runLocalSlmTurn({
-            text: promptText,
-            historyMessages: messages,
-            requestPermission,
-            fromVoice,
-          });
-          if (slmFallback?.handled) {
-            finalizeReply({
-              replyText: slmFallback.replyText,
-              tier: 'local-slm',
-              modelLabel: `${slmFallback.modelLabel || 'Local SLM'} (Auto-Fallback)`,
-              routeReason: 'Gemini busy/unreachable — Auto-Switched back to Local SLM',
-              image: slmFallback.image || null,
-              tools: slmFallback.tools || [],
-            });
-            return;
-          }
-        }
         throw cloudErr;
       }
     } catch (err) {
