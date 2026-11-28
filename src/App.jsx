@@ -93,6 +93,45 @@ export default function App() {
   const activeVoiceTurnRef = useRef(false);
   const voiceprintMismatchRef = useRef(false);
   const lastUserPromptRef = useRef('');
+  // Resolve permission prompts through the modal before any protected PC action runs.
+  const requestPermission = useCallback((request = {}) => new Promise((resolve) => {
+    // Never leave an earlier action waiting if another permission prompt replaces it.
+    if (permissionResolverRef.current) {
+      permissionResolverRef.current('deny');
+    }
+
+    const requestId = `permission-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const promptText = String(request.userPrompt || lastUserPromptRef.current || '');
+    const lang = detectCommandLanguage(promptText);
+    activePermIdRef.current = requestId;
+    permissionResolverRef.current = resolve;
+    setPermissionRequest({
+      ...request,
+      id: requestId,
+      questionText: request.questionText || buildLocalizedPermissionQuestion(request, lang),
+      voiceStatus: request.fromVoice ? 'listening' : undefined,
+    });
+  }), []);
+
+  const handlePermissionDecision = useCallback((decision) => {
+    const resolve = permissionResolverRef.current;
+    permissionResolverRef.current = null;
+    permissionCleanupRef.current?.();
+    permissionCleanupRef.current = null;
+    activePermIdRef.current = null;
+    setPermissionRequest(null);
+    resolve?.(decision || 'deny');
+  }, []);
+
+  useEffect(() => () => {
+    // On app unmount, fail closed: pending privileged actions are denied.
+    permissionResolverRef.current?.('deny');
+    permissionResolverRef.current = null;
+    permissionCleanupRef.current?.();
+    permissionCleanupRef.current = null;
+    activePermIdRef.current = null;
+  }, []);
+
 
   // Handle browser back/forward navigation & ?pair= auto-pairing URL + Electron jeeva:// deep links
   useEffect(() => {
