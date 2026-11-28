@@ -39,4 +39,8 @@ assert.ok(permissionGuard.includes("if (!highRisk && (policy === 'always'"), 'hi
 assert.ok(permissionGuard.includes("action === 'manageProcess' || action === 'diagnostics'"), 'process-kill diagnostics are treated as high risk');
 assert.ok(permissionGuard.includes("choice === 'session15' && !highRisk"), 'high-risk actions cannot receive session-wide grants');
 
-console.log('Security/reliability contracts passed: 19 checks.');
+const viteConfig = read('vite.config.js');
+assert.ok(viteConfig.includes('codeSplitting:'), 'Vite 8 uses supported Rolldown code-splitting groups');
+assert.ok(!viteConfig.includes('manualChunks:'), 'Vite config avoids the removed object-form manualChunks option');
+
+console.log('Security/reliability contracts passed: 21 checks.');
