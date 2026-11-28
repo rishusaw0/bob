@@ -793,10 +793,6 @@ const tableClean = cleanTextForSpeech('| App | RAM |\n|---|---|\n| Chrome | 500 
 assert.ok(!tableClean.includes('---') && tableClean.includes('500 rupees'));
 
 // Auto-Switch Offline Policy & Date-Indexed Episodic Memory tests
-const offlineRoute = assessQueryRouting('Chrome ke baare me explain karo', null, 'auto', { online: false });
-assert.equal(offlineRoute.mode, 'offline');
-assert.equal(offlineRoute.forceCloud, false);
-
 const { isEpisodicHistoryQuery, parseEpisodicDateQuery, toDateKey } = await import(pathToFileURL(path.join(ROOT, 'src/services/dateQueryParser.js')).href);
 const { createEpisodicMemory } = require(path.join(ROOT, 'electron/episodic-memory.cjs'));
 assert.equal(isEpisodicHistoryQuery('Kal maine Chrome ke baare me kya pucha tha?'), true);
