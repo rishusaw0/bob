@@ -298,7 +298,7 @@ const INTENT_STOP_WORDS = new Set([
 ]);
 
 const DESTRUCTIVE_COMMAND_RE =
-  /(?:^|\s)(?:delete|remove|uninstall|kill|shutdown|shut\s*down|restart|reboot|format|erase|wipe|hta\s*do|hatao|hata\s*do|mitao|mita\s*do|डिलीट|हटाओ|हटा|मिटाओ|बंद\s*कर\s*दो)(?=$|\s)/iu;
+  /(?:^|\s)(?:delete|remove|uninstall|kill|shutdown|shut\s*down|restart|reboot|format|erase|wipe|hta\s*do|hatao|hata\s*do|mitao|mita\s*do|डिलीट|हटाओ|हटा|मिटाओ|)(?=$|\s)/iu;
 
 function semanticContentTokens(text) {
   return normalizeHinglishQuery(text)
