@@ -733,7 +733,7 @@ assert.ok(installerNsh.includes('${ifNot} ${isUpdated}'), 'Uninstall cleanup mus
 assert.ok(installerNsh.includes('taskkill /IM "JEEVA AI.exe"') && installerNsh.includes('taskkill /F /IM "JEEVA AI.exe" /T'), 'Installer must try graceful shutdown before force-kill fallback');
 assert.ok(installerNsh.includes('IfSilent jeeva_keep_app_data') && installerNsh.includes('/SD IDNO'), 'Silent/default uninstall must preserve user data');
 const pkgJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-assert.equal(pkgJson.version, '1.0.4');
+assert.equal(pkgJson.version, '1.0.5');
 assert.equal(pkgJson.build?.nsis?.include, 'build/installer.nsh');
 
 const voiceCaptureSource = fs.readFileSync(path.join(ROOT, 'src/services/voiceCapture.js'), 'utf8');

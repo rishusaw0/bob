@@ -268,6 +268,38 @@ export default function App() {
     },
   });
 
+  // Keep React UI state and the native Electron window size/mode synchronized.
+  const switchWindowMode = useCallback((mode) => {
+    const nextMode = ['full', 'cortana', 'speaker'].includes(mode) ? mode : 'full';
+    setWindowMode(nextMode);
+
+    const setNativeMode = window.electronAPI?.setWindowMode;
+    if (typeof setNativeMode === 'function') {
+      Promise.resolve(setNativeMode(nextMode))
+        .then((appliedMode) => {
+          if (['full', 'cortana', 'speaker'].includes(appliedMode)) {
+            setWindowMode(appliedMode);
+          }
+        })
+        .catch((err) => {
+          console.error('Could not switch JEEVA window mode:', err);
+          toast.error('Window mode change failed. Please try again.');
+        });
+    }
+
+    return nextMode;
+  }, []);
+
+  // Reflect mode changes initiated by the tray, wake hotkey, or native window controls.
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onWindowModeChange?.((mode) => {
+      if (['full', 'cortana', 'speaker'].includes(mode)) {
+        setWindowMode(mode);
+      }
+    });
+    return () => unsubscribe?.();
+  }, []);
+
   const handleSend = useCallback(async (text, attachment = null, meta = null) => {
     if (!text.trim() && !attachment) return;
 
@@ -475,7 +507,7 @@ export default function App() {
       (isReady && (window.electronAPI || windowMode !== 'full'))
     ),
     onWakeOpen: (mode) => {
-      if (mode && mode !== 'notch') setWindowMode(mode);
+      if (mode && mode !== 'notch') switchWindowMode(mode);
     },
   });
 
