@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite';
+import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
-  base: './',
+  base: mode === 'public' ? '/' : './',
   // Never embed environment API keys in the Windows installer.
   define: mode === 'desktop' ? { 'import.meta.env.VITE_GEMINI_API_KEY': JSON.stringify('') } : undefined,
   server: {
@@ -13,6 +14,9 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      input: resolve(__dirname, mode === 'public' ? 'landing.html' : 'index.html'),
+    },
     rolldownOptions: {
       output: {
         codeSplitting: {
