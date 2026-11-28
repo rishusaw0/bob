@@ -5,7 +5,6 @@
 import { transcribeAudio } from './gemini.js';
 import { matchWakePhrase, getAiName } from './voiceRouter.js';
 
-let speechApiBrokenInRuntime = false;
 
 const VAD_SENSITIVITY_KEY = 'jeeva_vad_sensitivity';
 
@@ -89,10 +88,6 @@ export function normalizePcmForStt(pcm16k, sampleRate = 16000) {
   return out;
 }
 
-export function isBrowserSpeechSupported() {
-  // Voice input must be sent to the configured Gemini API, never browser/cloud speech services.
-  return false;
-}
 // Single transcription path: Gemini API only. Offline voice input is intentionally unavailable.
 export async function transcribeCapturedAudio(wavBase64, opts = {}) {
   // Only Gemini performs speech recognition. Offline PC commands can still be typed.
@@ -352,12 +347,9 @@ export function startVoiceCapture({
 }) {
   let stopped = false;
   let pcmSession = null;
-  let recognition = null;
   let silenceTimer = null;
   let noSpeechTimer = null;
   let maxCapTimer = null;
-  let finalText = '';
-  let hasCapturedSpeech = false;
   let recordedChunks = [];
   let speechStarted = false;
   let speechStartAt = 0;
@@ -374,14 +366,6 @@ export function startVoiceCapture({
   const cleanup = () => {
     clearTimers();
     onLevel(0, [0, 0, 0, 0, 0]);
-    if (recognition) {
-      try {
-        recognition.onend = null;
-        recognition.onerror = null;
-        recognition.stop();
-      } catch {}
-      recognition = null;
-    }
     if (pcmSession) {
       pcmSession.close();
       pcmSession = null;
@@ -515,95 +499,8 @@ export function startVoiceCapture({
     }
   };
 
-  if (!skipStt && isBrowserSpeechSupported()) {
-    try {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognition = new SR();
-      recognition.lang = lang;
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      onStatus('listening-speech');
-
-      recognition.onresult = (event) => {
-        let interim = '';
-        let newlyFinal = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const t = event.results[i][0].transcript;
-          if (event.results[i].isFinal) newlyFinal += t + ' ';
-          else interim += t;
-        }
-        if (newlyFinal) finalText += newlyFinal;
-        const combined = (finalText + interim).trim();
-        if (combined) {
-          hasCapturedSpeech = true;
-          onInterim(combined);
-          if (autoStopOnSilence) {
-            clearTimeout(silenceTimer);
-            silenceTimer = setTimeout(() => {
-              const out = (finalText || combined).trim();
-              stopped = true;
-              cleanup();
-              onResult(out, { pcm16k: null });
-            }, silenceMs);
-          }
-        }
-      };
-
-      recognition.onerror = (ev) => {
-        const errCode = ev?.error || '';
-        if (errCode === 'no-speech' || errCode === 'aborted') {
-          stopped = true;
-          cleanup();
-          onResult('', { pcm16k: null });
-          return;
-        }
-        if (!hasCapturedSpeech && (errCode === 'network' || errCode === 'service-not-allowed' || errCode === 'not-allowed')) {
-          if (errCode === 'network' || errCode === 'service-not-allowed') {
-            speechApiBrokenInRuntime = true;
-          }
-          if (recognition) {
-            try {
-              recognition.onend = null;
-              recognition.stop();
-            } catch {}
-            recognition = null;
-          }
-          startPcmCommandCapture();
-          return;
-        }
-        cleanup();
-        onError(errCode || 'Speech error');
-      };
-
-      recognition.onend = () => {
-        if (!stopped && hasCapturedSpeech) {
-          stopped = true;
-          const out = finalText.trim();
-          cleanup();
-          onResult(out, { pcm16k: null });
-        } else if (!stopped) {
-          stopped = true;
-          cleanup();
-          onResult('', { pcm16k: null });
-        }
-      };
-
-      if (autoStopOnSilence) {
-        noSpeechTimer = setTimeout(() => {
-          if (!stopped && !hasCapturedSpeech) {
-            stopped = true;
-            cleanup();
-            onResult('', { pcm16k: null });
-          }
-        }, noSpeechTimeoutMs);
-      }
-      recognition.start();
-    } catch {
-      startPcmCommandCapture();
-    }
-  } else {
-    startPcmCommandCapture();
-  }
+  // Capture PCM locally, then send the completed clip to Gemini for transcription.
+  startPcmCommandCapture();
 
   return {
     stop() {
@@ -613,9 +510,8 @@ export function startVoiceCapture({
         finishPcmCapture(speechStarted && recordedChunks.length > 0);
         return;
       }
-      const out = finalText.trim();
       cleanup();
-      onResult(out, { pcm16k: null });
+      onResult('', { pcm16k: null });
     },
     cancel() {
       stopped = true;
@@ -635,27 +531,14 @@ export function startWakeWordListener({
   onError = () => {},
 }) {
   let cancelled = false;
-  let rec = null;
-  let restartTimer = null;
-  let inlineWaitTimer = null;
   let pcmSession = null;
   let vadSilenceTimer = null;
   let vadMaxTimer = null;
 
   const stopAll = () => {
     cancelled = true;
-    clearTimeout(restartTimer);
-    clearTimeout(inlineWaitTimer);
     clearTimeout(vadSilenceTimer);
     clearTimeout(vadMaxTimer);
-    if (rec) {
-      try {
-        rec.onend = null;
-        rec.onerror = null;
-        rec.stop();
-      } catch {}
-      rec = null;
-    }
     if (pcmSession) {
       pcmSession.close();
       pcmSession = null;
@@ -759,70 +642,8 @@ export function startWakeWordListener({
     }
   };
 
-  if (isBrowserSpeechSupported()) {
-    const startSpeechWake = () => {
-      if (cancelled) return;
-      try {
-        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-        rec = new SR();
-        rec.lang = lang;
-        rec.continuous = true;
-        rec.interimResults = true;
-
-        rec.onresult = (event) => {
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const phrase = event.results[i][0].transcript;
-            const match = matchWakePhrase(phrase, aiName);
-            if (match.matched) {
-              clearTimeout(inlineWaitTimer);
-              if (event.results[i].isFinal && match.command.length >= 2) {
-                stopAll();
-                onWakeTriggered(match.command, { pcm16k: null });
-                return;
-              }
-              if (event.results[i].isFinal) {
-                stopAll();
-                onWakeTriggered('', { pcm16k: null });
-                return;
-              }
-              inlineWaitTimer = setTimeout(() => {
-                if (!cancelled) {
-                  stopAll();
-                  onWakeTriggered(match.command, { pcm16k: null });
-                }
-              }, 550);
-            }
-          }
-        };
-
-        rec.onerror = (ev) => {
-          const code = ev?.error || '';
-          if (code === 'network' || code === 'service-not-allowed') {
-            speechApiBrokenInRuntime = true;
-            try {
-              rec.onend = null;
-              rec.stop();
-            } catch {}
-            rec = null;
-            startPcmWakeLoop();
-          }
-        };
-
-        rec.onend = () => {
-          if (!cancelled) {
-            restartTimer = setTimeout(startSpeechWake, 400);
-          }
-        };
-
-        rec.start();
-      } catch {
-        startPcmWakeLoop();
-      }
-    };
-    startSpeechWake();
-  } else {
-    startPcmWakeLoop();
-  }
+  // Always-on PCM VAD captures wake phrases; Gemini performs recognition.
+  startPcmWakeLoop();
 
   return { stop: stopAll };
 }
