@@ -718,6 +718,110 @@ assert.equal(typeof ov.getStatus().supportsFullHindiHinglish, 'boolean');
 const noWhisper = await ov.transcribeAudioBase64('UklGRg==', { language: 'hi' });
 assert.equal(noWhisper.ok, false);
 
+// Offline ASR engine integration, language selection, and fallback policy tests
+console.log('[ASR] Testing Whisper.cpp, Vosk capability reporting, SAPI fallback, and language paths...');
+const {
+  createOfflineVoice: createAsrVoice,
+  detectLocalAsrEngines,
+  normalizeAsrLanguage,
+  decodePcmWavBase64,
+  cleanWhisperOutput,
+} = require(path.join(ROOT, 'electron/offline-voice.cjs'));
+const asrRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-asr-test-'));
+const modelsDir = path.join(asrRoot, 'voice-models');
+fs.mkdirSync(modelsDir, { recursive: true });
+fs.mkdirSync(path.join(modelsDir, 'vosk-model-small-hi'), { recursive: true });
+const voskOnly = detectLocalAsrEngines(asrRoot);
+assert.equal(voskOnly.voskReady, false, 'Vosk must not be advertised without a wired runtime');
+assert.equal(voskOnly.voskSupported, false);
+assert.equal(voskOnly.whisperReady, false);
+fs.writeFileSync(path.join(modelsDir, 'whisper-cli.exe'), '');
+fs.writeFileSync(path.join(modelsDir, 'ggml-small.bin'), '');
+const whisperDetected = detectLocalAsrEngines(asrRoot);
+assert.equal(whisperDetected.whisperReady, true);
+assert.equal(whisperDetected.engineType, 'whisper.cpp');
+assert.equal(whisperDetected.supportsFullHindiHinglish, true);
+assert.equal(normalizeAsrLanguage('hi-IN'), 'hi');
+assert.equal(normalizeAsrLanguage('en-IN'), 'en');
+assert.equal(normalizeAsrLanguage('Hinglish'), 'auto');
+assert.equal(cleanWhisperOutput('whisper_init_from_file: model loaded\n[00:00:01.000 --> 00:00:02.000] नमस्ते Jeeva'), 'नमस्ते Jeeva');
+const makeWavB64 = () => {
+  const wav = Buffer.alloc(46);
+  wav.write('RIFF', 0); wav.writeUInt32LE(38, 4); wav.write('WAVE', 8);
+  wav.write('fmt ', 12); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22); wav.writeUInt32LE(16000, 24);
+  wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(2, 40);
+  wav.writeInt16LE(0, 44);
+  return wav.toString('base64');
+};
+const validWav = makeWavB64();
+assert.equal(decodePcmWavBase64(validWav).ok, true);
+assert.equal(decodePcmWavBase64('UklGRg==').ok, false);
+const { EventEmitter } = require('node:events');
+const spawnCalls = [];
+const fakeSpawn = (exe, args) => {
+  spawnCalls.push({ exe, args });
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { end() {} };
+  child.kill = () => {};
+  queueMicrotask(() => {
+    child.stdout.emit('data', Buffer.from('नमस्ते Jeeva'));
+    child.emit('close', 0);
+  });
+  return child;
+};
+const asrVoice = createAsrVoice({ userDataDir: asrRoot, resolveUnpackedPath: () => '', spawnProcess: fakeSpawn });
+const hindiTranscript = await asrVoice.transcribeAudioBase64(validWav, { language: 'hi' });
+assert.equal(hindiTranscript.ok, true);
+assert.equal(hindiTranscript.text, 'नमस्ते Jeeva');
+assert.equal(hindiTranscript.engine, 'whisper.cpp');
+assert.ok(spawnCalls[0].args.includes('hi'));
+assert.ok(!spawnCalls[0].args.includes('--no-prints'), 'Do not suppress Whisper transcript output');
+const emptyVoice = createAsrVoice({ userDataDir: asrRoot, resolveUnpackedPath: () => '' });
+const invalidWav = await emptyVoice.transcribeAudioBase64('UklGRg==');
+assert.equal(invalidWav.ok, false);
+const sapiVoice = createAsrVoice({
+  userDataDir: asrRoot,
+  resolveUnpackedPath: (name) => name,
+  spawnProcess: (exe, args) => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+    child.stdin = { end() {} }; child.kill = () => {};
+    assert.ok(args.includes('hi'), 'SAPI dictation must receive requested language');
+    queueMicrotask(() => {
+      child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'dictation', text: 'नमस्ते', culture: 'hi-IN' }) + '\\n'));
+      child.emit('close', 0);
+    });
+    return child;
+  },
+});
+const sapiResult = await sapiVoice.dictateOnce(3, { language: 'hi' });
+assert.equal(sapiResult.text, 'नमस्ते');
+assert.equal(sapiResult.engine, 'windows-sapi');
+assert.equal(sapiResult.fallback, true);
+fs.rmSync(asrRoot, { recursive: true, force: true });
+
+// Language regression phrases used for manual microphone QA; text cases do not claim acoustic accuracy.
+const asrLanguageCases = [
+  { language: 'hi', phrase: 'नमस्ते जीवा, आवाज़ बढ़ाओ' },
+  { language: 'en', phrase: 'Hey Jeeva, increase the volume to fifty percent' },
+  { language: 'auto', phrase: 'Jeeva volume 50 kar do aur Chrome kholo' },
+];
+assert.deepEqual(asrLanguageCases.map((x) => x.language), ['hi', 'en', 'auto']);
+const voiceCaptureSource = fs.readFileSync(path.join(ROOT, 'src/services/voiceCapture.js'), 'utf8');
+assert.ok(voiceCaptureSource.includes('api.offlineVoiceDictate(7, { language })'));
+assert.ok(voiceCaptureSource.indexOf('if (isStrictOfflineMode())') < voiceCaptureSource.indexOf("return await transcribeAudio(wavBase64, 'audio/wav', opts)"), 'Strict Offline check must occur before cloud transcription');
+const preloadSource = fs.readFileSync(path.join(ROOT, 'electron/preload.cjs'), 'utf8');
+assert.ok(preloadSource.includes("offlineVoiceDictate: (timeoutSec, opts)"));
+const mainSource = fs.readFileSync(path.join(ROOT, 'electron/main.cjs'), 'utf8');
+assert.ok(mainSource.includes("userDataDir: app.getPath('userData')"));
+const sapiScript = fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8');
+assert.ok(sapiScript.includes('[string]$Culture = "auto"') && sapiScript.includes('No installed Windows SAPI recognizer matches requested culture'));
+assert.ok(sapiScript.includes('System.Speech.Recognition.DictationGrammar'));
+
 // Local Document RAG Search + Hardware GPU/RAM AI Model Selection + Strict Offline Cloud Block tests
 const { indexDocumentChunks, searchLocalDocuments } = await import(pathToFileURL(path.join(ROOT, 'src/services/docExtractor.js')).href);
 const docChunks = indexDocumentChunks('sales_2026.xlsx', 'Q1 Total Sales: 145000 INR.\n\nQ2 Total Sales: 210000 INR.', 60);
