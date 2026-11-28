@@ -1,6 +1,6 @@
 // Extracted Telemetry & Proactive System Watchdog Hook (keeps App.jsx modular)
 import { useState, useEffect, useCallback } from 'react';
-import { getSystemAPI } from '../services/bridge';
+import { getSystemAPI } from '../services/systemApi';
 import { toast } from '../services/toast';
 
 export function useWatchdogAndStats({ isElectron, onOpenControlTab }) {
