@@ -41,6 +41,10 @@ export function validateLocalToolCall(name, args, allowedToolNames = []) {
   if (!Array.isArray(allowedToolNames) || !allowedToolNames.includes(name)) {
     return { ok: false, error: 'Tool is not in the approved shortlist for this request.' };
   }
+  // Local language models must never synthesize arbitrary shell commands.
+  if (name === 'run_system_command') {
+    return { ok: false, error: 'Arbitrary shell commands are not available to the local command planner.' };
+  }
   const tool = TOOLS.find((item) => item.name === name);
   if (!tool) return { ok: false, error: 'Unknown tool.' };
   const cleanArgs = parseToolArguments(args);
