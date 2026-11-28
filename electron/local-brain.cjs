@@ -28,8 +28,41 @@ if (process.platform === 'win32') {
   } catch {}
 }
 
-const IDLE_UNLOAD_MS = 2 * 60 * 1000; // Unload local model from RAM after 2 minutes idle
-const MIN_FREE_RAM_GB = 1.2; // Prevent system hang if free RAM drops below 1.2 GB
+const IDLE_UNLOAD_MS = 60 * 1000; // Release local model after 60 seconds idle to protect RAM on low-end PCs
+const MIN_FREE_RAM_GB = 1.2;
+
+function getSafeThreadCount(cpuCores, totalGb = 8) {
+  const cores = Math.max(1, Number(cpuCores) || 1);
+  const ram = Math.max(1, Number(totalGb) || 1);
+  if (cores <= 4 || ram < 6.5) return 1;
+  if (cores <= 8 || ram < 11.5) return 2;
+  return 3;
+}
+
+function getModelResourceProfile(modelId, totalGb = 8) {
+  const id = String(modelId || '');
+  const model = LOW_END_MODELS.find((item) => id === item.id || id.startsWith(`${item.id}:`));
+  const sizeMb = model?.sizeMb || 1900; // Unknown models are treated conservatively like the 3B tier.
+  const minTotalGb = model?.minTotalGb || 11;
+  const ram = Number(totalGb) || 8;
+  return {
+    sizeMb,
+    minTotalGb,
+    minFreeRamGb: Math.max(MIN_FREE_RAM_GB, Number((0.9 + (sizeMb / 1024) * 1.5).toFixed(1))),
+    numCtx: ram < 6.5 ? 1024 : ram < 11.5 ? 1536 : 2048,
+    maxTokens: ram < 6.5 ? 192 : ram < 11.5 ? 256 : 420,
+  };
+}
+
+function isLoopbackEndpoint(endpoint) {
+  try {
+    const url = new URL(String(endpoint || ''));
+    return url.protocol === 'http:' &&
+      ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(url.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
 
 const LOW_END_MODELS = [
   {
@@ -112,8 +145,8 @@ function detectHardwareProfile() {
   const freeGb = Number((os.freemem() / 1024 ** 3).toFixed(1));
   const cpus = os.cpus() || [];
   const cpuCores = cpus.length || 4;
-  // Cap at 50% CPU cores (min 2, max 6) so foreground apps stay snappy on low-end PCs
-  const safeThreads = Math.max(2, Math.min(6, Math.floor(cpuCores / 2)));
+  // Keep CPU headroom for Windows and foreground apps; low-end PCs get one inference thread.
+  const safeThreads = getSafeThreadCount(cpuCores, totalGb);
 
   let recommendedModel = 'qwen2.5:1.5b';
   let hardwareTier = 'mid';
@@ -138,7 +171,7 @@ function detectHardwareProfile() {
     gpuVramGb: cachedGpu.gpuVramGb,
     hardwareTier,
     recommendedModel,
-    lowRamRisk: freeGb < MIN_FREE_RAM_GB,
+    lowRamRisk: freeGb < getModelResourceProfile(recommendedModel, totalGb).minFreeRamGb,
   };
 }
 
@@ -234,9 +267,13 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
     } catch {}
 
     const modelPath = path.join(modelsDir, ggufs[0]);
+    const hw = detectHardwareProfile();
+    const profile = getModelResourceProfile(cfg.preferredModel, hw.totalGb);
+    const threadBudget = Math.min(getSafeThreadCount(hw.cpuCores, hw.totalGb), Math.max(1, Math.min(3, Number(cfg.maxThreads) || 1)));
+    // GPU offload stays disabled by default: it avoids unexpected VRAM spikes on shared/older GPUs.
     sidecarProc = spawn(
       serverExe,
-      ['-m', modelPath, '-t', String(cfg.maxThreads), '-c', '2048', '--host', '127.0.0.1', '--port', String(cfg.sidecarPort)],
+      ['-m', modelPath, '-t', String(threadBudget), '-c', String(profile.numCtx), '-ngl', '0', '--host', '127.0.0.1', '--port', String(cfg.sidecarPort)],
       { stdio: 'ignore', windowsHide: true }
     );
     sidecarProc.on('exit', () => {
@@ -265,7 +302,7 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
     if (ollama.running && ollama.installed.length > 0) {
       activeRuntime = 'ollama';
       activeModel = ollama.installed.includes(cfg.preferredModel) ? cfg.preferredModel : ollama.installed[0];
-    } else if (cfg.customEndpoint) {
+    } else if (isLoopbackEndpoint(cfg.customEndpoint)) {
       activeRuntime = 'custom-openai';
       activeModel = cfg.preferredModel;
     } else if (sidecar.serverExeExists && sidecar.ggufs.length > 0) {
@@ -400,29 +437,35 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
   async function chat({ messages = [], tools = [], temperature = 0.3, maxTokens = 450 } = {}) {
     const hw = detectHardwareProfile();
     const cfg = loadConfig();
-
-    if (cfg.lowRamGuard && hw.lowRamRisk) {
-      return {
-        ok: false,
-        lowRamGuard: true,
-        error: `Low Free RAM (${hw.freeGb} GB free) — laptop hang hone se bachane ke liye heavy local model pause kiya gaya.`,
-      };
-    }
-
     const startedAt = Date.now();
-    // 1. Try Ollama
+
+    // 1. Try Ollama. Never choose an arbitrary larger installed model over the smallest known local tier.
     const ollama = await detectOllama(cfg.ollamaUrl);
     if (ollama.running && ollama.installed.length > 0) {
-      const model = ollama.installed.includes(cfg.preferredModel) ? cfg.preferredModel : ollama.installed[0];
+      const model = ollama.installed.includes(cfg.preferredModel)
+        ? cfg.preferredModel
+        : [...ollama.installed].sort((a, b) =>
+            getModelResourceProfile(a, hw.totalGb).sizeMb - getModelResourceProfile(b, hw.totalGb).sizeMb
+          )[0];
+      const profile = getModelResourceProfile(model, hw.totalGb);
+      if (cfg.lowRamGuard && (hw.totalGb < profile.minTotalGb || hw.freeGb < profile.minFreeRamGb)) {
+        return {
+          ok: false,
+          lowRamGuard: true,
+          error: `Local model paused for safety (${hw.freeGb} GB free; this model needs about ${profile.minFreeRamGb} GB free). Rules-based offline commands remain available.`,
+        };
+      }
+      const threadBudget = Math.min(getSafeThreadCount(hw.cpuCores, hw.totalGb), Math.max(1, Math.min(3, Number(cfg.maxThreads) || 1)));
       const body = {
         model,
         messages,
         stream: false,
-        keep_alive: '2m',
+        keep_alive: hw.totalGb < 6.5 ? '30s' : '60s',
         options: {
-          num_thread: cfg.maxThreads,
-          num_ctx: 2048,
-          num_predict: maxTokens,
+          num_thread: threadBudget,
+          num_ctx: profile.numCtx,
+          num_predict: Math.min(Math.max(64, Number(maxTokens) || profile.maxTokens), profile.maxTokens),
+          num_gpu: 0,
           temperature,
         },
       };
@@ -460,7 +503,22 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
     }
 
     // 2. Try Custom OpenAI endpoint OR GGUF Sidecar
-    const openAiBase = cfg.customEndpoint
+    const sidecarFiles = listSidecarFiles();
+    const ggufName = sidecarFiles.ggufs[0] || '';
+    const ggufSizeMb = ggufName ? fs.statSync(path.join(modelsDir, ggufName)).size / (1024 * 1024) : 0;
+    const sidecarProfile = getModelResourceProfile(cfg.preferredModel, hw.totalGb);
+    if (cfg.lowRamGuard && sidecarFiles.ggufs.length && (
+      hw.totalGb < sidecarProfile.minTotalGb ||
+      hw.freeGb < Math.max(sidecarProfile.minFreeRamGb, 0.9 + (ggufSizeMb / 1024) * 1.5)
+    )) {
+      return {
+        ok: false,
+        lowRamGuard: true,
+        error: 'GGUF model paused by the low-RAM guard. Rules-based offline commands remain available.',
+      };
+    }
+    // Local Brain must never send prompts to a remote custom endpoint.
+    const openAiBase = isLoopbackEndpoint(cfg.customEndpoint)
       ? cfg.customEndpoint.replace(/\/+$/, '')
       : (await ensureSidecarRunning(cfg))
         ? `http://127.0.0.1:${cfg.sidecarPort}/v1`
@@ -507,5 +565,8 @@ function createLocalBrainManager({ userDataDir, onProgress = null } = {}) {
 module.exports = {
   LOW_END_MODELS,
   detectHardwareProfile,
+  getSafeThreadCount,
+  getModelResourceProfile,
+  isLoopbackEndpoint,
   createLocalBrainManager,
 };

@@ -678,7 +678,8 @@ fs.rmSync(tmpStoreDir, { recursive: true, force: true });
 // Hybrid Local AI Brain tests (Semantic Intent, Top-4 Tool Pruning, Escalation Gatekeeper & Hardware Profile)
 const { classifyIntent, pickTopToolsForQuery } = await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
 const { assessQueryRouting, compactHistoryForCloud } = await import(pathToFileURL(path.join(ROOT, 'src/services/brainRouter.js')).href);
-const { detectHardwareProfile, LOW_END_MODELS } = require(path.join(ROOT, 'electron/local-brain.cjs'));
+const { detectHardwareProfile, LOW_END_MODELS, getSafeThreadCount, getModelResourceProfile, isLoopbackEndpoint } = require(path.join(ROOT, 'electron/local-brain.cjs'));
+const { validateLocalToolCall } = await import(pathToFileURL(path.join(ROOT, 'src/services/localLlm.js')).href);
 
 const lagIntent = classifyIntent('yaar laptop bohot lag kr raha hai check kro');
 assert.equal(lagIntent?.tool, 'system_diagnostics');
@@ -711,8 +712,24 @@ assert.equal(explicitCloudCmd.forceCloud, true);
 assert.equal(explicitCloudCmd.strictNoApi, false);
 
 const hw = detectHardwareProfile();
-assert.ok(hw.totalGb > 0 && hw.safeThreads >= 2);
+assert.ok(hw.totalGb > 0 && hw.safeThreads >= 1 && hw.safeThreads <= 3);
+assert.equal(getSafeThreadCount(2, 4), 1);
+assert.equal(getSafeThreadCount(4, 8), 1);
+assert.equal(getSafeThreadCount(8, 8), 2);
+assert.equal(getSafeThreadCount(16, 16), 3);
+const ultraProfile = getModelResourceProfile('qwen2.5:0.5b', 4);
+assert.equal(ultraProfile.numCtx, 1024);
+assert.equal(ultraProfile.maxTokens, 192);
+assert.ok(ultraProfile.minFreeRamGb > 1.2);
+assert.equal(isLoopbackEndpoint('http://127.0.0.1:11434'), true);
+assert.equal(isLoopbackEndpoint('https://example.com/v1'), false);
 assert.ok(LOW_END_MODELS.some((m) => m.id === 'qwen2.5:1.5b'));
+const allowedLocalTool = validateLocalToolCall('open_application', { app_name: 'chrome' }, ['open_application']);
+assert.equal(allowedLocalTool.ok, true);
+assert.equal(validateLocalToolCall('run_system_command', { command: 'whoami' }, ['open_application']).ok, false);
+assert.equal(validateLocalToolCall('open_application', { app_name: 42 }, ['open_application']).ok, false);
+assert.equal(validateLocalToolCall('open_application', { app_name: 'chrome', extra: true }, ['open_application']).ok, false);
+assert.equal(validateLocalToolCall('control_volume', { action: 'delete' }, ['control_volume']).ok, false);
 assert.ok(compactHistoryForCloud([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }, { role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }], 2).includes('CONVERSATION CONTEXT DIGEST'));
 
 // Indian-style TTS accent default, Human Personas, Custom Cloned Voice & Speech Clarity tests
