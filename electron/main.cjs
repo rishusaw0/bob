@@ -276,7 +276,14 @@ app.whenReady().then(() => {
     onStatus: (st) => emitRendererEvent('updater:status', st),
   });
 
-  // No local LLM, Ollama, llama.cpp, Whisper, or SAPI model is provisioned by the installer.
+  // Remove only JEEVA-owned legacy model caches from older releases.
+  for (const legacyDir of ['local-brain', 'voice-models']) {
+    try {
+      fs.rmSync(path.join(app.getPath('userData'), legacyDir), { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+    } catch (err) {
+      console.warn(`Could not clean legacy JEEVA model folder (${legacyDir}):`, err?.message || err);
+    }
+  }
 
   const mainWin = windowManager.createWindow();
   windowManager.createNotchWindow();
