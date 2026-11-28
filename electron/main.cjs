@@ -20,7 +20,6 @@ const fs = require('fs');
 const os = require('os');
 
 const { createPermissionGuard } = require('./permission-guard.cjs');
-const { createCloudRelay } = require('./cloud-relay.cjs');
 const { createScheduler } = require('./pc-scheduler.cjs');
 const { createPcActions } = require('./pc-actions.cjs');
 const { getLanIPs, startBridgeServer } = require('./bridge-server.cjs');
@@ -36,7 +35,6 @@ const { evaluateElectronPermission } = require('./permission-policy.cjs');
 
 let bridgeServer = null;
 let permissionGuard = null;
-let cloudRelay = null;
 let pcScheduler = null;
 let offlineVoice = null;
 let appUpdater = null;
@@ -177,33 +175,10 @@ windowManager = createWindowManager({
   powerMonitor,
   actions,
   resolveUnpackedPath,
-  getCloudRelay: () => cloudRelay,
   getAutoLaunchManager,
   emitRendererEvent,
   getWatchdogAlert: () => lastWatchdogAlert,
 });
-
-let pendingDeepLinkUrl = process.argv.find((a) => typeof a === 'string' && a.startsWith('jeeva://')) || null;
-
-function handleDeepLink(rawUrl) {
-  if (!rawUrl || !String(rawUrl).startsWith('jeeva://')) return;
-  try {
-    const u = new URL(rawUrl);
-    if (u.hostname === 'connect' || u.pathname === '/connect') {
-      const server = (u.searchParams.get('server') || '').trim();
-      const pair = (u.searchParams.get('pair') || '').trim();
-      const validServer = /^https?:\/\/[^/\s]+/i.test(server) ? server.replace(/\/+$/, '') : '';
-      if (validServer && pair.length >= 12 && cloudRelay) {
-        const relayStat = cloudRelay.connect({ renderUrl: validServer, pairToken: pair });
-        const win = windowManager.getMainWindow();
-        if (win && !win.isDestroyed()) {
-          windowManager.applyWindowMode('full');
-          emitRendererEvent('relay:deepLinked', { renderUrl: validServer, pairToken: pair, status: relayStat });
-        }
-      }
-    }
-  } catch {}
-}
 
 async function executeMacroStep(step) {
   if (!step || !step.type) return;
@@ -237,14 +212,9 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', (_, argv) => {
-    const deepArg = argv.find((a) => typeof a === 'string' && a.startsWith('jeeva://'));
-    if (deepArg) {
-      handleDeepLink(deepArg);
-    } else {
-      const win = windowManager.getMainWindow();
-      if (win && !win.isDestroyed()) windowManager.applyWindowMode('full');
-    }
+  app.on('second-instance', () => {
+    const win = windowManager.getMainWindow();
+    if (win && !win.isDestroyed()) windowManager.applyWindowMode('full');
   });
 }
 
@@ -269,34 +239,10 @@ app.whenReady().then(() => {
     callback(allowed);
   });
 
-  if (process.defaultApp && process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('jeeva', process.execPath, [path.resolve(process.argv[1])]);
-  } else {
-    app.setAsDefaultProtocolClient('jeeva');
-  }
-
   const pin = getOrCreateBridgePin();
   permissionGuard = createPermissionGuard({
     userDataPath: app.getPath('userData'),
     BrowserWindow,
-  });
-
-  cloudRelay = createCloudRelay({
-    userDataPath: app.getPath('userData'),
-    safeStorage,
-    osHostname: os.hostname(),
-    onExecuteCommand: async (cmd) => {
-      const fn = actions[cmd.action];
-      if (!fn) throw new Error(`Unknown PC action: ${cmd.action}`);
-      const actionArgs = Array.isArray(cmd.args) ? cmd.args : [];
-      await permissionGuard.authorizeRemoteAction({
-        action: cmd.action,
-        args: actionArgs,
-        sourceLabel: cmd.source || 'Render Cloud Relay',
-      });
-      return await fn(...actionArgs);
-    },
-    onStatusChange: (relayStat) => emitRendererEvent('relay:statusChanged', relayStat),
   });
 
   offlineVoice = createOfflineVoice({
@@ -320,7 +266,6 @@ app.whenReady().then(() => {
   const mainWin = windowManager.createWindow();
   windowManager.createNotchWindow();
   windowManager.setupTray();
-  cloudRelay.initAutoConnect();
 
   const wPrefs = windowManager.getPrefs();
   if (mainWin && !mainWin.isVisible() && wPrefs.startupBehavior === 'notch_standby' && !wPrefs.notchUserHidden) {
@@ -337,15 +282,6 @@ app.whenReady().then(() => {
       fs.writeFileSync(autoFlagPath, String(Date.now()), 'utf8');
     }
   } catch {}
-
-  if (pendingDeepLinkUrl && mainWin) {
-    mainWin.webContents.once('did-finish-load', () => {
-      if (pendingDeepLinkUrl) {
-        handleDeepLink(pendingDeepLinkUrl);
-        pendingDeepLinkUrl = null;
-      }
-    });
-  }
 
   for (const hk of ['Ctrl+Shift+Space', 'Alt+Shift+J', 'Alt+Space']) {
     try {
@@ -380,11 +316,6 @@ app.whenReady().then(() => {
   ipcMain.handle('permissions:get', () => permissionGuard.getRules());
   ipcMain.handle('permissions:auditGet', () => permissionGuard.getAuditLog());
   ipcMain.handle('permissions:auditClear', () => permissionGuard.clearAuditLog());
-
-  ipcMain.handle('relay:connect', (_, cfg) => cloudRelay.connect(cfg || {}));
-  ipcMain.handle('relay:disconnect', () => cloudRelay.disconnect());
-  ipcMain.handle('relay:regeneratePairToken', () => cloudRelay.regeneratePairToken());
-  ipcMain.handle('relay:status', () => cloudRelay.getStatus());
 
   ipcMain.handle('app:getAutoLaunch', () => getAutoLaunchManager().isEnabled());
   ipcMain.handle('app:setAutoLaunch', (_, enabled) => {
@@ -438,12 +369,11 @@ app.on('will-quit', () => {
   pcScheduler?.dispose?.();
   offlineVoice?.stop?.();
   globalShortcut.unregisterAll();
-  cloudRelay?.shutdown?.();
   bridgeServer?.close();
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin' && (!cloudRelay?.getStatus?.().enabled || app.isQuitting)) {
+  if (process.platform !== 'darwin') {
     bridgeServer?.close();
     app.quit();
   }
@@ -618,7 +548,6 @@ ipcMain.handle('app:getDiagnostics', async () => {
     offlineVoice: offlineVoice?.getStatus?.() || null,
     localBrain: brainInfo,
     autoLaunch: getAutoLaunchManager().getStatus?.() || false,
-    cloudRelay: cloudRelay?.getStatus?.() || { enabled: false, connected: false },
     schedulerCount: schedItems.length,
     recentErrors: recentRuntimeErrors.slice(0, 10),
     generatedAt: new Date().toISOString(),
