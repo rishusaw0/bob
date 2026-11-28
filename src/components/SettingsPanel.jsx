@@ -13,8 +13,7 @@ import {
   LuMic,
   LuCpu,
 } from 'react-icons/lu';
-import { clearSessionPermissions, testGeminiConnection, createReplicatedVoice } from '../services/gemini';
-import { getBrainMode, setBrainMode, getBrainStats, resetBrainStats } from '../services/brainRouter';
+import { clearSessionPermissions, testGeminiConnection } from '../services/gemini';
 import {
   speakText,
   VOICE_PERSONAS,
@@ -22,19 +21,8 @@ import {
   setVoiceAccent,
   getVoicePersona,
   setVoicePersona,
-  getActiveCustomVoiceId,
-  setActiveCustomVoiceId,
-  getCustomClonedVoices,
-  saveCustomClonedVoice,
-  removeCustomClonedVoice,
-  getPreferredNativeVoice,
-  setPreferredNativeVoice,
-  getAvailableSpeechVoices,
-  getSpeechSpeedMode,
-  setSpeechSpeedMode,
 } from '../services/speech';
 import { startVoiceCapture, getVadSensitivity, setVadSensitivity } from '../services/voiceCapture';
-import { startWavRecording } from '../services/wavRecorder';
 import {
   VOICEPRINT_LEVELS,
   getVoiceprintStatus,
@@ -62,8 +50,6 @@ import {
   setDocSummaryPref,
   getReplyStyle,
   setReplyStyle,
-  getStrictLocalCommands,
-  setStrictLocalCommands,
 } from '../services/userPrefs';
 import {
   PERMISSION_CATEGORIES,
@@ -81,8 +67,6 @@ export default function SettingsPanel({
   onToggleTTS,
   voiceMode,
   onVoiceModeChange,
-  model,
-  onModelChange,
   customInstructions,
   onCustomInstructionsChange,
   onExportChat,
@@ -97,7 +81,6 @@ export default function SettingsPanel({
   const [wakeTrigger, setWakeTrigger] = useState(() => getWakeTriggerPhrase());
   const [docSummaryPref, setDocSummaryPrefState] = useState(() => getDocSummaryPref());
   const [replyStyle, setReplyStyleState] = useState(() => getReplyStyle());
-  const [strictLocalCmds, setStrictLocalCmds] = useState(() => getStrictLocalCommands());
   const [wakeWordOn, setWakeWordOn] = useState(() => getWakeWordEnabled());
   const [wakeOpenMode, setWakeOpenModeState] = useState(() => getWakeOpenMode());
   const [strictVoice, setStrictVoice] = useState(() => getStrictVoiceMode());
@@ -119,16 +102,8 @@ export default function SettingsPanel({
   const [updaterState, setUpdaterState] = useState(null);
   const [voiceprintStatus, setVoiceprintStatus] = useState(() => getVoiceprintStatus());
   const [enrollingVoice, setEnrollingVoice] = useState(false);
-  const [brainMode, setBrainModeState] = useState(() => getBrainMode());
-  const [brainStats, setBrainStats] = useState(() => getBrainStats());
-  const [localBrain, setLocalBrain] = useState(null);
-  const [brainProgress, setBrainProgress] = useState(null);
-  const [brainBusy, setBrainBusy] = useState(false);
   const [voiceAccent, setVoiceAccentState] = useState(() => getVoiceAccent());
   const [voicePersona, setVoicePersonaState] = useState(() => getVoicePersona());
-  const [nativeVoice, setNativeVoiceState] = useState(() => getPreferredNativeVoice());
-  const [availableVoices, setAvailableVoices] = useState(() => getAvailableSpeechVoices());
-  const [speechSpeedMode, setSpeechSpeedModeState] = useState(() => getSpeechSpeedMode());
   const [vadSensitivity, setVadSensitivityState] = useState(() => getVadSensitivity());
   const [voiceprintLevel, setVoiceprintLevelState] = useState(() => getVoiceprintSecurityLevel());
   const [testingVoiceprint, setTestingVoiceprint] = useState(false);
@@ -141,25 +116,6 @@ export default function SettingsPanel({
   });
   const [displays, setDisplays] = useState([]);
 
-  // Own Voice Cloning (Gemini 3.8 Voice Replication)
-  const [customVoices, setCustomVoices] = useState(() => getCustomClonedVoices());
-  const [activeCustomVoiceId, setActiveCustomVoiceIdState] = useState(() => getActiveCustomVoiceId());
-  const [cloneName, setCloneName] = useState('My Own Voice');
-  const [sampleRec, setSampleRec] = useState(null);
-  const [consentRec, setConsentRec] = useState(null);
-  const [recordingKind, setRecordingKind] = useState(null); // 'sample' | 'consent' | null
-  const [recSec, setRecSec] = useState(0);
-  const [recLevel, setRecLevel] = useState(0);
-  const [cloningBusy, setCloningBusy] = useState(false);
-  const activeRecorderRef = useRef(null);
-
-  useEffect(() => {
-    const refresh = () => setAvailableVoices(getAvailableSpeechVoices());
-    refresh();
-    const t = setTimeout(refresh, 400);
-    return () => clearTimeout(t);
-  }, []);
-
   const handleEnrollVoiceprint = async () => {
     if (enrollingVoice) return;
     setEnrollingVoice(true);
@@ -171,7 +127,7 @@ export default function SettingsPanel({
         `Aaj ka schedule aur reminders batao`,
       ];
       for (let i = 0; i < 3; i++) {
-        toast.info(`Offline Voiceprint ${i + 1}/3: Boliye "${prompts[i]}"`);
+        toast.info(`Local voice verification sample ${i + 1}/3: Boliye "${prompts[i]}"`);
         const pcm = await new Promise((resolve, reject) => {
           let settled = false;
           const cap = startVoiceCapture({
@@ -248,146 +204,28 @@ export default function SettingsPanel({
     }
   };
 
-  const toggleCloneRecording = async (kind) => {
-    if (recordingKind === kind && activeRecorderRef.current) {
-      const result = activeRecorderRef.current.stop();
-      activeRecorderRef.current = null;
-      setRecordingKind(null);
-      setRecLevel(0);
-      if (result) {
-        if (kind === 'sample') setSampleRec(result);
-        else setConsentRec(result);
-        toast.success(`${kind === 'sample' ? 'Voice sample' : 'Consent'} recorded (${result.durationSec}s)`);
-      }
-      return;
-    }
-    if (activeRecorderRef.current) {
-      activeRecorderRef.current.stop();
-      activeRecorderRef.current = null;
-    }
-    try {
-      setRecSec(0);
-      setRecordingKind(kind);
-      const maxSeconds = kind === 'sample' ? 25 : 10;
-      activeRecorderRef.current = await startWavRecording({
-        maxSeconds,
-        onLevel: setRecLevel,
-        onTick: (sec) => {
-          setRecSec(sec);
-          if (sec >= maxSeconds && activeRecorderRef.current) {
-            const res = activeRecorderRef.current.stop();
-            activeRecorderRef.current = null;
-            setRecordingKind(null);
-            setRecLevel(0);
-            if (res) {
-              if (kind === 'sample') setSampleRec(res);
-              else setConsentRec(res);
-            }
-          }
-        },
-      });
-    } catch (err) {
-      setRecordingKind(null);
-      toast.error(err?.message || 'Microphone start failed');
-    }
-  };
-
-  const handleCreateClonedVoice = async () => {
-    if (!sampleRec?.base64 || !consentRec?.base64 || cloningBusy) return;
-    setCloningBusy(true);
-    try {
-      const created = await createReplicatedVoice({
-        displayName: cloneName.trim() || 'My Cloned Voice',
-        sourceWavBase64: sampleRec.base64,
-        consentWavBase64: consentRec.base64,
-      });
-      const updated = saveCustomClonedVoice(created);
-      setCustomVoices(updated);
-      setActiveCustomVoiceIdState(created.id);
-      toast.success(`Aapki apni voice "${created.displayName}" ready aur active hai!`);
-      speakText(`Namaste! Ab main aapki apni cloned voice mein bol raha hoon.`, {
-        label: 'Cloned Voice Ready',
-      });
-    } catch (err) {
-      toast.error(err?.message || 'Voice clone failed — check Gemini API key');
-    } finally {
-      setCloningBusy(false);
-    }
-  };
-
   useEffect(() => {
-    if (isElectron) {
-      window.electronAPI?.getPermissionRules?.().then((hostRules) => {
-        if (hostRules) setPermRules(savePermissionRules(hostRules));
-      }).catch(() => {});
-      window.electronAPI?.getAutoLaunch?.().then((v) => setAutoLaunch(Boolean(v))).catch(() => {});
-      window.electronAPI?.getWindowPrefs?.().then((wp) => wp && setWindowPrefs(wp)).catch(() => {});
-      window.electronAPI?.getDisplays?.().then((ds) => Array.isArray(ds) && setDisplays(ds)).catch(() => {});
-      window.electronAPI?.localBrainStatus?.().then(setLocalBrain).catch(() => {});
-      window.electronAPI?.getUpdaterState?.().then(setUpdaterState).catch(() => {});
-      const unsubUp = window.electronAPI?.onUpdaterStatus?.(setUpdaterState);
-      const unsubBrain = window.electronAPI?.onLocalBrainProgress?.((ev) => {
-        setBrainProgress(ev);
-        if (ev?.stage === 'done' || ev?.stage === 'installed') {
-          window.electronAPI?.localBrainStatus?.().then(setLocalBrain).catch(() => {});
-        }
-      });
-      return () => {
-        unsubUp?.();
-        unsubBrain?.();
-      };
-    }
+    if (!isElectron) return;
+    window.electronAPI?.getPermissionRules?.().then((hostRules) => {
+      if (hostRules) setPermRules(savePermissionRules(hostRules));
+    }).catch(() => {});
+    window.electronAPI?.getAutoLaunch?.().then((v) => setAutoLaunch(Boolean(v))).catch(() => {});
+    window.electronAPI?.getWindowPrefs?.().then((wp) => wp && setWindowPrefs(wp)).catch(() => {});
+    window.electronAPI?.getDisplays?.().then((ds) => Array.isArray(ds) && setDisplays(ds)).catch(() => {});
+    window.electronAPI?.getUpdaterState?.().then(setUpdaterState).catch(() => {});
+    const unsubUp = window.electronAPI?.onUpdaterStatus?.(setUpdaterState);
+    return () => unsubUp?.();
   }, [isElectron]);
-
-  const refreshLocalBrain = async () => {
-    setBrainStats(getBrainStats());
-    if (window.electronAPI?.localBrainStatus) {
-      const st = await window.electronAPI.localBrainStatus().catch(() => null);
-      if (st) setLocalBrain(st);
-    }
-  };
-
-  const handleLocalBrainAction = async (action, payload = {}) => {
-    if (!window.electronAPI?.localBrainSetup || brainBusy) return;
-    setBrainBusy(true);
-    try {
-      const res = await window.electronAPI.localBrainSetup(action, payload);
-      if (res?.ok) {
-        toast.success(
-          action === 'stop_model'
-            ? 'Local model unloaded from RAM (0 MB idle)'
-            : action === 'pull_model'
-              ? `${payload?.model || 'Model'} ready!`
-              : 'Local Brain updated!'
-        );
-      } else {
-        toast.error(res?.error || 'Local Brain action failed');
-      }
-      await refreshLocalBrain();
-    } catch (err) {
-      toast.error(err?.message || 'Local Brain setup error');
-    } finally {
-      setBrainBusy(false);
-    }
-  };
 
   const handleTestConnection = async () => {
     setTestingConn(true);
     setConnStatus(null);
     const trimmedKey = key.trim();
-    const res = await testGeminiConnection({ apiKey: trimmedKey, model });
+    const res = await testGeminiConnection({ apiKey: trimmedKey });
     setTestingConn(false);
     setConnStatus(res);
-    if (res.ok) {
-      if (res.fallbackUsed && res.activeModel) {
-        onModelChange?.(res.activeModel);
-        toast.info(`Auto-switched to supported model: ${res.activeModel}`);
-      } else {
-        toast.success(`Gemini API working (${res.activeModel}, ${res.latencyMs}ms)`);
-      }
-    } else {
-      toast.error(res.error || 'Gemini connection failed');
-    }
+    if (res.ok) toast.success(`Gemini API working (${res.activeModel}, ${res.latencyMs}ms)`);
+    else toast.error(res.error || 'Gemini connection failed');
   };
 
   const handleCheckUpdates = async () => {
@@ -574,20 +412,10 @@ export default function SettingsPanel({
 
               </div>
 
-              {/* Model */}
-              <div>
-                <label className="block text-xs font-medium text-obsidian-text mb-1.5">
-                  Default Model
-                </label>
-                <select
-                  value={model}
-                  onChange={(e) => onModelChange(e.target.value)}
-                  className="w-full bg-obsidian-bg border border-obsidian-border rounded-lg px-3 py-2 text-xs text-obsidian-text focus:outline-none focus:border-zinc-600"
-                >
-                  <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite — Lowest Latency</option>
-                  <option value="gemini-4-hydrogen">Gemini 4 Hydrogen — Balanced Reasoning</option>
-                  <option value="gemini-4-neon">Gemini 4 Neon — Complex Multi-Step</option>
-                </select>
+              <div className="rounded-lg border border-obsidian-border bg-obsidian-bg px-3 py-2.5">
+                <label className="block text-xs font-medium text-obsidian-text mb-1">AI Model</label>
+                <p className="text-xs text-emerald-300 font-mono">Gemini 3.5 Flash-Lite · Fixed</p>
+                <p className="text-[10px] text-obsidian-muted mt-1">Chat, reasoning, and speech recognition use this model. Gemini TTS uses Google's dedicated speech-generation endpoint. No local AI model is installed.</p>
               </div>
 
               {/* Custom Instructions */}
@@ -926,123 +754,14 @@ export default function SettingsPanel({
                     </div>
                   </div>
 
-                  {/* Low-End Friendly Local AI Brain */}
-                  <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-medium text-obsidian-text flex items-center gap-1.5">
-                          <LuCpu className="w-3.5 h-3.5 text-emerald-400" />
-                          Hybrid Local AI Brain (Low-End Friendly)
-                        </p>
-                        <p className="text-[10px] text-obsidian-muted mt-0.5">
-                          Chhote/moderate kaam local brain se · Sirf heavy/vision/web kaam par Gemini API
-                        </p>
-                      </div>
-                      <select
-                        value={brainMode}
-                        onChange={(e) => setBrainModeState(setBrainMode(e.target.value))}
-                        className="bg-obsidian-surface border border-obsidian-border rounded px-2 py-1 text-[11px] font-mono text-obsidian-text"
-                      >
-                        <option value="auto">Auto Hybrid</option>
-                        <option value="offline">Offline Only (0 API)</option>
-                        <option value="cloud">Gemini Cloud</option>
-                      </select>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[11px] px-2.5 py-1.5 rounded bg-obsidian-surface border border-obsidian-border">
-                      <span className="text-emerald-300 font-mono">
-                        {brainStats.localPct}% Local ({brainStats.totalLocal} saved · {brainStats.cloudCalls} cloud)
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          resetBrainStats();
-                          setBrainStats(getBrainStats());
-                        }}
-                        className="text-obsidian-muted hover:text-obsidian-text text-[10px]"
-                      >
-                        Reset
-                      </button>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-obsidian-border/60">
-                      <div>
-                        <p className="text-[11px] font-medium text-obsidian-text">
-                          Keep All PC Commands 100% Local (No API)
-                        </p>
-                        <p className="text-[10px] text-obsidian-muted">
-                          App, typing, files, reminders aur settings commands kabhi Gemini API use nahi karengi
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setStrictLocalCmds((v) => setStrictLocalCommands(!v))}
-                        className={`w-9 h-5 rounded-full transition-colors p-0.5 flex-shrink-0 ${
-                          strictLocalCmds ? 'bg-emerald-500' : 'bg-zinc-700'
-                        }`}
-                      >
-                        <div
-                          className={`w-4 h-4 rounded-full bg-white transition-transform ${
-                            strictLocalCmds ? 'translate-x-4' : 'translate-x-0'
-                          }`}
-                        />
-                      </button>
-                    </div>
-
-                    {localBrain?.hardware && (
-                      <div className="text-[10px] text-obsidian-muted space-y-1">
-                        <p>
-                          PC: <span className="text-obsidian-secondary font-mono">{localBrain.hardware.totalGb} GB RAM</span> ({localBrain.hardware.freeGb} GB free) · Cap: <span className="text-obsidian-secondary font-mono">{localBrain.hardware.safeThreads} CPU threads</span> · Active: <span className="text-emerald-300 font-mono">{localBrain.activeModel}</span>
-                        </p>
-                        <div className="flex flex-wrap gap-1.5 pt-1">
-                          <button
-                            type="button"
-                            disabled={brainBusy}
-                            onClick={() => handleLocalBrainAction('retry_auto_setup')}
-                            className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/30 disabled:opacity-40"
-                          >
-                            {brainBusy ? 'Setting up...' : 'Set up / Retry Local AI'}
-                          </button>
-                          {(localBrain.catalog || []).map((m) => {
-                            const isInstalled = localBrain.ollama?.installed?.includes(m.id);
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                disabled={brainBusy}
-                                onClick={() =>
-                                  isInstalled
-                                    ? handleLocalBrainAction('save_config', { preferredModel: m.id })
-                                    : handleLocalBrainAction('pull_model', { model: m.id })
-                                }
-                                className={`px-2 py-1 rounded border text-[10px] font-mono ${
-                                  localBrain.config?.preferredModel === m.id
-                                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200'
-                                    : 'bg-obsidian-surface border-obsidian-border text-obsidian-secondary hover:text-obsidian-text'
-                                }`}
-                                title={m.description}
-                              >
-                                {isInstalled ? `Use ${m.id}` : `Download ${m.id} (${m.sizeMb}MB)`}
-                              </button>
-                            );
-                          })}
-                          <button
-                            type="button"
-                            disabled={brainBusy}
-                            onClick={() => handleLocalBrainAction('stop_model')}
-                            className="px-2 py-1 rounded bg-obsidian-surface border border-obsidian-border text-obsidian-muted hover:text-obsidian-text text-[10px]"
-                            title="Unload local model from RAM immediately"
-                          >
-                            Unload RAM
-                          </button>
-                        </div>
-                        {brainProgress?.status && (
-                          <p className="text-[10px] text-amber-300 font-mono">
-                            {brainProgress.status}{brainProgress.pct != null ? ` (${brainProgress.pct}%)` : ''}
-                          </p>
-                        )}
-                      </div>
-                    )}
+                  <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-1.5">
+                    <p className="text-xs font-medium text-obsidian-text flex items-center gap-1.5">
+                      <LuCpu className="w-3.5 h-3.5 text-emerald-400" />
+                      Gemini-only AI · Lightweight setup
+                    </p>
+                    <p className="text-[10px] text-obsidian-muted">
+                      All AI answers use Gemini 3.5 Flash-Lite. No Ollama, llama.cpp, Qwen, Gemma, or local language model is installed. Without internet, only deterministic PC controls, reminders, timers, and basic file utilities remain available.
+                    </p>
                   </div>
 
                   {/* App Auto-Updater */}
@@ -1117,7 +836,7 @@ export default function SettingsPanel({
                       English Voice Accent &amp; Clarity
                     </p>
                     <p className="text-[10px] text-obsidian-muted mt-0.5">
-                      Clear Indian English (en-IN) pronunciation for both Cloud TTS and Offline speech
+                      Clear Indian English (en-IN) pronunciation for Gemini voice output
                     </p>
                   </div>
                   <button
@@ -1164,35 +883,9 @@ export default function SettingsPanel({
                     <option value="global">Accent: Global Studio (en-US)</option>
                   </select>
 
-                  <select
-                    value={speechSpeedMode}
-                    onChange={(e) => {
-                      const next = setSpeechSpeedMode(e.target.value);
-                      setSpeechSpeedModeState(next);
-                      toast.success(`Speech mode: ${next}`);
-                    }}
-                    className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
-                  >
-                    <option value="hybrid_fast">Voice: Realistic Human + Fast Fallback</option>
-                    <option value="cloud_studio">Voice: Studio Human Always First</option>
-                    <option value="instant_local">Voice: Instant Offline OS Voice</option>
-                  </select>
-
-                  <select
-                    value={nativeVoice}
-                    onChange={(e) => {
-                      setPreferredNativeVoice(e.target.value);
-                      setNativeVoiceState(e.target.value);
-                    }}
-                    className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] font-mono text-obsidian-text"
-                  >
-                    <option value="">Offline Voice: Auto Best Natural Voice</option>
-                    {availableVoices.map((v) => (
-                      <option key={v.name} value={v.name}>
-                        {v.name} ({v.lang})
-                      </option>
-                    ))}
-                  </select>
+                  <div className="rounded bg-obsidian-surface border border-obsidian-border px-2.5 py-2 text-[11px] text-obsidian-secondary">
+                    Voice input and spoken replies use Gemini API. Local speech recognition and offline TTS are disabled.
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between gap-2 pt-1 border-t border-obsidian-border/50">
@@ -1213,173 +906,18 @@ export default function SettingsPanel({
                 </div>
               </div>
 
-              {/* Clone My Own Voice (Gemini 3.8 Voice Replication) */}
-              <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-xs font-medium text-obsidian-text flex items-center gap-1.5">
-                      <LuVolume2 className="w-3.5 h-3.5 text-sky-400" />
-                      Clone My Own Voice (Gemini 3.8 Studio)
-                    </p>
-                    <p className="text-[10px] text-obsidian-muted mt-0.5">
-                      Apni khud ki aawaz record karke JEEVA AI ko apni voice mein bulwayein (Gemini API key required).
-                    </p>
-                  </div>
-                  {activeCustomVoiceId && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveCustomVoiceId('');
-                        setActiveCustomVoiceIdState('');
-                        toast.info('Switched back to built-in Studio persona');
-                      }}
-                      className="px-2 py-1 rounded bg-obsidian-surface hover:bg-obsidian-elevated border border-obsidian-border text-[10px] text-obsidian-secondary"
-                    >
-                      Use Built-in
-                    </button>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  <input
-                    type="text"
-                    value={cloneName}
-                    onChange={(e) => setCloneName(e.target.value)}
-                    placeholder="Voice Name (e.g. Roushan)"
-                    className="bg-obsidian-surface border border-obsidian-border rounded px-2.5 py-1.5 text-[11px] text-obsidian-text"
-                  />
-                  <button
-                    type="button"
-                    disabled={recordingKind === 'consent' || cloningBusy}
-                    onClick={() => toggleCloneRecording('sample')}
-                    className={`px-2.5 py-1.5 rounded border text-[11px] font-medium transition-colors ${
-                      recordingKind === 'sample'
-                        ? 'bg-red-500/20 border-red-500/50 text-red-300'
-                        : sampleRec
-                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                          : 'bg-obsidian-surface hover:bg-obsidian-elevated border-obsidian-border text-obsidian-text'
-                    }`}
-                  >
-                    {recordingKind === 'sample'
-                      ? `Stop Sample (${recSec}s / 25s)`
-                      : sampleRec
-                        ? `Sample Ready (${sampleRec.durationSec}s) · Redo`
-                        : '1. Record Sample (10-20s)'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={recordingKind === 'sample' || cloningBusy}
-                    onClick={() => toggleCloneRecording('consent')}
-                    className={`px-2.5 py-1.5 rounded border text-[11px] font-medium transition-colors ${
-                      recordingKind === 'consent'
-                        ? 'bg-red-500/20 border-red-500/50 text-red-300'
-                        : consentRec
-                          ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                          : 'bg-obsidian-surface hover:bg-obsidian-elevated border-obsidian-border text-obsidian-text'
-                    }`}
-                  >
-                    {recordingKind === 'consent'
-                      ? `Stop Consent (${recSec}s / 10s)`
-                      : consentRec
-                        ? `Consent Ready (${consentRec.durationSec}s) · Redo`
-                        : '2. Record Consent (5s)'}
-                  </button>
-                </div>
-
-                {recordingKind && (
-                  <div className="space-y-1">
-                    <p className="text-[10px] text-sky-300">
-                      {recordingKind === 'sample'
-                        ? 'Shant kamre mein apni natural aawaz mein 10-20 second kuch bolein...'
-                        : 'Boliye: "I am the speaker and I consent to clone my voice for JEEVA AI."'}
-                    </p>
-                    <div className="h-1.5 w-full rounded bg-obsidian-surface overflow-hidden">
-                      <div
-                        className="h-full bg-emerald-400 transition-all duration-75"
-                        style={{ width: `${Math.min(100, Math.round(recLevel * 100))}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    {sampleRec?.previewUrl && (
-                      <audio controls src={sampleRec.previewUrl} className="h-7 max-w-[160px]" />
-                    )}
-                    {consentRec?.previewUrl && (
-                      <audio controls src={consentRec.previewUrl} className="h-7 max-w-[160px]" />
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    disabled={!sampleRec?.base64 || !consentRec?.base64 || cloningBusy || Boolean(recordingKind)}
-                    onClick={handleCreateClonedVoice}
-                    className="px-3 py-1.5 rounded bg-sky-500 hover:bg-sky-400 text-zinc-950 text-[11px] font-semibold disabled:opacity-40"
-                  >
-                    {cloningBusy ? 'Creating Voice...' : '3. Create & Activate My Voice'}
-                  </button>
-                </div>
-
-                {customVoices.length > 0 && (
-                  <div className="pt-2 border-t border-obsidian-border/60 space-y-1.5">
-                    <p className="text-[10px] font-mono uppercase text-obsidian-muted">Saved Cloned Voices</p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {customVoices.map((cv) => {
-                        const isAct = activeCustomVoiceId === cv.id;
-                        return (
-                          <div
-                            key={cv.id}
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] ${
-                              isAct
-                                ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                                : 'bg-obsidian-surface border-obsidian-border text-obsidian-secondary'
-                            }`}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setActiveCustomVoiceId(cv.id);
-                                setActiveCustomVoiceIdState(cv.id);
-                                toast.success(`Active voice: ${cv.displayName}`);
-                              }}
-                              className="font-medium hover:text-white"
-                            >
-                              {isAct ? '● ' : ''}{cv.displayName}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const nextList = removeCustomClonedVoice(cv.id);
-                                setCustomVoices(nextList);
-                                setActiveCustomVoiceIdState(getActiveCustomVoiceId());
-                                toast.info('Cloned voice removed');
-                              }}
-                              className="text-red-400 hover:text-red-300 ml-1"
-                              title="Delete cloned voice"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
               {/* Advanced Offline Owner Voice Biometric Protection */}
               <div className="bg-obsidian-bg rounded-lg px-3.5 py-3 border border-obsidian-border space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-xs font-medium text-obsidian-text flex items-center gap-1.5">
                       <LuMic className="w-3.5 h-3.5 text-emerald-400" />
-                      Offline Owner Voice Protection (Anti-Stranger Guard)
+                      Owner Voice Protection (Anti-Stranger Guard)
                     </p>
                     <p className="text-[10px] text-obsidian-muted mt-0.5">
                       {voiceprintStatus.enrolled
-                        ? `Enrolled (${voiceprintStatus.samples} samples · Pitch ~${voiceprintStatus.pitchHz || '?'} Hz) — 100% offline. Sirf owner ki aawaz par voice commands chalenge.`
-                        : 'Bina Gemini API ke offline owner voice lock lagayein — dusre ki aawaz par command block ho jayega.'}
+                        ? `Enrolled (${voiceprintStatus.samples} samples · Pitch ~${voiceprintStatus.pitchHz || '?'} Hz) — speaker verification runs locally before commands are sent to Gemini.`
+                        : 'Local speaker verification checks voice commands before Gemini processes them.'}
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">

@@ -1,82 +1,10 @@
-// Hybrid Brain Router — Command-First Local Lock, Complexity Gatekeeper, History Compactor & Savings Telemetry
+// Gemini-only router and lightweight conversation-history compactor
 import { isTextOrDocAttachment } from './docExtractor.js';
-import { getStrictLocalCommands } from './userPrefs.js';
 
-const BRAIN_MODE_KEY = 'jeeva_brain_mode'; // 'auto' | 'offline' | 'cloud'
-const BRAIN_STATS_KEY = 'jeeva_brain_stats';
-
-function loadStats() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(BRAIN_STATS_KEY) || '{}');
-    return {
-      localFast: Number(parsed.localFast) || 0,
-      localIntent: Number(parsed.localIntent) || 0,
-      localSlm: Number(parsed.localSlm) || 0,
-      cloudCalls: Number(parsed.cloudCalls) || 0,
-      estimatedTokensSaved: Number(parsed.estimatedTokensSaved) || 0,
-    };
-  } catch {
-    return { localFast: 0, localIntent: 0, localSlm: 0, cloudCalls: 0, estimatedTokensSaved: 0 };
-  }
-}
-
-export function getBrainMode() {
-  try {
-    const m = localStorage.getItem(BRAIN_MODE_KEY) || 'auto';
-    return ['auto', 'offline', 'cloud'].includes(m) ? m : 'auto';
-  } catch {
-    return 'auto';
-  }
-}
-
-export function setBrainMode(mode) {
-  const clean = ['auto', 'offline', 'cloud'].includes(mode) ? mode : 'auto';
-  try {
-    localStorage.setItem(BRAIN_MODE_KEY, clean);
-    window.dispatchEvent(new CustomEvent('jeeva-brain-mode-changed', { detail: clean }));
-  } catch {}
-  return clean;
-}
-
-export function getBrainStats() {
-  const s = loadStats();
-  const totalLocal = s.localFast + s.localIntent + s.localSlm;
-  const totalAll = totalLocal + s.cloudCalls;
-  const localPct = totalAll > 0 ? Math.round((totalLocal / totalAll) * 100) : 0;
-  return { ...s, totalLocal, totalAll, localPct };
-}
-
-export function recordBrainUsage(tier, approxPromptChars = 120) {
-  try {
-    const stats = loadStats();
-    const approxSaved = Math.max(350, Math.round(approxPromptChars / 3) + 650);
-    if (tier === 'fast') {
-      stats.localFast += 1;
-      stats.estimatedTokensSaved += approxSaved;
-    } else if (tier === 'intent') {
-      stats.localIntent += 1;
-      stats.estimatedTokensSaved += approxSaved;
-    } else if (tier === 'local-slm') {
-      stats.localSlm += 1;
-      stats.estimatedTokensSaved += approxSaved + 450;
-    } else if (tier === 'cloud') {
-      stats.cloudCalls += 1;
-    }
-    localStorage.setItem(BRAIN_STATS_KEY, JSON.stringify(stats));
-    window.dispatchEvent(new CustomEvent('jeeva-brain-stats-changed', { detail: getBrainStats() }));
-  } catch {}
-}
-
-export function resetBrainStats() {
-  try {
-    localStorage.removeItem(BRAIN_STATS_KEY);
-    window.dispatchEvent(new CustomEvent('jeeva-brain-stats-changed', { detail: getBrainStats() }));
-  } catch {}
-}
 
 /**
- * Classifies prompt into PC command vs Local Document vs Cloud Vision/Web vs General Q&A
- * so PC commands stay 100% local (0 Gemini API calls) while Cloud handles visual/web/heavy tasks.
+ * Classifies requests for UI metadata. The App executes only explicitly supported deterministic PC actions offline;
+ * every other online AI response is sent to Gemini.
  */
 export function classifyQueryKind(cleanText, attachment = null) {
   const lower = String(cleanText || '').trim().toLowerCase();
@@ -138,73 +66,37 @@ export function classifyQueryKind(cleanText, attachment = null) {
 }
 
 /**
- * Strips explicit routing prefixes (@cloud, /gemini, @local) and determines routing constraints.
+ * Removes legacy route prefixes and routes every online AI request to Gemini.
  */
-export function assessQueryRouting(text, attachment = null, mode = getBrainMode(), env = {}) {
+export function assessQueryRouting(text, attachment = null, _mode = 'cloud', env = {}) {
   let cleanText = String(text || '').trim();
-  let forceCloud = false;
-  let forceLocal = false;
-
-  if (/^(?:@cloud|@gemini|\/cloud|\/gemini)\b/i.test(cleanText)) {
-    forceCloud = true;
-    cleanText = cleanText.replace(/^(?:@cloud|@gemini|\/cloud|\/gemini)\b[:\s]*/i, '').trim();
-  } else if (/^(?:@local|\/local)\b/i.test(cleanText)) {
-    forceLocal = true;
-    cleanText = cleanText.replace(/^(?:@local|\/local)\b[:\s]*/i, '').trim();
-  }
-
+  cleanText = cleanText.replace(/^(?:@cloud|@gemini|\/cloud|\/gemini|@local|\/local)\b[:\s]*/i, '').trim();
   const online =
     typeof env.online === 'boolean'
       ? env.online
       : typeof navigator !== 'undefined' && typeof navigator.onLine === 'boolean'
         ? navigator.onLine
         : true;
-  const batteryLow = Boolean(env.batteryLow);
-  const freeRamLow = Boolean(env.freeRamLow);
-  const strictCommands =
-    typeof env.strictLocalCommands === 'boolean' ? env.strictLocalCommands : getStrictLocalCommands();
-
   const effectiveText = cleanText || String(text || '').trim();
   const classification = classifyQueryKind(effectiveText, attachment);
   const { queryKind, isPcCommand, heavyReason } = classification;
 
-  if (mode === 'cloud' && !(isPcCommand && strictCommands)) {
-    forceCloud = true;
-  }
-  if (mode === 'offline' || (!online && mode === 'auto' && !forceCloud)) {
-    forceLocal = true;
-    forceCloud = false;
-  }
-
-  // PC Commands are locked to JEEVA's own Local AI unless user explicitly uses @gemini
-  const strictNoApi = Boolean(isPcCommand && strictCommands && !forceCloud);
-  if (strictNoApi) {
-    forceLocal = true;
-    forceCloud = false;
-  }
-
-  let routeReason = 'Auto Hybrid: running locally first to save API calls';
-  if (strictNoApi) routeReason = 'Command-First Local Lock: executing locally (0 Gemini API calls)';
-  else if (!online) routeReason = 'Auto-Switched to Local: internet offline detected';
-  else if (forceCloud && mode === 'cloud') routeReason = 'Cloud Mode selected';
-  else if (forceCloud) routeReason = 'Forced Cloud via @gemini tag';
-  else if (heavyReason) routeReason = `Auto-Switched to Gemini: ${heavyReason.replace(/_/g, ' ')}`;
-  else if (freeRamLow || batteryLow) routeReason = 'Low RAM/Battery Guard active — avoiding heavy SLM';
-
   return {
     cleanText: effectiveText,
-    mode: !online && mode === 'auto' ? 'offline' : mode,
+    mode: online ? 'cloud' : 'offline',
     online,
-    batteryLow,
-    freeRamLow,
+    batteryLow: Boolean(env.batteryLow),
+    freeRamLow: false,
     queryKind,
     isPcCommand,
-    strictNoApi,
-    forceCloud,
-    forceLocal,
+    strictNoApi: false,
+    forceCloud: online,
+    forceLocal: false,
     heavyReason,
-    routeReason,
-    shouldTryLocalFirst: !forceCloud && (isPcCommand || ((!heavyReason && !freeRamLow) || forceLocal)),
+    routeReason: online
+      ? 'Gemini 3.5 Flash-Lite handles all AI replies'
+      : 'Offline mode: deterministic PC utilities only; Gemini AI unavailable',
+    shouldTryLocalFirst: false,
   };
 }
 

@@ -21,19 +21,16 @@ const os = require('os');
 const { createPermissionGuard } = require('./permission-guard.cjs');
 const { createScheduler } = require('./pc-scheduler.cjs');
 const { createPcActions } = require('./pc-actions.cjs');
-const { createOfflineVoice } = require('./offline-voice.cjs');
 const { createUpdater } = require('./updater.cjs');
 const { createAutoLaunchManager, APP_MODEL_ID } = require('./auto-launch.cjs');
 const { createMemoryStore } = require('./memory-store.cjs');
 const { createSystemWatchdog } = require('./system-watchdog.cjs');
 const { createWindowManager } = require('./window-manager.cjs');
-const { createLocalBrainManager } = require('./local-brain.cjs');
 const { createEpisodicMemory } = require('./episodic-memory.cjs');
 const { evaluateElectronPermission } = require('./permission-policy.cjs');
 
 let permissionGuard = null;
 let pcScheduler = null;
-let offlineVoice = null;
 let appUpdater = null;
 let autoLaunchManager = null;
 let memoryStore = null;
@@ -41,7 +38,6 @@ let episodicMemory = null;
 let systemWatchdog = null;
 let lastWatchdogAlert = null;
 let windowManager = null;
-let localBrain = null;
 const recentRuntimeErrors = [];
 
 function recordRuntimeError(source, err) {
@@ -104,15 +100,6 @@ function getMemoryStore() {
   return memoryStore;
 }
 
-function getLocalBrain() {
-  if (!localBrain) {
-    localBrain = createLocalBrainManager({
-      userDataDir: app.getPath('userData'),
-      onProgress: (ev) => emitRendererEvent('brain:progress', ev),
-    });
-  }
-  return localBrain;
-}
 
 function getEpisodicMemory() {
   if (!episodicMemory) {
@@ -283,26 +270,19 @@ app.whenReady().then(() => {
     BrowserWindow,
   });
 
-  offlineVoice = createOfflineVoice({
-    resolveUnpackedPath,
-    userDataDir: app.getPath('userData'),
-    onEvent: (ev) => emitRendererEvent('voice:offlineEvent', ev),
-  });
-
   appUpdater = createUpdater({
     currentVersion: app.getVersion(),
     shell,
     onStatus: (st) => emitRendererEvent('updater:status', st),
   });
 
-  // Provision the local runtime/model after installation without blocking app startup.
-  // Rules-based offline commands stay available while the optional model downloads.
-  if (app.isPackaged) {
-    setTimeout(() => {
-      getLocalBrain().setup('auto_setup').catch((err) => {
-        emitRendererEvent('brain:progress', { stage: 'error', status: err?.message || 'Automatic local AI setup failed.' });
-      });
-    }, 12000);
+  // Remove only JEEVA-owned legacy model caches from older releases.
+  for (const legacyDir of ['local-brain', 'voice-models']) {
+    try {
+      fs.rmSync(path.join(app.getPath('userData'), legacyDir), { recursive: true, force: true, maxRetries: 2, retryDelay: 100 });
+    } catch (err) {
+      console.warn(`Could not clean legacy JEEVA model folder (${legacyDir}):`, err?.message || err);
+    }
   }
 
   const mainWin = windowManager.createWindow();
@@ -363,21 +343,9 @@ app.whenReady().then(() => {
     return Boolean(res.enabled);
   });
 
-  ipcMain.handle('voice:offlineStart', (_, aiName) => offlineVoice.start(aiName));
-  ipcMain.handle('voice:offlineStop', () => offlineVoice.stop());
-  ipcMain.handle('voice:offlineSetName', (_, aiName) => offlineVoice.setAiName(aiName));
-  ipcMain.handle('voice:offlineStatus', () => offlineVoice.getStatus());
-  ipcMain.handle('voice:offlineDictate', (_, timeoutSec, opts) => offlineVoice.dictateOnce(timeoutSec || 7, opts || {}));
-  ipcMain.handle('voice:offlineTranscribe', (_, wavBase64, opts) => offlineVoice.transcribeAudioBase64(wavBase64, opts));
-
   ipcMain.handle('updater:check', (_, cfg) => appUpdater.checkForUpdates(cfg || {}));
   ipcMain.handle('updater:download', (_, url) => appUpdater.downloadAndInstall(url));
   ipcMain.handle('updater:getState', () => appUpdater.getState());
-
-  ipcMain.handle('brain:status', () => getLocalBrain().getStatus());
-  ipcMain.handle('brain:setup', (_, action, payload) => getLocalBrain().setup(action, payload));
-  ipcMain.handle('brain:stop', () => getLocalBrain().stopSidecar());
-  ipcMain.handle('brain:chat', (_, opts) => getLocalBrain().chat(opts || {}));
 
   ipcMain.handle('episodic:log', (_, entry) => getEpisodicMemory().logTurn(entry || {}));
   ipcMain.handle('episodic:query', (_, filters) => getEpisodicMemory().queryTimeline(filters || {}));
@@ -403,11 +371,9 @@ app.whenReady().then(() => {
 app.on('will-quit', () => {
   windowManager?.disposeTray?.();
   systemWatchdog?.stop?.();
-  localBrain?.stopSidecar?.();
   episodicMemory?.close?.();
   pcActionKit.stopClipboardWatcher();
   pcScheduler?.dispose?.();
-  offlineVoice?.stop?.();
   globalShortcut.unregisterAll();
 });
 
@@ -570,8 +536,6 @@ ipcMain.handle('window:savePrefs', (_, patch) => {
 ipcMain.handle('window:getDisplays', () => windowManager.getDisplays());
 
 ipcMain.handle('app:emergencyStop', () => {
-  try { offlineVoice?.stop?.(); } catch {}
-  try { localBrain?.stopSidecar?.(); } catch {}
   emitRendererEvent('app:emergencyStop', { at: Date.now() });
   return { ok: true, stoppedAt: new Date().toISOString() };
 });
@@ -579,8 +543,6 @@ ipcMain.handle('app:emergencyStop', () => {
 ipcMain.handle('app:getDiagnostics', async () => {
   const totalMemMb = Math.round(os.totalmem() / 1048576);
   const freeMemMb = Math.round(os.freemem() / 1048576);
-  let brainInfo = null;
-  try { brainInfo = await localBrain?.getStatus?.(); } catch {}
   let schedItems = [];
   try { schedItems = getScheduler().listAll?.() || []; } catch {}
   return {
@@ -592,8 +554,6 @@ ipcMain.handle('app:getDiagnostics', async () => {
     totalMemMb,
     freeMemMb,
     usedMemPct: totalMemMb > 0 ? Math.round(((totalMemMb - freeMemMb) / totalMemMb) * 100) : 0,
-    offlineVoice: offlineVoice?.getStatus?.() || null,
-    localBrain: brainInfo,
     autoLaunch: getAutoLaunchManager().getStatus?.() || false,
     schedulerCount: schedItems.length,
     recentErrors: recentRuntimeErrors.slice(0, 10),

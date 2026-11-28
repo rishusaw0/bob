@@ -526,18 +526,6 @@ export const TOOLS = [
       required: ['action'],
     },
   },
-  {
-    type: 'function',
-    name: 'generate_image_tool',
-    description: 'Generates an image from a text prompt when the user asks to create/draw/generate a picture, logo, or wallpaper.',
-    parameters: {
-      type: 'object',
-      properties: {
-        prompt: { type: 'string', description: 'Detailed image description in English' },
-      },
-      required: ['prompt'],
-    },
-  },
 ];
 
 function guessDocumentMime(filePath) {
@@ -553,13 +541,8 @@ export async function executeFunctionCall(
   name,
   args = {},
   requestPermission = null,
-  { client, preferredModel, generateImage, fromVoice = false, userPrompt = '' } = {}
+  { client, preferredModel, fromVoice = false, userPrompt = '' } = {}
 ) {
-  if (name === 'generate_image_tool') {
-    const imageUrl = await generateImage(args.prompt);
-    return { result: 'Image generated successfully', generatedImage: imageUrl };
-  }
-
   const api = getSystemAPI();
   if (!api) return { error: 'JEEVA PC desktop app is required to run PC tools.' };
 

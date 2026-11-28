@@ -18,7 +18,7 @@ import {
 const DEMO_SCENARIOS = [
   {
     cmd: '"Hey Jeeva, Notepad mein likho aaj 5 baje meeting hai"',
-    badge: 'Local Engine · 0 API · 14ms',
+    badge: 'Windows PC Control · Deterministic',
     reply: 'Notepad khol kar text type kar diya hai.',
     state: 'SPEAKING',
   },
@@ -30,13 +30,13 @@ const DEMO_SCENARIOS = [
   },
   {
     cmd: '"Desktop par notes.pdf hai isko summarize karo aur sunao"',
-    badge: 'Offline PDF Brain · Indian Voice',
-    reply: '3 key points extracted locally — reading aloud in Indian English.',
+    badge: 'Gemini Flash-Lite · Gemini Voice',
+    reply: 'Gemini summarized the PDF and is reading the key points aloud.',
     state: 'NARRATING',
   },
   {
     cmd: '"YouTube fullscreen karo aur VS Code terminal kholo"',
-    badge: 'Multi-App Voice Control · 0 API',
+    badge: 'Gemini Voice · Multi-App Control',
     reply: 'YouTube fullscreen kiya aur VS Code terminal open kar diya.',
     state: 'EXECUTED',
   },
@@ -62,9 +62,9 @@ export default function LandingPage() {
   const features = [
     {
       icon: LuCpu,
-      tag: '0 API COST',
-      title: 'Own Hybrid Local Brain',
-      desc: 'Runs PC commands, typing, reminders, file search, and digital PDFs in <30ms locally — with optional Qwen 2.5 / Gemma 3 on-device SLM.',
+      tag: 'GEMINI FLASH-LITE',
+      title: 'Gemini-Powered Everyday Assistant',
+      desc: 'Everyday AI answers use Gemini 3.5 Flash-Lite. Windows PC controls, reminders, timers, saved memory and basic file utilities stay lightweight and can work offline.',
       accent: 'text-emerald-400',
     },
     {
@@ -90,16 +90,16 @@ export default function LandingPage() {
     },
     {
       icon: LuFileText,
-      tag: 'OFFLINE DOCS + OCR',
-      title: 'Voice PDF & Screen Reader',
-      desc: 'Say any file path on Desktop or Downloads to read or summarize PDFs offline, plus read & click visible screen buttons via Windows OCR.',
+      tag: 'FILES + SCREEN TOOLS',
+      title: 'Gemini Voice, PDF & Screen Reader',
+      desc: 'Ask Gemini to summarize documents and read answers aloud. Windows OCR can inspect the active screen and click visible controls through PC automation.',
       accent: 'text-emerald-300',
     },
     {
       icon: LuAudioLines,
-      tag: 'OWN VOICE + HUMAN STUDIO',
-      title: 'Clone Your Voice & Human Personas',
-      desc: 'Speak with realistic human Studio voices in Indian English, Hindi, or Hinglish — or clone your own voice in 20 seconds.',
+      tag: 'GEMINI HINDI + HINGLISH VOICE',
+      title: 'Natural Gemini Voice Replies',
+      desc: 'Use Gemini voice output for natural spoken replies in Hindi, Hinglish, or English. Voice input is transcribed through Gemini; no local speech model is installed.',
       accent: 'text-sky-300',
     },
   ];
@@ -112,8 +112,8 @@ export default function LandingPage() {
     },
     {
       num: '02',
-      title: 'Command-First Local Lock',
-      desc: 'Everyday PC commands never burn cloud quota. Only visual inspection, live web queries, or heavy coding escalate to Gemini Cloud.',
+      title: 'One Gemini AI Brain',
+      desc: 'All AI answers use Gemini 3.5 Flash-Lite. Supported PC actions, saved memory, reminders and timers use deterministic code locally; AI answers and voice require internet.',
     },
     {
       num: '03',
@@ -187,7 +187,7 @@ export default function LandingPage() {
         <div className="max-w-3xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-white/5 border border-emerald-500/30 text-[11px] font-mono text-emerald-300 mb-6 backdrop-blur">
             <LuSparkles className="w-3.5 h-3.5 text-emerald-400" />
-            <span>ZERO-API LOCAL COMMANDS · CAMERA NOTCH UI · CLOUD VISION</span>
+            <span>GEMINI FLASH-LITE · LIGHTWEIGHT PC CONTROLS · CAMERA NOTCH UI</span>
           </div>
 
           <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.08] mb-5 text-gradient-futuristic">
@@ -195,7 +195,7 @@ export default function LandingPage() {
           </h1>
 
           <p className="text-sm sm:text-base text-zinc-400 max-w-2xl mx-auto leading-relaxed mb-8">
-            Speak naturally in Hindi, Hinglish, or English. JEEVA runs Windows apps, types anywhere, reads PDFs &amp; your screen offline, remembers tasks for 90 days, and switches to Gemini Cloud only for heavy vision or live web queries.
+            Speak naturally in Hindi, Hinglish, or English. JEEVA uses Gemini 3.5 Flash-Lite for everyday AI answers, Gemini voice for transcription and speech, and lightweight Windows code for PC controls, files, reminders and saved memory.
           </p>
 
           <div className="flex flex-col items-center justify-center gap-2.5 mb-12">
@@ -216,7 +216,7 @@ export default function LandingPage() {
               </a>
             </div>
             <p className="text-[11px] font-mono text-zinc-500">
-              v1.0.3 · Windows 10 / 11 (64-bit) · Offline-First Desktop Software · Free
+              v1.0.4 · Windows 10 / 11 (64-bit) · Gemini-Powered Lightweight Desktop Software
             </p>
           </div>
         </div>
@@ -400,7 +400,7 @@ export default function LandingPage() {
       </section>
 
       <footer className="relative z-10 mt-auto border-t border-white/10 py-6 text-center text-xs text-zinc-500">
-        JEEVA AI · <a href="https://webbuildix.online/" className="text-zinc-300 hover:text-emerald-400 transition-colors">webbuildix.online</a> — Hybrid Local + Cloud Windows PC Assistant · Created by Roushan Kumar
+        JEEVA AI · <a href="https://webbuildix.online/" className="text-zinc-300 hover:text-emerald-400 transition-colors">webbuildix.online</a> — Gemini-Powered Windows PC Assistant · Created by Roushan Kumar
       </footer>
 
       {showDownloadGuide && (

@@ -596,13 +596,9 @@ export default function MessageBubble({ message, onEdit, onRegenerate, onEscalat
                 >
                   {message.brainMeta.tier === 'cloud'
                     ? 'Cloud AI'
-                    : message.brainMeta.tier === 'local-slm'
-                      ? 'Local AI'
-                      : message.brainMeta.tier === 'local-guard'
-                        ? 'Local Guard'
-                        : message.brainMeta.tier === 'intent'
-                          ? 'Smart Local'
-                          : 'Local Engine · 0 API'}
+                    : message.brainMeta.tier === 'offline-guard'
+                      ? 'Offline · Basic Tools'
+                      : 'PC Utility / Memory'}
                 </span>
               )}
               {message.timestamp && (
@@ -612,7 +608,7 @@ export default function MessageBubble({ message, onEdit, onRegenerate, onEscalat
                 <button
                   onClick={() => onEscalateToGemini(message.id)}
                   className="inline-flex items-center gap-1 text-[11px] text-sky-300 hover:text-sky-200 transition-colors"
-                  title="Send this exact question to Gemini Cloud API instead"
+                  title="Ask Gemini about this reply"
                 >
                   <LuSparkles className="w-3 h-3" />
                   Ask Gemini

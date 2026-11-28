@@ -51,11 +51,6 @@ export interface ElectronBridgeAPI {
   onWatchdogAlert: (cb: (alert: WatchdogAlert) => void) => () => void;
   getAutoLaunch: () => Promise<boolean>;
   setAutoLaunch: (enabled: boolean) => Promise<boolean>;
-  localBrainStatus: () => Promise<any>;
-  localBrainSetup: (action: string, payload?: any) => Promise<any>;
-  localBrainStop: () => Promise<any>;
-  localBrainChat: (opts: { messages: any[]; tools?: any[]; temperature?: number; maxTokens?: number }) => Promise<any>;
-  onLocalBrainProgress: (cb: (ev: any) => void) => () => void;
   episodicLog: (entry: any) => Promise<any>;
   episodicQuery: (filters?: any) => Promise<any[]>;
   episodicSummaries: (days?: number) => Promise<any[]>;
@@ -63,7 +58,6 @@ export interface ElectronBridgeAPI {
   episodicClear: () => Promise<{ cleared: boolean }>;
   extractDocText: (payload: { filePath?: string; base64?: string; name?: string }) => Promise<any>;
   screenRead: (mode?: 'read' | 'ocr' | 'click_text', targetText?: string) => Promise<any>;
-  offlineVoiceDictate: (timeoutSec?: number) => Promise<{ text: string; confidence?: number }>;
   updateNotchState: (state: { visible?: boolean; orbState?: string; aiName?: string; transcript?: string; replyText?: string; freqBands?: number[] }) => Promise<boolean>;
   notchAction: (action: 'hide' | 'open_chat' | 'toggle_mic') => Promise<any>;
   onNotchEvent: (cb: (ev: { action: string }) => void) => () => void;

@@ -24,7 +24,10 @@ assert.equal(appLock.version, appPackage.version, 'package-lock root version mus
 assert.equal(appLock.packages?.['']?.version, appPackage.version, 'lockfile root package version must match package.json');
 assert.equal(appPackage.build?.nsis?.artifactName, 'JEEVA.AI.Setup.${version}.${ext}', 'NSIS artifact filename must match the published installer URL');
 assert.ok(readRel('src/components/LandingPage.jsx').includes("window.location.assign('/download')"), 'Landing page download uses the static server download route');
-assert.ok(readRel('server/index.js').includes(`releases/latest/download/${expectedInstaller}`), 'Download route points to the installer matching the package version');
+const downloadServerSource = readRel('server/index.js');
+assert.ok(downloadServerSource.includes("const APP_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;"), 'Download route reads the current package version');
+assert.ok(downloadServerSource.includes("const expectedInstaller = `JEEVA.AI.Setup.${APP_VERSION}.exe`;"), 'Download route constructs the installer filename dynamically');
+assert.ok(downloadServerSource.includes('releases/latest/download/${expectedInstaller}'), 'Download route points to the dynamically named current installer');
 
 // 1. Node syntax check on server & all Electron CJS modules
 console.log('[1/6] Checking JS/CJS syntax...');
@@ -82,7 +85,6 @@ const toolsArrayBlock = toolsSrc.slice(toolsSrc.indexOf('export const TOOLS'), t
 const declaredTools = [...toolsArrayBlock.matchAll(/name:\s*'([a-z_]+)'/g)].map((m) => m[1]);
 const execBlock = toolsSrc.slice(toolsSrc.indexOf('export async function executeFunctionCall'));
 const handledCases = new Set([...execBlock.matchAll(/case\s*'([a-z_]+)'/g)].map((m) => m[1]));
-if (execBlock.includes("name === 'generate_image_tool'")) handledCases.add('generate_image_tool');
 if (execBlock.includes("name === 'mobile_browser_action'")) handledCases.add('mobile_browser_action');
 
 const permCases = new Set(
@@ -538,31 +540,31 @@ assert.ok(spChunks.length >= 1 && spChunks[0].length <= 100);
 const decChunks = splitIntoChunks('Your laptop has 3.8 GB free RAM and 85.5% battery. Everything looks healthy!', 220, 100);
 assert.ok(decChunks[0].includes('3.8 GB') && decChunks[0].includes('85.5 percent'));
 
-// Layer-1 slot action verification (0 Gemini API calls)
-const { runLocalQuickBrain } = await import(pathToFileURL(path.join(ROOT, 'src/services/localQuickBrain.js')).href);
+// Deterministic Windows PC command verification (no local AI model)
+const { runPcCommand } = await import(pathToFileURL(path.join(ROOT, 'src/services/pcCommandRouter.js')).href);
 
-const remHit = await runLocalQuickBrain('10 minute baad meeting reminder lagao');
+const remHit = await runPcCommand('10 minute baad meeting reminder lagao');
 assert.equal(remHit.handled, true);
 assert.equal(remHit.tools[0].name, 'schedule_pc_task');
 
-const orgHit = await runLocalQuickBrain('downloads organize karo');
+const orgHit = await runPcCommand('downloads organize karo');
 assert.equal(orgHit.handled, true);
 assert.equal(orgHit.tools[0].name, 'file_manager_pro');
 
-const btHit = await runLocalQuickBrain('bluetooth settings kholo');
+const btHit = await runPcCommand('bluetooth settings kholo');
 assert.equal(btHit.handled, true);
 assert.equal(btHit.tools[0].name, 'open_windows_setting');
 assert.equal(btHit.tools[0].args.setting, 'bluetooth');
 
 // Intelligence upgrades: natural memory intro/recall + pronoun follow-up resolution
-const nameSave = await runLocalQuickBrain('Mera naam Roushan hai');
+const nameSave = await runPcCommand('Mera naam Roushan hai');
 assert.equal(nameSave.handled, true);
 assert.equal(nameSave.tools[0].name, 'memory_rag');
-const nameRecall = await runLocalQuickBrain('Mera naam kya hai?');
+const nameRecall = await runPcCommand('Mera naam kya hai?');
 assert.equal(nameRecall.handled, true);
 assert.ok(nameRecall.replyText.includes('Roushan'));
 
-const followUpClose = await runLocalQuickBrain('isko band karo', {
+const followUpClose = await runPcCommand('isko band karo', {
   historyMessages: [
     { role: 'user', text: 'Notepad kholo' },
     { role: 'assistant', text: 'Maine notepad khol diya hai.', tools: [{ name: 'open_application', args: { app_name: 'notepad' } }] },
@@ -573,33 +575,33 @@ assert.equal(followUpClose.tools[0].name, 'close_application');
 assert.equal(followUpClose.tools[0].args.app_name, 'notepad');
 
 // Voice file-location PDF reading & summarizing test (0 Gemini API calls)
-const docLocRead = await runLocalQuickBrain('Desktop par notes.pdf hai isko summarize karo aur sunao');
+const docLocRead = await runPcCommand('Desktop par notes.pdf hai isko summarize karo aur sunao');
 assert.equal(docLocRead.handled, true);
 assert.equal(docLocRead.tools[0].name, 'read_document_file');
 assert.equal(docLocRead.autoSpeak, true);
 assert.ok(docLocRead.replyText.toLowerCase().includes('solar'));
 
 // Date/Time Reminder + VS Code / GitHub / Chrome / YouTube local control tests
-const decRem = await runLocalQuickBrain('5 December ko shaam 6 baje yaad dilana meeting hai');
+const decRem = await runPcCommand('5 December ko shaam 6 baje yaad dilana meeting hai');
 assert.equal(decRem.handled, true);
 assert.equal(decRem.tools[0].name, 'schedule_pc_task');
 assert.equal(decRem.tools[0].args.action, 'remind_date');
 assert.equal(decRem.tools[0].args.early_warn_minutes, 30);
 
-const ytFs = await runLocalQuickBrain('youtube fullscreen karo');
+const ytFs = await runPcCommand('youtube fullscreen karo');
 assert.equal(ytFs.handled, true);
 assert.equal(ytFs.tools[0].name, 'browser_control');
 assert.equal(ytFs.tools[0].args.action, 'youtube_fullscreen');
 
-const incog = await runLocalQuickBrain('incognito kholo');
+const incog = await runPcCommand('incognito kholo');
 assert.equal(incog.handled, true);
 assert.equal(incog.tools[0].args.action, 'new_incognito');
 
-const vscTerm = await runLocalQuickBrain('vs code terminal kholo');
+const vscTerm = await runPcCommand('vs code terminal kholo');
 assert.equal(vscTerm.handled, true);
 assert.equal(vscTerm.tools[0].name, 'press_shortcut');
 
-const ghPulls = await runLocalQuickBrain('github pulls kholo');
+const ghPulls = await runPcCommand('github pulls kholo');
 assert.equal(ghPulls.handled, true);
 assert.equal(ghPulls.tools[0].args.url, 'https://github.com/pulls');
 
@@ -638,95 +640,80 @@ assert.ok(!serverSource.includes('WebSocket'), 'hosted WebSocket relay is remove
 assert.ok(!readRel('render.yaml').includes('GEMINI_API_KEY'), 'landing deployment has no server-managed Gemini key');
 assert.ok(!readRel('render.yaml').includes('APP_PIN'), 'landing deployment has no owner PIN or workspace lock');
 
-// Hybrid Local AI Brain tests (Semantic Intent, Top-4 Tool Pruning, Escalation Gatekeeper & Hardware Profile)
+// Gemini-only routing, deterministic PC commands, and TTS profile tests.
 const { pickTopToolsForQuery } = await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
 const { assessQueryRouting, compactHistoryForCloud } = await import(pathToFileURL(path.join(ROOT, 'src/services/brainRouter.js')).href);
-const { detectHardwareProfile, LOW_END_MODELS, getSafeThreadCount, getModelResourceProfile, isLoopbackEndpoint } = require(path.join(ROOT, 'electron/local-brain.cjs'));
-const { validateLocalToolCall } = await import(pathToFileURL(path.join(ROOT, 'src/services/localLlm.js')).href);
 
-const lagIntent = classifyIntent('yaar laptop bohot lag kr raha hai check kro');
+const lagIntent = classifyIntent('laptop hang lag slow ho raha hai check karo');
 assert.equal(lagIntent?.tool, 'system_diagnostics');
 assert.ok(lagIntent?.confidence >= 0.4);
-assert.equal(classifyIntent('chrome delete kr do'), null); // Destructive phrases never auto-route blindly
+assert.equal(classifyIntent('chrome delete kr do'), null);
 
 const top4 = pickTopToolsForQuery('wifi network status check karo', 4);
 assert.equal(top4.length, 4);
 assert.ok(top4.includes('get_wifi_status'));
 
-const routeCloud = assessQueryRouting('@cloud write a react compiler architecture', null, 'auto');
+const routeCloud = assessQueryRouting('@cloud write a react compiler architecture', null, 'cloud', { online: true });
 assert.equal(routeCloud.forceCloud, true);
 assert.equal(routeCloud.shouldTryLocalFirst, false);
+assert.equal(routeCloud.strictNoApi, false);
 
-const routeLocal = assessQueryRouting('18% of 2500 kitna hoga', null, 'auto');
-assert.equal(routeLocal.shouldTryLocalFirst, true);
+const pcRoute = assessQueryRouting('notepad me hello world type karo', null, 'cloud', { online: true, strictLocalCommands: true });
+assert.equal(pcRoute.queryKind, 'pc_command');
+assert.equal(pcRoute.strictNoApi, false);
+assert.equal(pcRoute.forceCloud, true);
 
-const cmdRouteCloudMode = assessQueryRouting('notepad me hello world type karo', null, 'cloud', { online: true, strictLocalCommands: true });
-assert.equal(cmdRouteCloudMode.queryKind, 'pc_command');
-assert.equal(cmdRouteCloudMode.strictNoApi, true);
-assert.equal(cmdRouteCloudMode.forceCloud, false);
-
-const weatherRoute = assessQueryRouting('aaj Delhi ka weather kya hai', null, 'auto', { online: true });
+const weatherRoute = assessQueryRouting('aaj Delhi ka weather kya hai', null, 'cloud', { online: true });
 assert.equal(weatherRoute.queryKind, 'cloud_web_heavy');
 assert.equal(weatherRoute.heavyReason, 'live_web_knowledge');
-assert.equal(weatherRoute.strictNoApi, false);
 
-const explicitCloudCmd = assessQueryRouting('@gemini chrome kholo', null, 'auto', { online: true });
+const offlineRoute = assessQueryRouting('Chrome ke baare me explain karo', null, 'cloud', { online: false });
+assert.equal(offlineRoute.mode, 'offline');
+assert.equal(offlineRoute.forceCloud, false);
+assert.equal(offlineRoute.forceLocal, false);
+
+const explicitCloudCmd = assessQueryRouting('@gemini chrome kholo', null, 'cloud', { online: true });
 assert.equal(explicitCloudCmd.forceCloud, true);
 assert.equal(explicitCloudCmd.strictNoApi, false);
 
-const hw = detectHardwareProfile();
-assert.ok(hw.totalGb > 0 && hw.safeThreads >= 1 && hw.safeThreads <= 3);
-assert.equal(getSafeThreadCount(2, 4), 1);
-assert.equal(getSafeThreadCount(4, 8), 1);
-assert.equal(getSafeThreadCount(8, 8), 2);
-assert.equal(getSafeThreadCount(16, 16), 3);
-const ultraProfile = getModelResourceProfile('qwen2.5:0.5b', 4);
-assert.equal(ultraProfile.numCtx, 1024);
-assert.equal(ultraProfile.maxTokens, 192);
-assert.ok(ultraProfile.minFreeRamGb > 1.2);
-assert.equal(isLoopbackEndpoint('http://127.0.0.1:11434'), true);
-assert.equal(isLoopbackEndpoint('https://example.com/v1'), false);
-assert.ok(LOW_END_MODELS.some((m) => m.id === 'qwen2.5:1.5b'));
-const localBrainSource = readRel('electron/local-brain.cjs');
-const electronMainSource = readRel('electron/main.cjs');
-assert.ok(localBrainSource.includes("action === 'auto_setup'"), 'Local Brain must expose automatic first-launch setup');
-assert.ok(localBrainSource.includes("action === 'retry_auto_setup'"), 'Local Brain must allow explicit retry after failed setup');
-assert.ok(electronMainSource.includes('if (app.isPackaged)') && electronMainSource.includes("setup('auto_setup')"), 'Packaged app must trigger non-blocking first-launch model setup');
+assert.ok(compactHistoryForCloud([
+  { role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' },
+  { role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' },
+], 2).includes('CONVERSATION CONTEXT DIGEST'));
 
-const allowedLocalTool = validateLocalToolCall('open_application', { app_name: 'chrome' }, ['open_application']);
-assert.equal(validateLocalToolCall('run_system_command', { command: 'whoami' }, ['run_system_command']).ok, false);
-assert.equal(allowedLocalTool.ok, true);
-assert.equal(validateLocalToolCall('run_system_command', { command: 'whoami' }, ['open_application']).ok, false);
-assert.equal(validateLocalToolCall('open_application', { app_name: 42 }, ['open_application']).ok, false);
-assert.equal(validateLocalToolCall('open_application', { app_name: 'chrome', extra: true }, ['open_application']).ok, false);
-assert.equal(validateLocalToolCall('control_volume', { action: 'delete' }, ['control_volume']).ok, false);
-assert.ok(compactHistoryForCloud([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'hello' }, { role: 'user', text: 'a' }, { role: 'assistant', text: 'b' }, { role: 'user', text: 'c' }], 2).includes('CONVERSATION CONTEXT DIGEST'));
+const geminiSource = readRel('src/services/gemini.js');
+const appRuntimeSource = readRel('src/App.jsx');
+const electronRuntimeSource = readRel('electron/main.cjs');
+const preloadRuntimeSource = readRel('electron/preload.cjs');
+const pkgRuntime = JSON.parse(readRel('package.json'));
+assert.ok(geminiSource.includes("const GEMINI_MODEL_ID = 'gemini-3.5-flash-lite'"));
+assert.ok(geminiSource.includes("const cfg = { ...config, model: GEMINI_MODEL_ID }"));
+assert.ok(!/gemini-(?:4-|2[.]5|nano-banana|3[.]8-live)/.test(geminiSource));
+assert.ok(appRuntimeSource.includes('runPcCommand') && appRuntimeSource.includes('pcCommandRouter'));
+assert.ok(!appRuntimeSource.includes('runLocalSlmTurn') && !appRuntimeSource.includes('runLocalDocumentTurn'));
+assert.ok(!electronRuntimeSource.includes('localBrain') && !electronRuntimeSource.includes('offlineVoice'));
+assert.ok(!preloadRuntimeSource.includes('localBrain') && !preloadRuntimeSource.includes('offlineVoice'));
+assert.ok(pkgRuntime.build.files.includes('!electron/local-brain.cjs'));
+assert.ok(pkgRuntime.build.files.includes('!electron/offline-voice.cjs'));
+assert.ok(pkgRuntime.build.files.includes('!electron/win-voice.ps1'));
 
-// Indian-style TTS accent default, Human Personas, Custom Cloned Voice & Speech Clarity tests
 const {
   cleanTextForSpeech,
   detectVoiceProfile,
   getVoiceAccent,
-  getSpeechSpeedMode,
   VOICE_PERSONAS,
   getVoicePersona,
-  getActiveCustomVoiceId,
-  saveCustomClonedVoice,
-  removeCustomClonedVoice,
 } = await import(pathToFileURL(path.join(ROOT, 'src/services/speech.js')).href);
 assert.equal(getVoiceAccent(), 'indian');
-assert.equal(getSpeechSpeedMode(), 'hybrid_fast');
 assert.equal(getVoicePersona(), 'natural_warm');
 assert.ok(VOICE_PERSONAS.calm_pro && VOICE_PERSONAS.crisp_studio);
-saveCustomClonedVoice({ id: 'voice_test_123', displayName: 'Test Voice' });
-assert.equal(getActiveCustomVoiceId(), 'voice_test_123');
-removeCustomClonedVoice('voice_test_123');
-assert.equal(getActiveCustomVoiceId(), '');
+
+// Desktop brand icon & packaging checks
 // Desktop brand icon & packaging checks
 assert.ok(fs.existsSync(path.join(ROOT, 'public/icon.png')));
 assert.ok(fs.readFileSync(path.join(ROOT, 'public/icon.svg'), 'utf8').includes('viewBox="0 0 128 128"'));
 
-// Regression tests: Strict Offline Mode, NSIS installer hooks & offline-voice resilience
+// Gemini-only offline policy and lightweight installer checks.
 const {
   isStrictOfflineMode,
   setStrictOfflineMode,
@@ -734,162 +721,53 @@ const {
   SERVICE_CLASSIFICATION,
 } = await import(pathToFileURL(path.join(ROOT, 'src/services/offlineMode.js')).href);
 assert.equal(isStrictOfflineMode(), false);
-assert.ok(SERVICE_CLASSIFICATION.length >= 10);
-setStrictOfflineMode(true);
-assert.equal(isStrictOfflineMode(), true);
-assert.throws(() => assertCloudAllowed('Gemini Cloud Chat'), /Strict Offline Mode/);
+assert.equal(setStrictOfflineMode(true), false, 'Legacy offline-AI toggle must not re-enable a local model');
+assert.equal(isStrictOfflineMode(), false);
+assert.ok(SERVICE_CLASSIFICATION.some((item) => item.id === 'pc_automation'));
+assert.doesNotThrow(() => assertCloudAllowed('Gemini Cloud Chat'));
 setStrictOfflineMode(false);
+
 assert.ok(fs.existsSync(path.join(ROOT, 'build/installer.nsh')));
 const installerNsh = fs.readFileSync(path.join(ROOT, 'build/installer.nsh'), 'utf8');
 assert.ok(installerNsh.includes('${ifNot} ${isUpdated}'), 'Uninstall cleanup must not run during updates');
 assert.ok(installerNsh.includes('taskkill /IM "JEEVA AI.exe"') && installerNsh.includes('taskkill /F /IM "JEEVA AI.exe" /T'), 'Installer must try graceful shutdown before force-kill fallback');
 assert.ok(installerNsh.includes('IfSilent jeeva_keep_app_data') && installerNsh.includes('/SD IDNO'), 'Silent/default uninstall must preserve user data');
 const pkgJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+assert.equal(pkgJson.version, '1.0.4');
 assert.equal(pkgJson.build?.nsis?.include, 'build/installer.nsh');
-const { createOfflineVoice } = require(path.join(ROOT, 'electron/offline-voice.cjs'));
-const ov = createOfflineVoice({ resolveUnpackedPath: () => '' });
-const emptyDict = await ov.dictateOnce(3);
-assert.equal(emptyDict.text, '');
-assert.equal(typeof ov.getStatus().supportsFullHindiHinglish, 'boolean');
-const noWhisper = await ov.transcribeAudioBase64('UklGRg==', { language: 'hi' });
-assert.equal(noWhisper.ok, false);
 
-// Offline ASR engine integration, language selection, and fallback policy tests
-console.log('[ASR] Testing Whisper.cpp, Vosk capability reporting, SAPI fallback, and language paths...');
-const {
-  createOfflineVoice: createAsrVoice,
-  detectLocalAsrEngines,
-  normalizeAsrLanguage,
-  decodePcmWavBase64,
-  cleanWhisperOutput,
-} = require(path.join(ROOT, 'electron/offline-voice.cjs'));
-const asrRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-asr-test-'));
-const modelsDir = path.join(asrRoot, 'voice-models');
-fs.mkdirSync(modelsDir, { recursive: true });
-fs.mkdirSync(path.join(modelsDir, 'vosk-model-small-hi'), { recursive: true });
-const voskOnly = detectLocalAsrEngines(asrRoot);
-assert.equal(voskOnly.voskReady, false, 'Vosk must not be advertised without a wired runtime');
-assert.equal(voskOnly.voskSupported, false);
-assert.equal(voskOnly.whisperReady, false);
-fs.writeFileSync(path.join(modelsDir, 'whisper-cli.exe'), '');
-fs.writeFileSync(path.join(modelsDir, 'ggml-small.bin'), '');
-const whisperDetected = detectLocalAsrEngines(asrRoot);
-assert.equal(whisperDetected.whisperReady, true);
-assert.equal(whisperDetected.engineType, 'whisper.cpp');
-assert.equal(whisperDetected.supportsFullHindiHinglish, true);
-assert.equal(normalizeAsrLanguage('hi-IN'), 'hi');
-assert.equal(normalizeAsrLanguage('en-IN'), 'en');
-assert.equal(normalizeAsrLanguage('Hinglish'), 'auto');
-assert.equal(cleanWhisperOutput('whisper_init_from_file: model loaded\n[00:00:01.000 --> 00:00:02.000] नमस्ते Jeeva'), 'नमस्ते Jeeva');
-const makeWavB64 = () => {
-  const wav = Buffer.alloc(46);
-  wav.write('RIFF', 0); wav.writeUInt32LE(38, 4); wav.write('WAVE', 8);
-  wav.write('fmt ', 12); wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20);
-  wav.writeUInt16LE(1, 22); wav.writeUInt32LE(16000, 24);
-  wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32);
-  wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(2, 40);
-  wav.writeInt16LE(0, 44);
-  return wav.toString('base64');
-};
-const validWav = makeWavB64();
-assert.equal(decodePcmWavBase64(validWav).ok, true);
-assert.equal(decodePcmWavBase64('UklGRg==').ok, false);
-const { EventEmitter } = require('node:events');
-const spawnCalls = [];
-const fakeSpawn = (exe, args) => {
-  spawnCalls.push({ exe, args });
-  const child = new EventEmitter();
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.stdin = { end() {} };
-  child.kill = () => {};
-  queueMicrotask(() => {
-    child.stdout.emit('data', Buffer.from('नमस्ते Jeeva'));
-    child.emit('close', 0);
-  });
-  return child;
-};
-const asrVoice = createAsrVoice({ userDataDir: asrRoot, resolveUnpackedPath: () => '', spawnProcess: fakeSpawn });
-const hindiTranscript = await asrVoice.transcribeAudioBase64(validWav, { language: 'hi' });
-assert.equal(hindiTranscript.ok, true);
-assert.equal(hindiTranscript.text, 'नमस्ते Jeeva');
-assert.equal(hindiTranscript.engine, 'whisper.cpp');
-assert.ok(spawnCalls[0].args.includes('hi'));
-assert.ok(!spawnCalls[0].args.includes('--no-prints'), 'Do not suppress Whisper transcript output');
-for (const lang of ['en', 'auto']) {
-  const result = await asrVoice.transcribeAudioBase64(validWav, { language: lang });
-  assert.equal(result.ok, true);
-  const call = spawnCalls[spawnCalls.length - 1];
-  assert.equal(call.args[call.args.indexOf('-l') + 1], lang, `Whisper must receive requested language: ${lang}`);
-}
-const emptyVoice = createAsrVoice({ userDataDir: asrRoot, resolveUnpackedPath: () => '' });
-const invalidWav = await emptyVoice.transcribeAudioBase64('UklGRg==');
-assert.equal(invalidWav.ok, false);
-const sapiVoice = createAsrVoice({
-  userDataDir: asrRoot,
-  resolveUnpackedPath: (name) => name,
-  spawnProcess: (exe, args) => {
-    const child = new EventEmitter();
-    child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
-    child.stdin = { end() {} }; child.kill = () => {};
-    assert.ok(args.includes('hi'), 'SAPI dictation must receive requested language');
-    queueMicrotask(() => {
-      child.stdout.emit('data', Buffer.from(JSON.stringify({ type: 'dictation', text: 'नमस्ते', culture: 'hi-IN' }) + '\n'));
-      child.emit('close', 0);
-    });
-    return child;
-  },
-});
-const sapiResult = await sapiVoice.dictateOnce(3, { language: 'hi' });
-assert.equal(sapiResult.text, 'नमस्ते');
-assert.equal(sapiResult.engine, 'windows-sapi');
-assert.equal(sapiResult.fallback, true);
-fs.rmSync(asrRoot, { recursive: true, force: true });
-
-// Language regression phrases used for manual microphone QA; text cases do not claim acoustic accuracy.
-const asrLanguageCases = [
-  { language: 'hi', phrase: 'नमस्ते जीवा, आवाज़ बढ़ाओ' },
-  { language: 'en', phrase: 'Hey Jeeva, increase the volume to fifty percent' },
-  { language: 'auto', phrase: 'Jeeva volume 50 kar do aur Chrome kholo' },
-];
-assert.deepEqual(asrLanguageCases.map((x) => x.language), ['hi', 'en', 'auto']);
 const voiceCaptureSource = fs.readFileSync(path.join(ROOT, 'src/services/voiceCapture.js'), 'utf8');
-assert.ok(voiceCaptureSource.includes('api.offlineVoiceDictate(7, { language })'));
-assert.ok(voiceCaptureSource.indexOf('if (isStrictOfflineMode())') < voiceCaptureSource.indexOf("return await transcribeAudio(wavBase64, 'audio/wav', opts)"), 'Strict Offline check must occur before cloud transcription');
+assert.ok(voiceCaptureSource.includes("return await transcribeAudio(wavBase64, 'audio/wav', opts)"));
+assert.ok(!voiceCaptureSource.includes('offlineVoiceDictate') && !voiceCaptureSource.includes('offlineVoiceTranscribe'));
 const preloadSource = fs.readFileSync(path.join(ROOT, 'electron/preload.cjs'), 'utf8');
-assert.ok(preloadSource.includes("offlineVoiceDictate: (timeoutSec, opts)"));
+assert.ok(!preloadSource.includes('offlineVoiceDictate') && !preloadSource.includes('localBrainSetup'));
 const mainSource = fs.readFileSync(path.join(ROOT, 'electron/main.cjs'), 'utf8');
-assert.ok(mainSource.includes("userDataDir: app.getPath('userData')"));
-const sapiScript = fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8');
-assert.ok(sapiScript.includes('[string]$Culture = "auto"') && sapiScript.includes('No installed Windows SAPI recognizer matches requested culture'));
-assert.ok(sapiScript.includes('System.Speech.Recognition.DictationGrammar'));
+assert.ok(!mainSource.includes('createOfflineVoice') && !mainSource.includes('createLocalBrainManager'));
+assert.ok(mainSource.includes("for (const legacyDir of ['local-brain', 'voice-models'])"));
 
+// Local Document extraction tests remain deterministic; the summarizer is not used as the AI reply engine.
 // Local Document RAG Search + Hardware GPU/RAM AI Model Selection + Strict Offline Cloud Block tests
 const { indexDocumentChunks, searchLocalDocuments } = await import(pathToFileURL(path.join(ROOT, 'src/services/docExtractor.js')).href);
 const docChunks = indexDocumentChunks('sales_2026.xlsx', 'Q1 Total Sales: 145000 INR.\n\nQ2 Total Sales: 210000 INR.', 60);
 const docHits = searchLocalDocuments('total sales Q2', [{ name: 'sales_2026.xlsx', chunks: docChunks }], 2);
 assert.ok(docHits.length >= 1 && docHits[0].source === 'sales_2026.xlsx' && docHits[0].section.startsWith('Section '));
 
-const hwProf = detectHardwareProfile();
-assert.ok(hwProf.totalGb > 0 && hwProf.recommendedModel && 'gpuVramGb' in hwProf);
 
-const { startLiveVoiceCall } = await import(pathToFileURL(path.join(ROOT, 'src/services/liveAudio.js')).href);
+// Gemini API, audio and no-fallback contracts.
 const {
-  sendMessage: sendCloudMsg,
-  transcribeAudio: transcribeCloudAudio,
-  textToSpeech: cloudTts,
-  createReplicatedVoice: cloudVoiceClone,
-  generateImage: cloudImageGen,
+  SMOKE_CANDIDATE_MODELS,
 } = await import(pathToFileURL(path.join(ROOT, 'src/services/gemini.js')).href);
-setStrictOfflineMode(true);
-await assert.rejects(() => startLiveVoiceCall(), /Strict Offline Mode/);
-await assert.rejects(() => sendCloudMsg('hello'), /Strict Offline Mode/);
-await assert.rejects(() => transcribeCloudAudio('UklGRg=='), /Strict Offline Mode/);
-await assert.rejects(() => cloudTts('hello'), /Strict Offline Mode/);
-await assert.rejects(() => cloudVoiceClone({ sourceWavBase64: 'a', consentWavBase64: 'b' }), /Strict Offline Mode/);
-await assert.rejects(() => cloudImageGen('cat'), /Strict Offline Mode/);
-setStrictOfflineMode(false);
+assert.deepEqual(SMOKE_CANDIDATE_MODELS, ['gemini-3.5-flash-lite']);
+assert.ok(!readRel('src/services/tools.js').includes('generate_image_tool'), 'image generation is not exposed in Flash-Lite-only mode');
+assert.ok(readRel('src/services/gemini.js').includes("model: GEMINI_TTS_MODEL_ID"), 'Gemini TTS uses its dedicated cloud speech model');
+assert.ok(readRel('src/services/gemini.js').includes("responseModalities: ['AUDIO']"), 'Gemini TTS requests audio modality');
+const useVoiceEngineSource = fs.readFileSync(path.join(ROOT, 'src/services/useVoiceEngine.js'), 'utf8');
+assert.ok(!useVoiceEngineSource.includes('startLiveVoiceCall') && !useVoiceEngineSource.includes('toggleLiveCall'));
+const speechRuntimeSource = fs.readFileSync(path.join(ROOT, 'src/services/speech.js'), 'utf8');
+assert.ok(!speechRuntimeSource.includes('speechSynthesis') && !speechRuntimeSource.includes('speakChunkNative'));
+assert.ok(speechRuntimeSource.includes('textToSpeech('));
 
+// Electron Permission Policy security tests (Default Deny)
 // Electron Permission Policy security tests (Default Deny)
 const { evaluateElectronPermission } = require(path.join(ROOT, 'electron/permission-policy.cjs'));
 assert.equal(evaluateElectronPermission({ permission: 'audioCapture', origin: 'file:///app/index.html' }), true);
@@ -909,7 +787,6 @@ const wmSrc = fs.readFileSync(path.join(ROOT, 'electron/window-manager.cjs'), 'u
 assert.ok(wmSrc.includes('notchUserHidden') && wmSrc.includes('did-finish-load') && wmSrc.includes('isStartupLaunch'));
 const voiceHookSrc = fs.readFileSync(path.join(ROOT, 'src/services/useVoiceEngine.js'), 'utf8');
 assert.ok(voiceHookSrc.includes('if (notchHiddenRef.current)'), 'Idle timer must not re-show hidden notch');
-assert.ok(fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8').includes("In.Peek() -eq -1) {\r\n        break") || fs.readFileSync(path.join(ROOT, 'electron/win-voice.ps1'), 'utf8').includes("In.Peek() -eq -1) {\n        break"));
 assert.ok(computeAdaptiveSilenceMs(500, 740) <= 540);
 assert.equal(detectVoiceProfile('Open Chrome and set brightness to 60 percent'), 'english');
 assert.equal(detectVoiceProfile('Bhai laptop bohot slow ho raha hai'), 'hinglish');
@@ -919,10 +796,6 @@ const tableClean = cleanTextForSpeech('| App | RAM |\n|---|---|\n| Chrome | 500 
 assert.ok(!tableClean.includes('---') && tableClean.includes('500 rupees'));
 
 // Auto-Switch Offline Policy & Date-Indexed Episodic Memory tests
-const offlineRoute = assessQueryRouting('Chrome ke baare me explain karo', null, 'auto', { online: false });
-assert.equal(offlineRoute.mode, 'offline');
-assert.equal(offlineRoute.forceCloud, false);
-
 const { isEpisodicHistoryQuery, parseEpisodicDateQuery, toDateKey } = await import(pathToFileURL(path.join(ROOT, 'src/services/dateQueryParser.js')).href);
 const { createEpisodicMemory } = require(path.join(ROOT, 'electron/episodic-memory.cjs'));
 assert.equal(isEpisodicHistoryQuery('Kal maine Chrome ke baare me kya pucha tha?'), true);
@@ -978,39 +851,32 @@ assert.ok(pdfExtracted.text.includes('Hello JEEVA Offline PDF Reader'));
 assert.equal(isTextOrDocAttachment({ name: 'notes.pdf', mimeType: 'application/pdf', isImage: false }), true);
 assert.equal(isTextOrDocAttachment({ name: 'notes.txt', mimeType: 'text/plain', isImage: false }), true);
 assert.equal(isTextOrDocAttachment({ name: 'photo.png', mimeType: 'image/png', isImage: true }), false);
-assert.equal(assessQueryRouting('Summarize this PDF', { name: 'notes.pdf', mimeType: 'application/pdf' }, 'auto').shouldTryLocalFirst, true);
+assert.equal(assessQueryRouting('Summarize this PDF', { name: 'notes.pdf', mimeType: 'application/pdf' }, 'cloud', { online: true }).forceCloud, true);
 assert.ok(summarizeTextLocally('First clear sentence about JEEVA offline AI. Second sentence about CPU efficiency. Third sentence about RAM safety.', 2).length > 20);
 
 // Screen Reader routing & tool-picker checks
-assert.equal(assessQueryRouting('Screen par kya likha hai padh kar sunao', null, 'auto').shouldTryLocalFirst, true);
+assert.equal(assessQueryRouting('Screen par kya likha hai padh kar sunao', null, 'cloud', { online: true }).forceCloud, true);
 assert.ok(pickTopToolsForQuery('read active screen and click submit button', 4).includes('screen_reader'));
 
-// Advanced Voice Detection DSP, AGC Normalization, Phonetic Repair & VAD Sensitivity checks
+// Gemini-only transcription: legacy Electron local-ASR bridges must never be called.
 const { applyHighPassRumbleFilter, normalizePcmForStt, getVadSensitivity, transcribeCapturedAudio } = await import(pathToFileURL(path.join(ROOT, 'src/services/voiceCapture.js')).href);
 const { repairVoiceTranscript } = await import(pathToFileURL(path.join(ROOT, 'src/services/voiceRouter.js')).href);
 assert.equal(getVadSensitivity(), 'balanced');
-// Strict Offline must try local Whisper then SAPI, and must never call Gemini after both fail.
 const previousWindow = globalThis.window;
-let cloudFallbackAttempted = false;
+let legacyAsrCalls = 0;
 globalThis.window = {
   electronAPI: {
-    offlineVoiceTranscribe: async () => ({ ok: false, text: '', reason: 'test Whisper unavailable' }),
-    offlineVoiceDictate: async () => ({ type: 'dictation', text: '', reason: 'test SAPI unavailable' }),
+    offlineVoiceTranscribe: async () => { legacyAsrCalls++; return { ok: false, text: '' }; },
+    offlineVoiceDictate: async () => { legacyAsrCalls++; return { type: 'dictation', text: '' }; },
   },
 };
 setStrictOfflineMode(true);
+assert.equal(isStrictOfflineMode(), false, 'Legacy Strict Offline setting is retired');
 await assert.rejects(
   () => transcribeCapturedAudio('UklGRg==', { language: 'auto' }),
-  /Strict Offline Mode: cloud transcription blocked/
+  /Gemini not initialized/
 );
-assert.equal(cloudFallbackAttempted, false);
-globalThis.window = {
-  electronAPI: {
-    offlineVoiceTranscribe: async () => ({ ok: false, text: '' }),
-    offlineVoiceDictate: async (_timeout, opts) => ({ type: 'dictation', text: 'स्थानीय पहचान', culture: opts.language === 'hi' ? 'hi-IN' : 'en-IN' }),
-  },
-};
-assert.equal(await transcribeCapturedAudio('UklGRg==', { language: 'hi' }), 'स्थानीय पहचान');
+assert.equal(legacyAsrCalls, 0, 'Voice transcription must not invoke local Whisper or Windows SAPI');
 setStrictOfflineMode(false);
 if (previousWindow === undefined) delete globalThis.window;
 else globalThis.window = previousWindow;

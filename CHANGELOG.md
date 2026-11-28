@@ -1,5 +1,18 @@
 # Changelog — JEEVA AI
 
+## [1.0.4] — 2026-11-28
+
+### Changed
+- **Gemini-only AI:** Fixed conversational and transcription model to Gemini 3.5 Flash-Lite. Alternate model fallback and local SLM routing are removed.
+- **Gemini voice:** Voice transcription uses Gemini; spoken replies use Google's dedicated Gemini TTS service. Browser speech recognition, Whisper.cpp, Windows SAPI dictation and native OS TTS fallbacks are removed.
+- **Lightweight installer:** Excludes local model/ASR runtime files and removes JEEVA-owned legacy `local-brain` and `voice-models` caches on upgrade/startup.
+- **Offline behavior:** Supported deterministic Windows controls, saved memory, reminders and timers remain available offline; AI answers and Gemini voice require internet.
+- **Daily assistant focus:** System behavior is optimized for everyday questions, reminders, PC operations, Hindi, Hinglish and English; complex coding is not the primary use case.
+- **UI and documentation:** Removed Hybrid/Strict Offline AI toggles, Local Brain statistics, Live Call and local voice clone UI. Updated landing page, Control Center, README and model labels.
+
+### Preserved
+- Windows app control, file and screen tools, scheduler, permission guard, audit history, personal memory, episodic history, Notch, tray and auto-launch.
+
 ## [1.0.3] — 2026-11-28
 
 ### Added

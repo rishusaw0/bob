@@ -98,14 +98,14 @@ export default function WelcomeScreen({ onSuggestionClick, isReady, onSetupClick
         {!isReady && (
           <div className="mt-5 flex items-center justify-between gap-3 p-3 rounded-xl bg-obsidian-surface border border-obsidian-border">
             <p className="text-xs text-obsidian-secondary">
-              Offline Voice, Apps, Typing, Video Play &amp; PDF Reader work right now. Add Cloud AI anytime for complex answers.
+              Basic PC controls, reminders, timers and saved memory work offline. Connect Gemini for AI answers and Gemini voice.
             </p>
             <button
               onClick={onSetupClick}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-100 text-zinc-950 text-xs font-medium hover:bg-white transition-colors whitespace-nowrap"
             >
               <LuKey className="w-3.5 h-3.5" />
-              Setup Cloud AI
+              Connect Gemini
             </button>
           </div>
         )}

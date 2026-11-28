@@ -26,8 +26,6 @@ export default function TitleBar({
   wakeEnabled = false,
   orbState = 'idle',
   onToggleWake,
-  model,
-  onModelChange,
   liveStats,
 }) {
   const isElectron = !!window.electronAPI;
@@ -46,22 +44,9 @@ export default function TitleBar({
 
         <div className="h-4 w-px bg-obsidian-border" />
 
-        <select
-          value={model}
-          onChange={(e) => onModelChange(e.target.value)}
-          className="bg-transparent hover:bg-obsidian-elevated text-xs font-medium text-obsidian-text px-2 py-1 rounded-md border border-transparent hover:border-obsidian-border focus:outline-none cursor-pointer transition-colors"
-          title="Switch Active Model"
-        >
-          <option value="gemini-3.5-flash-lite" className="bg-obsidian-surface text-obsidian-text">
-            Gemini 3.5 Flash-Lite
-          </option>
-          <option value="gemini-4-hydrogen" className="bg-obsidian-surface text-obsidian-text">
-            Gemini 4 Hydrogen
-          </option>
-          <option value="gemini-4-neon" className="bg-obsidian-surface text-obsidian-text">
-            Gemini 4 Neon
-          </option>
-        </select>
+        <span className="text-xs font-medium text-obsidian-text px-2 py-1 rounded-md border border-obsidian-border/60">
+          Gemini 3.5 Flash-Lite
+        </span>
       </div>
 
       {/* Center: Command Palette Trigger */}

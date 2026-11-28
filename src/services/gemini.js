@@ -8,17 +8,13 @@ import { assertCloudAllowed, isStrictOfflineMode } from './offlineMode.js';
 
 let client = null;
 let previousInteractionId = null;
-let preferredModel = 'gemini-3.5-flash-lite';
+const GEMINI_MODEL_ID = 'gemini-3.5-flash-lite';
+const GEMINI_TTS_MODEL_ID = 'gemini-3.8-flash-lite-tts';
+let preferredModel = GEMINI_MODEL_ID;
 let customInstructions = '';
 let assistantName = 'Jeeva';
 
-export const SMOKE_CANDIDATE_MODELS = [
-  'gemini-3.5-flash-lite',
-  'gemini-3.8-flash',
-  'gemini-3.6-flash',
-  'gemini-4-hydrogen',
-  'gemini-2.5-flash',
-];
+export const SMOKE_CANDIDATE_MODELS = [GEMINI_MODEL_ID];
 
 export function setAiNamePrompt(name) {
   const cleaned = String(name || 'Jeeva').trim();
@@ -26,17 +22,18 @@ export function setAiNamePrompt(name) {
 }
 
 function buildSystemPrompt(fromVoice = false, strictVoice = true) {
-  const base = `You are ${assistantName} AI, an extremely capable Windows PC Workstation AI assistant created by Roushan Kumar.
-You understand Hindi, English, and Hinglish naturally, and reply in the same language as the user using clean, well-spelled words (avoid abbreviated SMS shorthand like "kr" or "v" so voice narration sounds natural and clear).
-You have deep PC control tools:
-- Apps, Software & Browser: launch/focus/snap/close any app, list/search/install/uninstall software via winget, inspect/click UI controls (ui_automate), control browser tabs/pages & YouTube playback (browser_control — list_tabs, read_page, switch_tab, new_tab, close_tab, youtube_skip_ad).
-- Screen, Mouse & Hotkeys: take screenshots to inspect screen visually (includes image dimensions & DPI info), check display resolution & cursor coords (pc_power_tools display_info), click/double-click/right-click/scroll/drag coordinates with coord_space ('pixels' or 'normalized_1000'), send multi-key hotkeys (win+d, ctrl+shift+t, alt+tab), and paste text cleanly (mouse_and_hotkey).
-- Hardware & Diagnostics: deep CPU/RAM/GPU/disk/port diagnostics, top resource processes & kill frozen PIDs (system_diagnostics), adjust volume/brightness/media/theme/power plans/Recycle Bin (pc_power_tools).
-- Files, Clipboard & Scheduler: browse/search/read PDFs & Office docs, auto-organize folders like Downloads/Desktop by type, zip/unzip/move/rename (file_manager_pro), recall 20-item clipboard history (clipboard_history), and set Windows desktop/spoken reminders or delayed commands (schedule_pc_task).
-- Multi-step Workstation Modes: if user asks for "Coding Mode", switch power_plan to high_performance, open vscode, and check diagnostics; for "Night Focus", switch dark theme, lower brightness to 35%, and set balanced power.
-ALWAYS use your tools directly when the user asks you to perform an action — do not just explain how to do it manually.
-SENSITIVE ACTIONS RULE: When the user asks to install, uninstall, or update software, change Windows settings, force-close apps, delete files, or run system power/terminal actions, call the corresponding tool cleanly right away — JEEVA's voice and chat permission guard will ask the user for confirmation before execution.
-LANGUAGE & CONFIRMATION RULE: Always reply in the SAME language and script style the user used (if English -> clear English; if Romanized Hinglish -> natural Hinglish; if Devanagari Hindi -> Hindi). After executing any tool, explicitly tell the user BOTH that the task is done AND exactly what action was performed (e.g. "Maine Chrome khol diya hai" or "I have set volume to 60%"), never just a vague "Done".`;
+  const base = `You are ${assistantName}, a lightweight everyday personal assistant for Windows, created by Roushan Kumar.
+Your main purpose is normal daily use: answer everyday questions, explain things simply, help with reminders and files, and operate Windows PC controls safely.
+You understand Hindi, English, and Hinglish naturally. Reply in the same language and script style as the user, with clear, natural words (avoid abbreviated SMS shorthand such as "kr" or "v" so voice narration sounds natural).
+Keep answers concise, friendly, and practical. Prefer everyday explanations over long technical lectures. Do not behave like a complex software-engineering or coding agent; for large multi-file projects, politely explain that JEEVA is optimized for everyday personal assistance and offer simple guidance instead.
+You have Windows PC control tools:
+- Apps and browser: launch/focus/close apps, inspect/click UI controls, control browser tabs and YouTube playback.
+- Screen and input: take screenshots, inspect screen contents, click/scroll, send hotkeys, and type or paste text.
+- Hardware: check CPU/RAM/disk/ports, adjust volume/brightness/theme/power plans, and manage Recycle Bin.
+- Files, clipboard, and schedules: browse/search/read common files, organize folders, recall clipboard history, and create reminders or timers.
+ALWAYS use the appropriate tool when the user asks you to perform an action; do not merely explain how to do it manually.
+SENSITIVE ACTIONS RULE: For installs/uninstalls/updates, Windows setting changes, force-closing apps, file deletion, and power or terminal actions, call the relevant tool. JEEVA's permission guard will ask the user to confirm before execution.
+LANGUAGE & CONFIRMATION RULE: Always reply in the SAME language and script style the user used. After a tool action, clearly say what action was performed and whether it succeeded. Do not claim success when a tool reports an error.`;
 
   const styleHint =
     getReplyStyle() === 'detailed'
@@ -66,44 +63,31 @@ export function getGeminiConnectionInfo() {
   return { apiKey: Boolean(client), useServerProxy: false };
 }
 
-export async function testGeminiConnection({ apiKey = '', model = preferredModel } = {}) {
+export async function testGeminiConnection({ apiKey = '' } = {}) {
   assertCloudAllowed('Gemini Connection Test');
   const startedAt = Date.now();
-  let testClient;
   try {
-    testClient = createTempClient(String(apiKey || '').trim());
+    const testClient = createTempClient(String(apiKey || '').trim());
+    const res = await testClient.interactions.create({
+      model: GEMINI_MODEL_ID,
+      input: 'Reply with OK',
+      store: false,
+    });
+    return {
+      ok: true,
+      activeModel: GEMINI_MODEL_ID,
+      fallbackUsed: false,
+      latencyMs: Date.now() - startedAt,
+      sample: (res?.output_text || 'OK').trim().slice(0, 40),
+    };
   } catch (err) {
-    return { ok: false, error: err?.message || 'Configuration incomplete' };
+    return { ok: false, error: err?.message || String(err), latencyMs: Date.now() - startedAt };
   }
-
-  const candidates = Array.from(new Set([model, ...SMOKE_CANDIDATE_MODELS].filter(Boolean)));
-  let lastError = 'No responsive Gemini model found';
-  for (const candidate of candidates) {
-    try {
-      const res = await testClient.interactions.create({
-        model: candidate,
-        input: 'Reply with OK',
-        store: false,
-      });
-      return {
-        ok: true,
-        activeModel: candidate,
-        fallbackUsed: candidate !== model,
-        latencyMs: Date.now() - startedAt,
-        sample: (res?.output_text || 'OK').trim().slice(0, 40),
-      };
-    } catch (err) {
-      lastError = err?.message || String(err);
-      if (/401|403|API_KEY_INVALID|API key not valid/i.test(lastError)) {
-        return { ok: false, error: lastError, latencyMs: Date.now() - startedAt };
-      }
-    }
-  }
-  return { ok: false, error: lastError, latencyMs: Date.now() - startedAt };
 }
 
-export function setModel(model) {
-  preferredModel = model || 'gemini-3.5-flash-lite';
+export function setModel() {
+  // Ignore legacy saved model choices; JEEVA has one fixed text/reasoning model.
+  preferredModel = GEMINI_MODEL_ID;
 }
 
 export function setCustomInstructions(text) {
@@ -194,44 +178,34 @@ export async function sendMessage(
     requestConfig.previous_interaction_id = previousInteractionId;
   }
 
-  const modelOrder = Array.from(
-    new Set([preferredModel, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-4-hydrogen'])
-  );
-
-  function cfgHasPrevId(cfg) {
-    return Boolean(cfg.previous_interaction_id);
-  }
-
   async function callWithRetry(config, isStream = false, allowResetPrevId = false) {
     let lastError;
-    for (const model of modelOrder) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const cfg = { ...config, model: GEMINI_MODEL_ID };
       try {
-        const cfg = { ...config, model };
-        if (isStream) {
-          return await client.interactions.create({ ...cfg, stream: true });
-        }
-        return await client.interactions.create(cfg);
+        return isStream
+          ? await client.interactions.create({ ...cfg, stream: true })
+          : await client.interactions.create(cfg);
       } catch (err) {
         lastError = err;
         const msg = String(err?.message || err);
         if (
           allowResetPrevId &&
-          cfgHasPrevId(config) &&
+          cfg.previous_interaction_id &&
           (msg.includes('404') || msg.includes('not found') || msg.includes('previous_interaction_id'))
         ) {
           previousInteractionId = null;
-          delete config.previous_interaction_id;
+          delete cfg.previous_interaction_id;
           return isStream
-            ? await client.interactions.create({ ...config, model, stream: true })
-            : await client.interactions.create({ ...config, model });
+            ? await client.interactions.create({ ...cfg, stream: true })
+            : await client.interactions.create(cfg);
         }
-        const isTransient =
-          msg.includes('503') || msg.includes('429') || msg.includes('UNAVAILABLE') || msg.includes('overloaded');
-        if (!isTransient) throw err;
-        await new Promise((r) => setTimeout(r, 120));
+        const transient = /429|503|UNAVAILABLE|overloaded|timeout|network/i.test(msg);
+        if (!transient || attempt === 2) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
       }
     }
-    throw lastError;
+    throw lastError || new Error('Gemini request failed');
   }
 
   let fullResponse = '';
@@ -329,8 +303,7 @@ export async function sendMessage(
       const result = await executeFunctionCall(step.name, step.arguments || {}, requestPermission, {
         client,
         preferredModel,
-        generateImage,
-        fromVoice: Boolean(options?.fromVoice),
+              fromVoice: Boolean(options?.fromVoice),
         userPrompt: typeof text === 'string' ? text : '',
       });
       toolEntry.status = result.error ? 'error' : 'done';
@@ -369,60 +342,27 @@ export async function transcribeAudio(base64Data, mimeType = 'audio/wav', opts =
   assertCloudAllowed('Gemini Audio Transcription');
   if (!client) throw new Error('Gemini not initialized');
   const wakeName = (opts?.aiName || assistantName || 'Jeeva').trim();
-  const isWake = opts?.mode === 'wake';
-  const prompt = isWake
-    ? `Listen carefully for the wake word "${wakeName}" (e.g. "Hey ${wakeName}") in Hindi, English, or Hinglish. Output ONLY the exact spoken words, or an empty string if only background noise or breathing.`
-    : `Transcribe this Hindi, English, or Hinglish PC voice command accurately into clean text (Romanized Hinglish or English). Keep system words like volume, brightness, chrome, install, winget, screenshot, tab, pause, kholo, badhao, kam karo, band karo clear. Output ONLY the spoken command text with zero commentary, or empty string if silent.`;
+  const prompt = opts?.mode === 'wake'
+    ? `Listen for the wake phrase "${wakeName}" in Hindi, English, or Hinglish. Output only the exact spoken words, or an empty string if there is no speech.`
+    : 'Transcribe this Hindi, English, or Hinglish PC voice command accurately. Output only the spoken words, with no commentary.';
 
-  const basePreferred = /tts|image|nano-banana/i.test(preferredModel) ? '' : preferredModel;
-  const models = Array.from(
-    new Set([basePreferred, 'gemini-3.5-flash-lite', 'gemini-2.5-flash'].filter(Boolean))
-  ).slice(0, 3);
-
-  let lastErr;
-  for (const model of models) {
-    try {
-      const payload =
-        model === 'gemini-3.5-transcribe'
-          ? {
-              model,
-              input: [{ type: 'audio', data: base64Data, mime_type: mimeType }],
-              generation_config: { transcription_config: { mode: 'smart' } },
-              store: false,
-            }
-          : {
-              model,
-              input: [
-                { type: 'text', text: prompt },
-                { type: 'audio', data: base64Data, mime_type: mimeType },
-              ],
-              store: false,
-            };
-      const interaction = await client.interactions.create(payload);
-      return (interaction.output_text || '').trim();
-    } catch (err) {
-      lastErr = err;
-      const msg = String(err?.message || err);
-      if (/401|403|API_KEY_INVALID|API key not valid|Owner Server Key locked/i.test(msg)) {
-        throw err;
-      }
-    }
-  }
-  throw lastErr || new Error('Audio transcription failed');
-}
-
-export async function generateImage(prompt) {
-  assertCloudAllowed('Gemini Image Generation');
-  if (!client) throw new Error('Gemini not initialized');
-  const interaction = await client.interactions.create({
-    model: 'gemini-nano-banana-2.1',
-    input: prompt,
-    store: false,
+  const response = await client.models.generateContent({
+    model: GEMINI_MODEL_ID,
+    contents: [{
+      role: 'user',
+      parts: [
+        { text: prompt },
+        { inlineData: { mimeType, data: base64Data } },
+      ],
+    }],
+    config: { responseModalities: ['TEXT'], temperature: 0 },
   });
-  if (interaction.output_image) {
-    return `data:${interaction.output_image.mime_type};base64,${interaction.output_image.data}`;
-  }
-  throw new Error('No image generated');
+  if (typeof response.text === 'string') return response.text.trim();
+  return (response.candidates?.[0]?.content?.parts || [])
+    .filter((part) => typeof part.text === 'string')
+    .map((part) => part.text)
+    .join('')
+    .trim();
 }
 
 export async function generateTitle(userMessage) {
@@ -440,172 +380,53 @@ export async function generateTitle(userMessage) {
   }
 }
 
-let regionalVoiceCache = new Map();
+const PERSONA_VOICES = {
+  natural_warm: { indian: { english: 'Kore', hindi: 'Kore', hinglish: 'Kore' }, global: { english: 'Aoede', hindi: 'Kore', hinglish: 'Aoede' } },
+  calm_pro: { indian: { english: 'Charon', hindi: 'Charon', hinglish: 'Charon' }, global: { english: 'Charon', hindi: 'Charon', hinglish: 'Charon' } },
+  crisp_studio: { indian: { english: 'Aoede', hindi: 'Aoede', hinglish: 'Aoede' }, global: { english: 'Aoede', hindi: 'Aoede', hinglish: 'Aoede' } },
+  conversational: { indian: { english: 'Puck', hindi: 'Puck', hinglish: 'Puck' }, global: { english: 'Puck', hindi: 'Puck', hinglish: 'Puck' } },
+};
 
 export function isGeminiReady() {
   return Boolean(client);
 }
 
-export function resetRegionalVoiceCache() {
-  regionalVoiceCache.clear();
-}
-
-const PERSONA_VOICES = {
-  natural_warm: {
-    indian: { english: 'Achird', hindi: 'Sulafat', hinglish: 'Achird' },
-    global: { english: 'Aoede', hindi: 'Sulafat', hinglish: 'Achird' },
-  },
-  calm_pro: {
-    indian: { english: 'Charon', hindi: 'Orus', hinglish: 'Charon' },
-    global: { english: 'Charon', hindi: 'Orus', hinglish: 'Charon' },
-  },
-  crisp_studio: {
-    indian: { english: 'Sulafat', hindi: 'Sulafat', hinglish: 'Aoede' },
-    global: { english: 'Aoede', hindi: 'Sulafat', hinglish: 'Aoede' },
-  },
-  conversational: {
-    indian: { english: 'Puck', hindi: 'Achird', hinglish: 'Puck' },
-    global: { english: 'Puck', hindi: 'Achird', hinglish: 'Puck' },
-  },
-};
-
-async function getRegionalVoices(accent = 'indian', persona = 'natural_warm') {
-  const key = accent === 'global' ? 'global' : 'indian';
-  const personaKey = PERSONA_VOICES[persona] ? persona : 'natural_warm';
-  const personaFallback = PERSONA_VOICES[personaKey][key];
-  if (personaKey !== 'natural_warm') return personaFallback;
-
-  if (regionalVoiceCache.has(key)) return regionalVoiceCache.get(key);
-  const fallback = personaFallback;
-  if (!client?.voices?.list) return fallback;
-
-  // Background refresh without blocking first spoken word latency (0ms stall)
-  if (!regionalVoiceCache.has(`${key}_warming`)) {
-    regionalVoiceCache.set(`${key}_warming`, fallback);
-    Promise.all([
-      client.voices.list({ language_code: ['hi-IN'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
-      client.voices.list({ language_code: ['en-IN'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
-      client.voices.list({ language_code: ['en-US'], contexts: ['Conversational'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
-    ])
-      .then(([hiRes, inRes, enRes]) => {
-        regionalVoiceCache.set(key, {
-          hindi: hiRes?.voices?.[0]?.id || fallback.hindi,
-          hinglish: inRes?.voices?.[0]?.id || hiRes?.voices?.[1]?.id || fallback.hinglish,
-          english: key === 'indian' ? inRes?.voices?.[0]?.id || fallback.english : enRes?.voices?.[0]?.id || fallback.english,
-        });
-      })
-      .catch(() => {});
-  }
-  return fallback;
-}
-
 const VOICE_STYLE_HINTS = {
-  english:
-    'realistic human Indian English speaker (en-IN), warm conversational studio presence, natural micro-pauses at punctuation, subtle expressive emphasis, never robotic or monotonous',
-  english_global:
-    'realistic human studio narrator, warm articulate conversational tone, natural breathing pauses and genuine human inflection without sounding synthetic',
-  hindi:
-    'realistic native Indian Hindi human speaker, warm expressive voice with natural conversational cadence, soft breathing pauses, and crisp authentic pronunciation',
-  hinglish:
-    'realistic bilingual Indian human assistant (en-IN / hi-IN), friendly conversational warmth, effortless code-switching between English and Hindi with natural human rhythm',
+  english: 'Speak in clear, natural Indian English with a warm conversational tone and short pauses.',
+  english_global: 'Speak in clear, natural English with a warm conversational tone and short pauses.',
+  hindi: 'Speak in natural Hindi with clear, warm Indian pronunciation and short conversational pauses.',
+  hinglish: 'Speak naturally in Hindi and English as a bilingual Indian assistant; preserve the code-switching in the text.',
 };
 
-export async function createReplicatedVoice({
-  displayName = 'My Cloned Voice',
-  sourceWavBase64,
-  consentWavBase64,
-} = {}) {
-  assertCloudAllowed('Gemini Voice Replication');
-  if (!client) throw new Error('Gemini API key set karein voice clone karne ke liye.');
-  if (!sourceWavBase64 || !consentWavBase64) {
-    throw new Error('Voice sample aur consent recording dono zaroori hain.');
-  }
-  if (!client.voices?.create) {
-    throw new Error('Is Gemini SDK version mein voices.create available nahi hai.');
-  }
+export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
+  assertCloudAllowed('Gemini voice output');
+  if (!client) throw new Error('Gemini not initialized');
+  const accent = opts?.accent || (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_accent') : null) || 'indian';
+  const persona = opts?.persona || (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_persona') : null) || 'natural_warm';
+  const personaKey = PERSONA_VOICES[persona] ? persona : 'natural_warm';
+  const accentKey = accent === 'global' ? 'global' : 'indian';
+  const voice = PERSONA_VOICES[personaKey][accentKey][profile] || PERSONA_VOICES[personaKey][accentKey].hinglish;
+  const styleKey = profile === 'english' && accentKey === 'global' ? 'english_global' : profile;
+  const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;
 
-  const replicatedVoice = await client.voices.create({
-    store: true,
-    voice: {
-      model: 'gemini-3.8-flash-tts',
-      type: 'replicated',
-      display_name: String(displayName || 'My Cloned Voice').slice(0, 60),
-      replicated: {
-        source_audio: {
-          mime_type: 'audio/wav',
-          data: sourceWavBase64,
-        },
-        consent_audio: {
-          mime_type: 'audio/wav',
-          data: consentWavBase64,
+  const response = await client.models.generateContent({
+    model: GEMINI_TTS_MODEL_ID,
+    contents: `Speak the following text aloud. ${style}\n\n${String(text || '')}`,
+    config: {
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: voice },
         },
       },
     },
   });
 
-  if (!replicatedVoice?.id) {
-    throw new Error('Voice replication complete hua par voice ID return nahi hui.');
+  const audioPart = response.candidates?.[0]?.content?.parts?.find((part) => part.inlineData?.data);
+  if (!audioPart?.inlineData?.data) {
+    throw new Error('Gemini TTS did not return audio data');
   }
-  return {
-    id: replicatedVoice.id,
-    displayName: replicatedVoice.display_name || displayName,
-  };
+  const mime = audioPart.inlineData.mimeType || 'audio/wav';
+  return `data:${mime};base64,${audioPart.inlineData.data}`;
 }
 
-export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
-  if (isStrictOfflineMode()) throw new Error('Cloud TTS blocked in Strict Offline Mode');
-  if (!client) throw new Error('Gemini not initialized');
-
-  const customVoiceId =
-    opts?.customVoiceId !== undefined
-      ? opts.customVoiceId
-      : typeof localStorage !== 'undefined'
-        ? localStorage.getItem('jeeva_custom_voice_id') || ''
-        : '';
-
-  const accent =
-    opts?.accent ||
-    (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_accent') : null) ||
-    'indian';
-  const persona =
-    opts?.persona ||
-    (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_persona') : null) ||
-    'natural_warm';
-  const voices = await getRegionalVoices(accent, persona);
-  const voice = customVoiceId || voices[profile] || voices.hinglish;
-  const styleKey = profile === 'english' && accent === 'global' ? 'english_global' : profile;
-  const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;
-  const ttsModels = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
-
-  let lastErr;
-  for (const model of ttsModels) {
-    try {
-      const interaction = await client.interactions.create({
-        model,
-        input: [
-          {
-            type: 'user_input',
-            content: [
-              {
-                type: 'text',
-                text,
-                annotations: [{ type: 'speech_metadata', style }],
-              },
-            ],
-          },
-        ],
-        response_format: { type: 'audio' },
-        generation_config: { speech_config: [{ voice }] },
-        store: false,
-      });
-
-      if (interaction.output_audio?.data) {
-        const mime = interaction.output_audio.mime_type || 'audio/wav';
-        return `data:${mime};base64,${interaction.output_audio.data}`;
-      }
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr || new Error('No audio generated');
-}

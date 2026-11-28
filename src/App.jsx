@@ -15,14 +15,13 @@ const OnboardingWizard = lazy(() => import('./components/OnboardingWizard'));
 const PcControlCenterModal = lazy(() => import('./components/PcControlCenterModal'));
 import {
   initGemini,
-  setModel as setGeminiModel,
   setCustomInstructions as setGeminiInstructions,
   setAiNamePrompt,
   sendMessage,
   resetConversation,
   generateTitle,
 } from './services/gemini';
-import { speakText, stopSpeech, getVoiceMode, setVoiceMode as setSpeechVoiceMode, createStreamingSpeaker, getSpeechSpeedMode } from './services/speech';
+import { speakText, stopSpeech, getVoiceMode, setVoiceMode as setSpeechVoiceMode, createStreamingSpeaker } from './services/speech';
 import { playWakeChime } from './services/earcon';
 import { startVoiceCapture } from './services/voiceCapture';
 import {
@@ -32,17 +31,12 @@ import {
 } from './services/voicePermissionPrompt';
 import { getAiName, getStrictVoiceMode, getWakeOpenMode } from './services/voiceRouter';
 import { getDocSummaryPref, setDocSummaryPref, getReplyStyle, setReplyStyle } from './services/userPrefs';
-import { runLocalQuickBrain, buildLocalTitle } from './services/localQuickBrain';
-import { runLocalSlmTurn } from './services/localLlm';
+import { runPcCommand } from './services/pcCommandRouter';
 import {
-  getBrainMode,
-  setBrainMode as persistBrainMode,
   assessQueryRouting,
-  recordBrainUsage,
   compactHistoryForCloud,
 } from './services/brainRouter';
 import { logEpisodicTurn } from './services/episodicMemory';
-import { isTextOrDocAttachment, runLocalDocumentTurn } from './services/docExtractor';
 import { useVoiceEngine } from './services/useVoiceEngine';
 import { useWatchdogAndStats } from './hooks/useWatchdogAndMemory';
 import ToastContainer from './components/ToastContainer';
@@ -60,9 +54,6 @@ export default function App() {
   const [autoListenSignal, setAutoListenSignal] = useState(0);
   const [apiKey, setApiKey] = useState(
     () => (window.electronAPI ? '' : (localStorage.getItem('jeeva_api_key') || import.meta.env.VITE_GEMINI_API_KEY || ''))
-  );
-  const [model, setModel] = useState(
-    () => localStorage.getItem('jeeva_model') || 'gemini-3.5-flash-lite'
   );
   const [customInstructions, setCustomInstructions] = useState(
     () => localStorage.getItem('jeeva_custom_instructions') || ''
@@ -82,7 +73,6 @@ export default function App() {
   const [docSummaryPref, setDocSummaryPrefState] = useState(() => getDocSummaryPref());
   const [replyStyle, setReplyStyleState] = useState(() => getReplyStyle());
   const [aiName, setAiNameState] = useState(() => getAiName());
-  const [brainMode, setBrainModeState] = useState(() => getBrainMode());
   const [permissionRequest, setPermissionRequest] = useState(null);
   const [showWizard, setShowWizard] = useState(
     () => Boolean(window.electronAPI) && localStorage.getItem('jeeva_onboarding_done') !== 'true'
@@ -93,6 +83,23 @@ export default function App() {
   const activeVoiceTurnRef = useRef(false);
   const voiceprintMismatchRef = useRef(false);
   const lastUserPromptRef = useRef('');
+  useEffect(() => {
+    // Remove legacy local-model/brain and native voice preferences from earlier releases.
+    try {
+      [
+        'jeeva_brain_mode',
+        'jeeva_brain_stats',
+        'jeeva_strict_local_commands',
+        'jeeva_strict_offline_mode',
+        'jeeva_model',
+        'jeeva_speech_speed',
+        'jeeva_native_voice',
+        'jeeva_custom_voice_id',
+        'jeeva_custom_voices_list',
+      ].forEach((key) => localStorage.removeItem(key));
+    } catch {}
+  }, []);
+
   // Resolve permission prompts through the modal before any protected PC action runs.
   const requestPermission = useCallback((request = {}) => new Promise((resolve) => {
     // Never leave an earlier action waiting if another permission prompt replaces it.
@@ -266,8 +273,9 @@ export default function App() {
 
     const fromVoice = Boolean(meta?.fromVoice);
     const forceCloud = Boolean(meta?.forceCloud);
-    const routing = assessQueryRouting(text, attachment, forceCloud ? 'cloud' : brainMode, {
+    const routing = assessQueryRouting(text, attachment, 'cloud', {
       batteryLow: Boolean(liveStats?.battery && liveStats.battery < 20 && !liveStats?.charging),
+      strictLocalCommands: false,
     });
     const promptText = routing.cleanText;
 
@@ -299,15 +307,6 @@ export default function App() {
       shouldSpeak = ttsEnabled || fromVoice,
       speakLabel = 'Reading response...',
     }) => {
-      if (tier && tier !== 'offline-guard') {
-        recordBrainUsage(tier, promptText.length);
-      }
-      if (messages.length === 0 && tier !== 'cloud') {
-        const localTitle = buildLocalTitle(promptText);
-        if (localTitle) {
-          setMessages(prev => prev.map(m => (m.id === userMsg.id ? { ...m, aiTitle: localTitle } : m)));
-        }
-      }
       setMessages(prev =>
         prev.map(m =>
           m.id === typingId
@@ -347,113 +346,42 @@ export default function App() {
 
     try {
       const userAskedSpeech = /\b(read aloud|speak|sunao|bolkar|bol kar|awaz mein)\b/i.test(promptText);
-      // Tier-0 & Layer-1: Zero-API Deterministic + Slot Extractor + Episodic Date + Semantic Intent Local Brain
-      if (!forceCloud && (!routing.forceCloud || routing.strictNoApi) && !attachment) {
-        const quick = await runLocalQuickBrain(promptText, { requestPermission, historyMessages: messages });
+
+      // Keep deterministic PC actions local; all natural-language answers use Gemini.
+      if (!attachment) {
+        const quick = await runPcCommand(promptText, { requestPermission, historyMessages: messages });
         if (quick?.handled) {
           finalizeReply({
             replyText: quick.replyText || 'Done.',
-            tier: quick.tier || 'fast',
-            modelLabel: quick.modelLabel || 'Instant Local',
-            routeReason: quick.routeReason || routing.routeReason,
+            tier: 'fast',
+            modelLabel: quick.modelLabel || 'PC Control',
+            routeReason: 'Deterministic Windows utility; no local AI model used',
             image: quick.image || null,
             tools: quick.tools || [],
             shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
-            speakLabel: 'Local Brain',
+            speakLabel: 'JEEVA PC Control',
           });
           return;
         }
       }
 
-      // Local Document & PDF Reader Pipeline (0 Gemini API calls for digital PDF, DOCX, TXT, MD, CSV!)
-      if (attachment && isTextOrDocAttachment(attachment) && !forceCloud && !routing.forceCloud) {
-        const docTurn = await runLocalDocumentTurn({
-          attachment,
-          userPrompt: promptText,
-          historyMessages: messages,
-          requestPermission,
-          fromVoice,
-        });
-        if (docTurn?.handled) {
-          finalizeReply({
-            replyText: docTurn.replyText,
-            tier: docTurn.tier || 'fast',
-            modelLabel: docTurn.modelLabel || 'Offline Doc Reader',
-            routeReason: docTurn.routeReason,
-            tools: docTurn.tools || [],
-            shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
-            speakLabel: `Reading: ${attachment.name}`,
-          });
-          return;
-        }
-      }
-
-      // Tier-2: Low-End Friendly Local SLM Brain (with 15s CPU timeout guard)
-      if (routing.shouldTryLocalFirst && !attachment) {
-        const slm = await runLocalSlmTurn({
-          text: promptText,
-          historyMessages: messages,
-          requestPermission,
-          fromVoice,
-          onToolUpdate: (toolsSnapshot) => {
-            setMessages(prev => prev.map(m => (m.id === typingId ? { ...m, tools: toolsSnapshot } : m)));
-          },
-        });
-        if (slm?.handled) {
-          finalizeReply({
-            replyText: slm.replyText,
-            tier: 'local-slm',
-            modelLabel: slm.modelLabel || 'Local SLM',
-            routeReason: !routing.online
-              ? 'Offline auto-switch: answered with Local SLM'
-              : 'Auto Hybrid: solved locally by SLM (0 Gemini API calls)',
-            image: slm.image || null,
-            tools: slm.tools || [],
-            shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
-            speakLabel: 'Local SLM',
-          });
-          return;
-        }
-      }
-
-      // Command-First Local Lock: never silently burn Gemini API on PC commands
-      if (routing.strictNoApi && !forceCloud) {
+      if (!routing.online) {
         finalizeReply({
-          replyText:
-            'PC commands abhi 100% Local AI mode par locked hain, isliye Gemini API use nahi hui. Simple commands jaise "Notepad kholo", "10 minute baad meeting reminder lagao", "Downloads organize karo", ya "YouTube par song play karo" seedhe chalte hain. Advanced multi-step commands ke liye Settings -> Local AI Brain me lightweight offline model enable karein, ya zaroorat ho to neeche "Ask Gemini" dabaiye.',
-          tier: 'local-guard',
-          modelLabel: 'Local Command Lock',
-          routeReason: routing.routeReason,
-          shouldSpeak: Boolean(ttsEnabled || fromVoice || userAskedSpeech),
-          speakLabel: 'Local Guard',
-        });
-        return;
-      }
-
-      // Offline-Only Guard (when user selected Offline Mode OR internet is completely disconnected)
-      if (routing.mode === 'offline' || !routing.online) {
-        const offlineNote = !routing.online
-          ? 'Internet offline detected — auto-switched to Local Mode. Is heavy query ke liye Internet connect karein ya Settings -> Local AI Brain me halka offline model pull karein.'
-          : window.electronAPI
-            ? 'Offline Brain Mode ON hai. Is task ke liye Settings -> Local AI Brain me halka model (Qwen 2.5 1.5B / Gemma 3 1B) setup karein, ya Brain Mode ko "Hybrid" par karein.'
-            : 'Offline Brain Mode ON hai. Complex web query ke liye "Hybrid" mode select karein.';
-        finalizeReply({
-          replyText: offlineNote,
+          replyText: 'Internet connection is unavailable. Gemini AI answers and Gemini voice need internet. Basic Windows PC controls, reminders, and timers are still available.',
           tier: 'offline-guard',
-          modelLabel: !routing.online ? 'Offline Auto-Switch' : 'Offline Guard',
-          routeReason: routing.routeReason,
-          shouldSpeak: ttsEnabled || fromVoice,
+          modelLabel: 'Offline · Basic PC Controls',
+          routeReason: 'Gemini unavailable offline; deterministic PC utilities remain available',
+          shouldSpeak: false,
         });
         return;
       }
 
-      // Tier-3: Escalate to Gemini Cloud (heavy/vision/search/low-confidence SLM)
       if (!isReady) {
         if (!fromVoice) {
           switchWindowMode('full');
           setShowSettings(true);
         }
-        throw new Error('Is heavy task ke liye Gemini API key ya Cloud AI URL Settings me connect karein (chhote PC tasks aur date memory bina key ke bhi chalte hain).');
+        throw new Error('Gemini API key Settings mein connect karein. JEEVA ke AI answers ke liye Gemini 3.5 Flash-Lite zaroori hai. Basic PC controls internet/API ke bina bhi available hain.');
       }
 
       if (messages.length === 0 && promptText.trim()) {
@@ -468,10 +396,9 @@ export default function App() {
 
       const historyDigest = compactHistoryForCloud(messages);
       const wantSpeech = Boolean(ttsEnabled || fromVoice || userAskedSpeech);
-      const streamSpeaker =
-        wantSpeech && getSpeechSpeedMode() !== 'cloud_studio'
-          ? createStreamingSpeaker({ label: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Answering...' })
-          : null;
+      const streamSpeaker = wantSpeech
+        ? createStreamingSpeaker({ label: attachment?.isDocument ? `Reading: ${attachment.name}` : 'Answering...' })
+        : null;
       try {
         const response = await sendMessage(
           promptText,
@@ -513,28 +440,6 @@ export default function App() {
         });
       } catch (cloudErr) {
         streamSpeaker?.cancel();
-        // Reverse Auto-Switch Fallback: if Gemini rate-limited (429) or unreachable, retry with Local SLM!
-        const msg = String(cloudErr?.message || cloudErr);
-        const canFallbackLocal = !attachment && /429|503|quota|rate|fetch|network|timeout|unavailable/i.test(msg);
-        if (canFallbackLocal) {
-          const slmFallback = await runLocalSlmTurn({
-            text: promptText,
-            historyMessages: messages,
-            requestPermission,
-            fromVoice,
-          });
-          if (slmFallback?.handled) {
-            finalizeReply({
-              replyText: slmFallback.replyText,
-              tier: 'local-slm',
-              modelLabel: `${slmFallback.modelLabel || 'Local SLM'} (Auto-Fallback)`,
-              routeReason: 'Gemini busy/unreachable — Auto-Switched back to Local SLM',
-              image: slmFallback.image || null,
-              tools: slmFallback.tools || [],
-            });
-            return;
-          }
-        }
         throw cloudErr;
       }
     } catch (err) {
@@ -555,7 +460,7 @@ export default function App() {
       voiceprintMismatchRef.current = false;
       setIsLoading(false);
     }
-  }, [isReady, brainMode, liveStats, ttsEnabled, requestPermission, apiKey, switchWindowMode, messages]);
+  }, [isReady, liveStats, ttsEnabled, requestPermission, apiKey, switchWindowMode, messages]);
 
   // Persistent Always-On Wake Word & Mic Engine:
   // - On Electron Desktop: active 24/7 across Full, Minimized, Tray, Speaker & Cortana modes once API/Cloud is ready
@@ -567,8 +472,7 @@ export default function App() {
     autoListenSignal,
     requestPermission,
     enabled: Boolean(
-      ((window.electronAPI && (isReady || brainMode !== 'cloud')) ||
-        (isReady && windowMode !== 'full'))
+      (isReady && (window.electronAPI || windowMode !== 'full'))
     ),
     onWakeOpen: (mode) => {
       if (mode && mode !== 'notch') setWindowMode(mode);
@@ -703,8 +607,6 @@ export default function App() {
               onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
               voiceMode={voiceMode}
               onVoiceModeChange={setVoiceMode}
-              model={model}
-              onModelChange={setModel}
               customInstructions={customInstructions}
               onCustomInstructionsChange={setCustomInstructions}
               onExportChat={handleExportChat}
@@ -743,8 +645,6 @@ export default function App() {
         wakeEnabled={voiceEngine.wakeEnabled}
         orbState={voiceEngine.orbState}
         onToggleWake={voiceEngine.toggleWake}
-        model={model}
-        onModelChange={setModel}
         liveStats={liveStats}
       />
 
@@ -812,8 +712,6 @@ export default function App() {
             onSend={handleSend}
             isLoading={isLoading}
             isReady={isReady}
-            brainMode={brainMode}
-            onBrainModeChange={(m) => setBrainModeState(persistBrainMode(m))}
             ttsEnabled={ttsEnabled}
             onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
             voiceMode={voiceMode}
@@ -837,8 +735,6 @@ export default function App() {
             onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
             voiceMode={voiceMode}
             onVoiceModeChange={setVoiceMode}
-            model={model}
-            onModelChange={setModel}
             customInstructions={customInstructions}
             onCustomInstructionsChange={setCustomInstructions}
             onExportChat={handleExportChat}

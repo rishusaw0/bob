@@ -2,11 +2,9 @@
 // 1. 16 kHz Mono PCM Pre-Roll Ring Buffer + Goertzel Vocal-Band Speech Scoring + WAV Capture
 // 2. Adaptive Utterance Silence Grace (snappy for short cmds, patient for multi-step sentences)
 // 3. Real-Time Barge-In Monitor during TTS / Audio Playback
-import { transcribeAudio, getGeminiConnectionInfo } from './gemini.js';
-import { isStrictOfflineMode } from './offlineMode.js';
+import { transcribeAudio } from './gemini.js';
 import { matchWakePhrase, getAiName } from './voiceRouter.js';
 
-let speechApiBrokenInRuntime = false;
 
 const VAD_SENSITIVITY_KEY = 'jeeva_vad_sensitivity';
 
@@ -90,62 +88,9 @@ export function normalizePcmForStt(pcm16k, sampleRate = 16000) {
   return out;
 }
 
-export function isBrowserSpeechSupported() {
-  if (typeof window === 'undefined') return false;
-  if (window.electronAPI) return false;
-  if (isStrictOfflineMode()) return false;
-  return Boolean(window.SpeechRecognition || window.webkitSpeechRecognition) && !speechApiBrokenInRuntime;
-}
-
-/**
- * Centralized local-first audio transcription adapter.
- * Enforces Strict Offline Mode: NEVER sends mic audio to Gemini Cloud when Strict Offline is ON.
- */
-/**
- * Local-first STT policy:
- * 1) Whisper.cpp (multilingual model)
- * 2) Windows SAPI DictationGrammar fallback
- * 3) Gemini cloud only when Strict Offline is OFF
- *
- * In Strict Offline mode every network transcription path is blocked.
- */
+// Single transcription path: Gemini API only. Offline voice input is intentionally unavailable.
 export async function transcribeCapturedAudio(wavBase64, opts = {}) {
-  const api = typeof window !== 'undefined' ? window.electronAPI : null;
-  const language = opts.language || 'auto';
-  let whisperReason = '';
-  if (api?.offlineVoiceTranscribe) {
-    try {
-      const local = await api.offlineVoiceTranscribe(wavBase64, { language });
-      if (local?.ok && local?.text) {
-        console.info('[JEEVA STT] transcription engine: whisper.cpp');
-        return local.text;
-      }
-      whisperReason = local?.reason || 'Whisper.cpp returned no transcript';
-    } catch (err) {
-      whisperReason = err?.message || 'Whisper.cpp failed';
-    }
-  } else {
-    whisperReason = 'Local Whisper.cpp bridge is unavailable';
-  }
-
-  if (api?.offlineVoiceDictate) {
-    try {
-      const dictation = await api.offlineVoiceDictate(7, { language });
-      const localText = cleanSttTranscript(dictation?.text || '');
-      if (localText) {
-        console.info(`[JEEVA STT] transcription engine: windows-sapi (fallback, ${dictation?.culture || language})`);
-        return localText;
-      }
-      if (dictation?.reason) whisperReason += `; Windows SAPI: ${dictation.reason}`;
-    } catch (err) {
-      whisperReason += `; Windows SAPI failed: ${err?.message || 'unknown error'}`;
-    }
-  }
-
-  if (isStrictOfflineMode()) {
-    throw new Error(`Strict Offline Mode: cloud transcription blocked. Local Whisper.cpp and Windows SAPI produced no transcript. ${whisperReason}`);
-  }
-  console.info('[JEEVA STT] transcription engine: gemini-cloud (local engines unavailable; Strict Offline is OFF)');
+  // Only Gemini performs speech recognition. Offline PC commands can still be typed.
   return await transcribeAudio(wavBase64, 'audio/wav', opts);
 }
 
@@ -402,12 +347,9 @@ export function startVoiceCapture({
 }) {
   let stopped = false;
   let pcmSession = null;
-  let recognition = null;
   let silenceTimer = null;
   let noSpeechTimer = null;
   let maxCapTimer = null;
-  let finalText = '';
-  let hasCapturedSpeech = false;
   let recordedChunks = [];
   let speechStarted = false;
   let speechStartAt = 0;
@@ -424,14 +366,6 @@ export function startVoiceCapture({
   const cleanup = () => {
     clearTimers();
     onLevel(0, [0, 0, 0, 0, 0]);
-    if (recognition) {
-      try {
-        recognition.onend = null;
-        recognition.onerror = null;
-        recognition.stop();
-      } catch {}
-      recognition = null;
-    }
     if (pcmSession) {
       pcmSession.close();
       pcmSession = null;
@@ -565,121 +499,8 @@ export function startVoiceCapture({
     }
   };
 
-  if (!skipStt && isBrowserSpeechSupported()) {
-    try {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      recognition = new SR();
-      recognition.lang = lang;
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      onStatus('listening-speech');
-
-      recognition.onresult = (event) => {
-        let interim = '';
-        let newlyFinal = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const t = event.results[i][0].transcript;
-          if (event.results[i].isFinal) newlyFinal += t + ' ';
-          else interim += t;
-        }
-        if (newlyFinal) finalText += newlyFinal;
-        const combined = (finalText + interim).trim();
-        if (combined) {
-          hasCapturedSpeech = true;
-          onInterim(combined);
-          if (autoStopOnSilence) {
-            clearTimeout(silenceTimer);
-            silenceTimer = setTimeout(() => {
-              const out = (finalText || combined).trim();
-              stopped = true;
-              cleanup();
-              onResult(out, { pcm16k: null });
-            }, silenceMs);
-          }
-        }
-      };
-
-      recognition.onerror = (ev) => {
-        const errCode = ev?.error || '';
-        if (errCode === 'no-speech' || errCode === 'aborted') {
-          stopped = true;
-          cleanup();
-          onResult('', { pcm16k: null });
-          return;
-        }
-        if (!hasCapturedSpeech && (errCode === 'network' || errCode === 'service-not-allowed' || errCode === 'not-allowed')) {
-          if (errCode === 'network' || errCode === 'service-not-allowed') {
-            speechApiBrokenInRuntime = true;
-          }
-          if (recognition) {
-            try {
-              recognition.onend = null;
-              recognition.stop();
-            } catch {}
-            recognition = null;
-          }
-          startPcmCommandCapture();
-          return;
-        }
-        cleanup();
-        onError(errCode || 'Speech error');
-      };
-
-      recognition.onend = () => {
-        if (!stopped && hasCapturedSpeech) {
-          stopped = true;
-          const out = finalText.trim();
-          cleanup();
-          onResult(out, { pcm16k: null });
-        } else if (!stopped) {
-          stopped = true;
-          cleanup();
-          onResult('', { pcm16k: null });
-        }
-      };
-
-      if (autoStopOnSilence) {
-        noSpeechTimer = setTimeout(() => {
-          if (!stopped && !hasCapturedSpeech) {
-            stopped = true;
-            cleanup();
-            onResult('', { pcm16k: null });
-          }
-        }, noSpeechTimeoutMs);
-      }
-      recognition.start();
-    } catch {
-      startPcmCommandCapture();
-    }
-  } else {
-    // If offline or no Gemini Cloud STT configured, try Windows SAPI dictation directly first so user doesn't speak twice
-    const conn = getGeminiConnectionInfo?.() || {};
-    const canUseCloudStt =
-      (typeof navigator === 'undefined' || navigator.onLine !== false) &&
-      Boolean(conn.apiKey || conn.useServerProxy);
-    const api = typeof window !== 'undefined' ? window.electronAPI : null;
-    if (!canUseCloudStt && api?.offlineVoiceDictate) {
-      onStatus('offline-dictating');
-      onInterim('Listening (offline speech engine)...');
-      api.offlineVoiceDictate(7)
-        .then((dict) => {
-          if (stopped) return;
-          const offText = cleanSttTranscript(dict?.text || '');
-          if (offText) {
-            stopped = true;
-            cleanup();
-            onResult(offText, { pcm16k: null });
-          } else {
-            startPcmCommandCapture();
-          }
-        })
-        .catch(() => {
-          if (!stopped) startPcmCommandCapture();
-        });
-    } else {
-      startPcmCommandCapture();
-    }
-  }
+  // Capture PCM locally, then send the completed clip to Gemini for transcription.
+  startPcmCommandCapture();
 
   return {
     stop() {
@@ -689,9 +510,8 @@ export function startVoiceCapture({
         finishPcmCapture(speechStarted && recordedChunks.length > 0);
         return;
       }
-      const out = finalText.trim();
       cleanup();
-      onResult(out, { pcm16k: null });
+      onResult('', { pcm16k: null });
     },
     cancel() {
       stopped = true;
@@ -711,27 +531,14 @@ export function startWakeWordListener({
   onError = () => {},
 }) {
   let cancelled = false;
-  let rec = null;
-  let restartTimer = null;
-  let inlineWaitTimer = null;
   let pcmSession = null;
   let vadSilenceTimer = null;
   let vadMaxTimer = null;
 
   const stopAll = () => {
     cancelled = true;
-    clearTimeout(restartTimer);
-    clearTimeout(inlineWaitTimer);
     clearTimeout(vadSilenceTimer);
     clearTimeout(vadMaxTimer);
-    if (rec) {
-      try {
-        rec.onend = null;
-        rec.onerror = null;
-        rec.stop();
-      } catch {}
-      rec = null;
-    }
     if (pcmSession) {
       pcmSession.close();
       pcmSession = null;
@@ -835,70 +642,8 @@ export function startWakeWordListener({
     }
   };
 
-  if (isBrowserSpeechSupported()) {
-    const startSpeechWake = () => {
-      if (cancelled) return;
-      try {
-        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-        rec = new SR();
-        rec.lang = lang;
-        rec.continuous = true;
-        rec.interimResults = true;
-
-        rec.onresult = (event) => {
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const phrase = event.results[i][0].transcript;
-            const match = matchWakePhrase(phrase, aiName);
-            if (match.matched) {
-              clearTimeout(inlineWaitTimer);
-              if (event.results[i].isFinal && match.command.length >= 2) {
-                stopAll();
-                onWakeTriggered(match.command, { pcm16k: null });
-                return;
-              }
-              if (event.results[i].isFinal) {
-                stopAll();
-                onWakeTriggered('', { pcm16k: null });
-                return;
-              }
-              inlineWaitTimer = setTimeout(() => {
-                if (!cancelled) {
-                  stopAll();
-                  onWakeTriggered(match.command, { pcm16k: null });
-                }
-              }, 550);
-            }
-          }
-        };
-
-        rec.onerror = (ev) => {
-          const code = ev?.error || '';
-          if (code === 'network' || code === 'service-not-allowed') {
-            speechApiBrokenInRuntime = true;
-            try {
-              rec.onend = null;
-              rec.stop();
-            } catch {}
-            rec = null;
-            startPcmWakeLoop();
-          }
-        };
-
-        rec.onend = () => {
-          if (!cancelled) {
-            restartTimer = setTimeout(startSpeechWake, 400);
-          }
-        };
-
-        rec.start();
-      } catch {
-        startPcmWakeLoop();
-      }
-    };
-    startSpeechWake();
-  } else {
-    startPcmWakeLoop();
-  }
+  // Always-on PCM VAD captures wake phrases; Gemini performs recognition.
+  startPcmWakeLoop();
 
   return { stop: stopAll };
 }

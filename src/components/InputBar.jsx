@@ -41,8 +41,6 @@ export default function InputBar({
   onSend,
   isLoading,
   isReady,
-  brainMode = 'auto',
-  onBrainModeChange = null,
   ttsEnabled,
   onToggleTTS,
   voiceMode,
@@ -246,11 +244,11 @@ export default function InputBar({
     };
   }, []);
 
-  const canUseBrain = isReady || brainMode !== 'cloud';
+  const canUseBrain = Boolean(isReady || window.electronAPI);
 
   const startRecording = () => {
     if (!canUseBrain) {
-      toast.error('Pehle Settings mein Gemini API key connect karein ya Brain Mode ko Hybrid par set karein.');
+      toast.error('Gemini voice use karne ke liye Settings mein API key connect karein. Basic PC commands phir bhi available hain.');
       return;
     }
     const baseText = text ? text + ' ' : '';
@@ -412,7 +410,7 @@ export default function InputBar({
                 ? voiceStatus
                 : canUseBrain
                   ? 'Ask anything, drop a PDF/TXT, or give a PC command...'
-                  : 'Connect Gemini API key or switch Brain to Hybrid'
+                  : 'Connect Gemini API key for Gemini AI replies'
             }
             rows={1}
             className="w-full bg-transparent px-2 py-1.5 text-sm text-obsidian-text placeholder:text-obsidian-muted focus:outline-none resize-none max-h-36 overflow-y-auto"
@@ -465,24 +463,7 @@ export default function InputBar({
                 <span className="hidden sm:inline">{ttsEnabled ? 'Voice On' : 'Voice Off'}</span>
               </button>
 
-              {onBrainModeChange && (
-                <select
-                  value={brainMode}
-                  onChange={(e) => onBrainModeChange(e.target.value)}
-                  className={`bg-obsidian-bg hover:bg-obsidian-elevated border rounded-lg px-2 py-1 text-[11px] focus:outline-none cursor-pointer transition-colors ${
-                    brainMode === 'offline'
-                      ? 'border-emerald-500/40 text-emerald-300'
-                      : brainMode === 'cloud'
-                        ? 'border-sky-500/40 text-sky-300'
-                        : 'border-obsidian-border text-obsidian-secondary hover:text-obsidian-text'
-                  }`}
-                  title="Choose whether Jeeva answers offline or uses Cloud AI"
-                >
-                  <option value="auto" className="bg-obsidian-surface">Mode: Smart Auto</option>
-                  <option value="offline" className="bg-obsidian-surface">Mode: Offline Only</option>
-                  <option value="cloud" className="bg-obsidian-surface">Mode: Cloud AI</option>
-                </select>
-              )}
+
 
               <button
                 type="button"
