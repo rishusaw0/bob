@@ -33,6 +33,37 @@ npm run dev
 npm test
 ```
 
+## Offline voice recognition (Whisper.cpp / Windows SAPI)
+
+JEEVA uses this local-first speech-to-text order:
+
+1. **Whisper.cpp** when its executable and a multilingual model are installed.
+2. **Windows SAPI DictationGrammar** as a separate local fallback when Whisper is missing or fails. The matching Windows speech recognition language pack must be installed.
+3. **Gemini cloud transcription** only when Strict Offline Mode is OFF and local recognition did not produce text.
+
+Strict Offline Mode never reaches Gemini transcription. If both local engines fail, voice capture returns an error rather than sending microphone audio to the cloud.
+
+### Install Whisper.cpp assets
+
+Create a `voice-models` folder inside JEEVA's Electron user-data directory (normally `%APPDATA%\jeeva-ai\voice-models`) and place these files directly inside it:
+
+- `whisper-cli.exe` (recommended) or legacy `main.exe` from a compatible whisper.cpp Windows build.
+- One multilingual Whisper.cpp model file named `ggml-*.bin` (for example, a multilingual `ggml-small.bin`). **Do not use an `.en.bin` English-only model** if Hindi/Hinglish is required.
+
+The expected layout is:
+
+```text
+%APPDATA%\jeeva-ai\voice-models\
+  whisper-cli.exe
+  ggml-small.bin
+```
+
+JEEVA sends 16 kHz, mono, 16-bit PCM WAV audio to Whisper.cpp. The model and executable are kept in the user's app-data folder and are not bundled into the installer. Vosk is not currently supported or detected as a ready engine; a Vosk model folder alone will not enable transcription.
+
+### Windows SAPI fallback
+
+SAPI uses the installed Windows Speech Recognition pack through `System.Speech`. Hindi dictation requires an installed Hindi recognizer; English uses an installed English recognizer. Hinglish quality depends on the selected installed recognizer and is not equivalent to multilingual Whisper.cpp.
+
 ## Build Windows installer
 
 ```bash

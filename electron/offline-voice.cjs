@@ -8,40 +8,90 @@ function detectLocalAsrEngines(userDataDir = '') {
     : path.join(process.env.APPDATA || '', 'jeeva-ai', 'voice-models');
   let whisperExe = '';
   let whisperModel = '';
-  let voskModelDir = '';
 
   try {
     if (baseDir && fs.existsSync(baseDir)) {
       const entries = fs.readdirSync(baseDir, { withFileTypes: true });
-      for (const e of entries) {
-        if (e.isFile() && /^(whisper-cli|main)\.exe$/i.test(e.name)) {
-          whisperExe = path.join(baseDir, e.name);
-        }
-        if (e.isFile() && /^ggml-.*\.bin$/i.test(e.name)) {
-          whisperModel = path.join(baseDir, e.name);
-        }
-        if (e.isDirectory() && /^vosk-model-/i.test(e.name)) {
-          voskModelDir = path.join(baseDir, e.name);
-        }
-      }
+      const executables = entries
+        .filter((entry) => entry.isFile() && /^(whisper-cli|main)(\.exe)?$/i.test(entry.name))
+        .map((entry) => path.join(baseDir, entry.name));
+      const models = entries
+        .filter((entry) => entry.isFile() && /^ggml-.*\.bin$/i.test(entry.name))
+        .map((entry) => path.join(baseDir, entry.name))
+        .sort((a, b) => {
+          // Prefer multilingual models; *.en.bin models cannot recognize Hindi.
+          const aEnglishOnly = /\.en\.bin$/i.test(a) ? 1 : 0;
+          const bEnglishOnly = /\.en\.bin$/i.test(b) ? 1 : 0;
+          return aEnglishOnly - bEnglishOnly || a.localeCompare(b);
+        });
+      whisperExe = executables.find((file) => /whisper-cli/i.test(path.basename(file))) || executables[0] || '';
+      whisperModel = models[0] || '';
     }
   } catch {}
 
   const whisperReady = Boolean(whisperExe && whisperModel);
-  const voskReady = Boolean(voskModelDir);
+  const modelSupportsHindi = whisperReady && !/\.en\.bin$/i.test(whisperModel);
   return {
     modelsDir: baseDir,
     whisperExe,
     whisperModel,
-    voskModelDir,
     whisperReady,
-    voskReady,
-    supportsFullHindiHinglish: whisperReady || voskReady,
-    engineType: whisperReady ? 'whisper.cpp' : voskReady ? 'vosk' : 'windows-sapi-fallback',
+    // Vosk is deliberately not advertised: no Vosk runtime is shipped or wired.
+    voskReady: false,
+    voskSupported: false,
+    modelSupportsHindi,
+    supportsFullHindiHinglish: modelSupportsHindi,
+    engineType: whisperReady ? 'whisper.cpp' : 'windows-sapi-fallback',
+    windowsSapiFallback: true,
+    windowsSapiPlatformSupported: process.platform === 'win32',
   };
 }
 
-function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } = {}) {
+function normalizeAsrLanguage(language) {
+  const value = String(language || 'auto').trim().toLowerCase();
+  if (value === 'auto' || value === 'hi' || value === 'en') return value;
+  if (/^hi[-_]/.test(value)) return 'hi';
+  if (/^en[-_]/.test(value)) return 'en';
+  return 'auto';
+}
+
+function decodePcmWavBase64(input) {
+  const raw = String(input || '').trim();
+  const encoded = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw;
+  if (!encoded || encoded.length > 28 * 1024 * 1024 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+    return { ok: false, reason: 'Invalid or oversized WAV base64 payload' };
+  }
+  let buffer;
+  try { buffer = Buffer.from(encoded, 'base64'); } catch {
+    return { ok: false, reason: 'WAV base64 decoding failed' };
+  }
+  if (buffer.length < 46 || buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
+    return { ok: false, reason: 'Audio must be a valid RIFF/WAVE file' };
+  }
+  const format = buffer.readUInt16LE(20);
+  const channels = buffer.readUInt16LE(22);
+  const sampleRate = buffer.readUInt32LE(24);
+  const bitsPerSample = buffer.readUInt16LE(34);
+  if (format !== 1 || channels !== 1 || sampleRate !== 16000 || bitsPerSample !== 16) {
+    return { ok: false, reason: 'Whisper input must be 16 kHz, mono, 16-bit PCM WAV' };
+  }
+  return { ok: true, buffer };
+}
+
+function cleanWhisperOutput(stdout, stderr = '') {
+  // Different whisper.cpp builds send diagnostics to either stream; inspect both.
+  return [String(stdout || ''), String(stderr || '')]
+    .join('\n')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/^whisper_(init|model|full|print|timings)|^ggml_|^main:\s*(processing|loading|system_info)/i.test(line))
+    .map((line) => line.replace(/^\[[^\]]*\]\s*/, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '', spawnProcess = spawn } = {}) {
   let child = null;
   const activeDictations = new Set();
   let activeAiName = 'Jeeva';
@@ -93,7 +143,7 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
 
     let proc;
     try {
-      proc = spawn(
+      proc = spawnProcess(
         'powershell.exe',
         ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-AiName', activeAiName],
         { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
@@ -241,49 +291,42 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
     return { ...status };
   }
 
-  function dictateOnce(timeoutSec = 7) {
+  function dictateOnce(timeoutSec = 7, { language = 'auto' } = {}) {
     const safeSec = Math.max(3, Math.min(15, Number(timeoutSec) || 7));
     const scriptPath = typeof resolveUnpackedPath === 'function' ? resolveUnpackedPath('win-voice.ps1') : '';
     if (!scriptPath) {
-      return Promise.resolve({ type: 'dictation', text: '', reason: 'win-voice.ps1 path unavailable' });
+      return Promise.resolve({ type: 'dictation', text: '', engine: 'windows-sapi', fallback: true, reason: 'win-voice.ps1 path unavailable' });
     }
     return new Promise((resolve) => {
       let settled = false;
       let stdout = '';
       let proc = null;
       let killTimer = null;
-
       const finish = (payload) => {
         if (settled) return;
         settled = true;
-        if (killTimer) {
-          clearTimeout(killTimer);
-          killTimer = null;
-        }
+        if (killTimer) clearTimeout(killTimer);
         if (proc) activeDictations.delete(proc);
-        resolve(payload);
+        resolve({ engine: 'windows-sapi', fallback: true, ...payload });
       };
-
       try {
-        proc = spawn(
+        proc = spawnProcess(
           'powershell.exe',
-          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-Mode', 'dictate', '-TimeoutSec', String(safeSec)],
+          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-Mode', 'dictate',
+            '-TimeoutSec', String(safeSec), '-Culture', normalizeAsrLanguage(language)],
           { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
         );
-      } catch {
-        return finish({ type: 'dictation', text: '' });
+      } catch (err) {
+        return finish({ type: 'dictation', text: '', reason: err?.message || 'Windows SAPI launch failed' });
       }
-
       if (!proc || typeof proc.on !== 'function') {
-        return finish({ type: 'dictation', text: '' });
+        return finish({ type: 'dictation', text: '', reason: 'Windows SAPI process could not start' });
       }
-
       activeDictations.add(proc);
       killTimer = setTimeout(() => {
         safeKill(proc);
-        finish({ type: 'dictation', text: '', timedOut: true });
+        finish({ type: 'dictation', text: '', timedOut: true, reason: 'Windows SAPI dictation timed out' });
       }, (safeSec + 4) * 1000);
-
       proc.stdout?.on('error', () => {});
       proc.stdout?.on('data', (d) => {
         if (stdout.length < 32768) stdout += d.toString('utf8');
@@ -295,75 +338,89 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
           try {
             const obj = JSON.parse(trimmed);
             if (obj.type === 'dictation') return finish(obj);
+            if (obj.type === 'unavailable') {
+              return finish({ type: 'dictation', text: '', unavailable: true, reason: obj.reason || 'Windows SAPI recognizer unavailable' });
+            }
           } catch {}
         }
-        finish({ type: 'dictation', text: '' });
+        finish({ type: 'dictation', text: '', reason: 'Windows SAPI returned no dictation result' });
       });
-      proc.on('error', () => finish({ type: 'dictation', text: '' }));
+      proc.on('error', (err) => finish({ type: 'dictation', text: '', reason: err?.message || 'Windows SAPI process error' }));
     });
   }
 
-  function transcribeAudioBase64(wavBase64, { language = 'auto', timeoutMs = 15000 } = {}) {
+  function transcribeAudioBase64(wavBase64, { language = 'auto', timeoutMs = 20000 } = {}) {
     const asr = detectLocalAsrEngines(userDataDir);
     if (!asr.whisperReady) {
       return Promise.resolve({
         ok: false,
-        engine: asr.engineType,
+        engine: 'whisper.cpp',
+        fallbackEngine: 'windows-sapi',
         text: '',
-        reason: `No local Whisper.cpp binary/model found in ${asr.modelsDir}`,
+        reason: `Whisper.cpp binary/model not installed in ${asr.modelsDir}; Windows SAPI is available as a separate fallback`,
       });
     }
-    const cleanB64 = String(wavBase64 || '').includes(',') ? String(wavBase64).split(',')[1] : String(wavBase64 || '');
-    if (!cleanB64) {
-      return Promise.resolve({ ok: false, engine: 'whisper.cpp', text: '', reason: 'Empty audio buffer' });
-    }
+    const decoded = decodePcmWavBase64(wavBase64);
+    if (!decoded.ok) return Promise.resolve({ ok: false, engine: 'whisper.cpp', text: '', reason: decoded.reason });
+
     const os = require('os');
-    const tmpWav = path.join(os.tmpdir(), `jeeva-asr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.wav`);
+    let tmpWav = '';
     try {
-      fs.writeFileSync(tmpWav, Buffer.from(cleanB64, 'base64'));
+      tmpWav = path.join(os.tmpdir(), `jeeva-asr-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.wav`);
+      fs.writeFileSync(tmpWav, decoded.buffer, { flag: 'wx' });
     } catch (err) {
-      return Promise.resolve({ ok: false, engine: 'whisper.cpp', text: '', reason: err?.message || 'Temp WAV write failed' });
+      return Promise.resolve({ ok: false, engine: 'whisper.cpp', text: '', reason: err?.message || 'Temporary WAV write failed' });
     }
 
+    const lang = normalizeAsrLanguage(language);
+    const timeout = Math.max(1000, Math.min(60000, Number(timeoutMs) || 20000));
     return new Promise((resolve) => {
       let settled = false;
       let stdout = '';
+      let stderr = '';
       let proc = null;
       let timer = null;
-      const cleanup = (res) => {
+      const cleanup = (result) => {
         if (settled) return;
         settled = true;
         if (timer) clearTimeout(timer);
         if (proc) activeDictations.delete(proc);
-        try { if (fs.existsSync(tmpWav)) fs.unlinkSync(tmpWav); } catch {}
-        resolve(res);
+        try { if (tmpWav && fs.existsSync(tmpWav)) fs.unlinkSync(tmpWav); } catch {}
+        resolve({ engine: 'whisper.cpp', language: lang, ...result });
       };
-
       try {
-        proc = spawn(
+        // whisper-cli and legacy main.exe both accept -m/-f/-l/-nt.
+        // Do not pass --no-prints: some builds suppress the transcript on stdout.
+        proc = spawnProcess(
           asr.whisperExe,
-          ['-m', asr.whisperModel, '-f', tmpWav, '-l', String(language || 'auto'), '-nt', '--no-prints'],
-          { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }
+          ['-m', asr.whisperModel, '-f', tmpWav, '-l', lang, '-nt'],
+          { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
         );
       } catch (err) {
-        return cleanup({ ok: false, engine: 'whisper.cpp', text: '', reason: err?.message || 'Whisper spawn failed' });
+        return cleanup({ ok: false, text: '', reason: err?.message || 'Whisper.cpp spawn failed' });
       }
-
+      if (!proc || typeof proc.on !== 'function') {
+        return cleanup({ ok: false, text: '', reason: 'Whisper.cpp process could not start' });
+      }
       activeDictations.add(proc);
       timer = setTimeout(() => {
         safeKill(proc);
-        cleanup({ ok: false, engine: 'whisper.cpp', text: '', timedOut: true, reason: 'Whisper transcription timed out' });
-      }, timeoutMs);
-
+        cleanup({ ok: false, text: '', timedOut: true, reason: 'Whisper.cpp transcription timed out' });
+      }, timeout);
+      proc.stdout?.on('data', (d) => { if (stdout.length < 65536) stdout += d.toString('utf8'); });
+      proc.stderr?.on('data', (d) => { if (stderr.length < 16384) stderr += d.toString('utf8'); });
       proc.stdout?.on('error', () => {});
-      proc.stdout?.on('data', (d) => {
-        if (stdout.length < 32768) stdout += d.toString('utf8');
-      });
+      proc.stderr?.on('error', () => {});
+      proc.on('error', (err) => cleanup({ ok: false, text: '', reason: err?.message || 'Whisper.cpp process error' }));
       proc.on('close', (code) => {
-        const text = stdout.replace(/\[[^\]]*\]/g, ' ').replace(/\s+/g, ' ').trim();
-        cleanup({ ok: code === 0 && Boolean(text), engine: 'whisper.cpp', text, language });
+        const text = cleanWhisperOutput(stdout, stderr);
+        cleanup({
+          ok: code === 0 && Boolean(text),
+          text: code === 0 ? text : '',
+          exitCode: code,
+          reason: code === 0 ? (text ? '' : 'Whisper.cpp returned an empty transcript') : `Whisper.cpp exited with code ${code}: ${stderr.trim().slice(0, 500)}`,
+        });
       });
-      proc.on('error', (err) => cleanup({ ok: false, engine: 'whisper.cpp', text: '', reason: err?.message || 'Whisper process error' }));
     });
   }
 
@@ -386,4 +443,4 @@ function createOfflineVoice({ resolveUnpackedPath, onEvent, userDataDir = '' } =
   };
 }
 
-module.exports = { createOfflineVoice, detectLocalAsrEngines };
+module.exports = { createOfflineVoice, detectLocalAsrEngines, normalizeAsrLanguage, decodePcmWavBase64, cleanWhisperOutput };

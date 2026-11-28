@@ -228,6 +228,7 @@ app.whenReady().then(() => {
 
   offlineVoice = createOfflineVoice({
     resolveUnpackedPath,
+    userDataDir: app.getPath('userData'),
     onEvent: (ev) => emitRendererEvent('voice:offlineEvent', ev),
   });
 
@@ -299,7 +300,7 @@ app.whenReady().then(() => {
   ipcMain.handle('voice:offlineStop', () => offlineVoice.stop());
   ipcMain.handle('voice:offlineSetName', (_, aiName) => offlineVoice.setAiName(aiName));
   ipcMain.handle('voice:offlineStatus', () => offlineVoice.getStatus());
-  ipcMain.handle('voice:offlineDictate', (_, timeoutSec) => offlineVoice.dictateOnce(timeoutSec || 7));
+  ipcMain.handle('voice:offlineDictate', (_, timeoutSec, opts) => offlineVoice.dictateOnce(timeoutSec || 7, opts || {}));
   ipcMain.handle('voice:offlineTranscribe', (_, wavBase64, opts) => offlineVoice.transcribeAudioBase64(wavBase64, opts));
 
   ipcMain.handle('updater:check', (_, cfg) => appUpdater.checkForUpdates(cfg || {}));

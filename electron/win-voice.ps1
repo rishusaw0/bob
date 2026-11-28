@@ -2,7 +2,8 @@ param(
   [string]$AiName = "Jeeva",
   [double]$MinConfidence = 0.52,
   [string]$Mode = "wake",
-  [int]$TimeoutSec = 7
+  [int]$TimeoutSec = 7,
+  [string]$Culture = "auto"
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,11 +27,23 @@ if (-not $recognizers -or $recognizers.Count -eq 0) {
   exit 0
 }
 
-# Prefer en-IN, hi-IN (if Hindi pack installed), or en-* recognizer
-$picked = $recognizers | Where-Object { $_.Culture.Name -eq "en-IN" } | Select-Object -First 1
-if (-not $picked) { $picked = $recognizers | Where-Object { $_.Culture.Name -eq "hi-IN" } | Select-Object -First 1 }
-if (-not $picked) { $picked = $recognizers | Where-Object { $_.Culture.Name -like "en-*" } | Select-Object -First 1 }
-if (-not $picked) { $picked = $recognizers | Select-Object -First 1 }
+# Pick the requested installed recognizer for dictation; never claim a language pack that is absent.
+$requestedCulture = [string]$Culture
+$picked = $null
+if ($requestedCulture -eq "hi") {
+  $picked = $recognizers | Where-Object { $_.Culture.Name -like "hi-*" } | Select-Object -First 1
+} elseif ($requestedCulture -eq "en") {
+  $picked = $recognizers | Where-Object { $_.Culture.Name -like "en-IN" } | Select-Object -First 1
+  if (-not $picked) { $picked = $recognizers | Where-Object { $_.Culture.Name -like "en-*" } | Select-Object -First 1 }
+} else {
+  $picked = $recognizers | Where-Object { $_.Culture.Name -eq "en-IN" } | Select-Object -First 1
+  if (-not $picked) { $picked = $recognizers | Where-Object { $_.Culture.Name -eq "hi-IN" } | Select-Object -First 1 }
+  if (-not $picked) { $picked = $recognizers | Where-Object { $_.Culture.Name -like "en-*" } | Select-Object -First 1 }
+}
+if (-not $picked) {
+  Emit-Event @{ type = "unavailable"; reason = "No installed Windows SAPI recognizer matches requested culture: $requestedCulture" }
+  exit 0
+}
 
 $engine = New-Object System.Speech.Recognition.SpeechRecognitionEngine($picked.Culture)
 try {
