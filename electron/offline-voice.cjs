@@ -80,7 +80,12 @@ function decodePcmWavBase64(input) {
 
 function cleanWhisperOutput(stdout, stderr = '') {
   // Different whisper.cpp builds send diagnostics to either stream; inspect both.
-  return [String(stdout || ''), String(stderr || '')]
+  // Some wrappers serialize process output with literal \n sequences instead of real line breaks.
+  const normalizeLines = (value) => String(value || '')
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n');
+  return [normalizeLines(stdout), normalizeLines(stderr)]
     .join('\n')
     .split(/\r?\n/)
     .map((line) => line.trim())
