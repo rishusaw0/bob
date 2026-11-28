@@ -780,6 +780,12 @@ assert.equal(hindiTranscript.text, 'नमस्ते Jeeva');
 assert.equal(hindiTranscript.engine, 'whisper.cpp');
 assert.ok(spawnCalls[0].args.includes('hi'));
 assert.ok(!spawnCalls[0].args.includes('--no-prints'), 'Do not suppress Whisper transcript output');
+for (const lang of ['en', 'auto']) {
+  const result = await asrVoice.transcribeAudioBase64(validWav, { language: lang });
+  assert.equal(result.ok, true);
+  const call = spawnCalls[spawnCalls.length - 1];
+  assert.equal(call.args[call.args.indexOf('-l') + 1], lang, `Whisper must receive requested language: ${lang}`);
+}
 const emptyVoice = createAsrVoice({ userDataDir: asrRoot, resolveUnpackedPath: () => '' });
 const invalidWav = await emptyVoice.transcribeAudioBase64('UklGRg==');
 assert.equal(invalidWav.ok, false);
@@ -944,9 +950,34 @@ assert.equal(assessQueryRouting('Screen par kya likha hai padh kar sunao', null,
 assert.ok(pickTopToolsForQuery('read active screen and click submit button', 4).includes('screen_reader'));
 
 // Advanced Voice Detection DSP, AGC Normalization, Phonetic Repair & VAD Sensitivity checks
-const { applyHighPassRumbleFilter, normalizePcmForStt, getVadSensitivity } = await import(pathToFileURL(path.join(ROOT, 'src/services/voiceCapture.js')).href);
+const { applyHighPassRumbleFilter, normalizePcmForStt, getVadSensitivity, transcribeCapturedAudio } = await import(pathToFileURL(path.join(ROOT, 'src/services/voiceCapture.js')).href);
 const { repairVoiceTranscript } = await import(pathToFileURL(path.join(ROOT, 'src/services/voiceRouter.js')).href);
 assert.equal(getVadSensitivity(), 'balanced');
+// Strict Offline must try local Whisper then SAPI, and must never call Gemini after both fail.
+const previousWindow = globalThis.window;
+let cloudFallbackAttempted = false;
+globalThis.window = {
+  electronAPI: {
+    offlineVoiceTranscribe: async () => ({ ok: false, text: '', reason: 'test Whisper unavailable' }),
+    offlineVoiceDictate: async () => ({ type: 'dictation', text: '', reason: 'test SAPI unavailable' }),
+  },
+};
+setStrictOfflineMode(true);
+await assert.rejects(
+  () => transcribeCapturedAudio('UklGRg==', { language: 'auto' }),
+  /Strict Offline Mode: cloud transcription blocked/
+);
+assert.equal(cloudFallbackAttempted, false);
+globalThis.window = {
+  electronAPI: {
+    offlineVoiceTranscribe: async () => ({ ok: false, text: '' }),
+    offlineVoiceDictate: async (_timeout, opts) => ({ type: 'dictation', text: 'स्थानीय पहचान', culture: opts.language === 'hi' ? 'hi-IN' : 'en-IN' }),
+  },
+};
+assert.equal(await transcribeCapturedAudio('UklGRg==', { language: 'hi' }), 'स्थानीय पहचान');
+setStrictOfflineMode(false);
+if (previousWindow === undefined) delete globalThis.window;
+else globalThis.window = previousWindow;
 const dcRumble = new Float32Array(320).fill(0.4);
 const hpOut = applyHighPassRumbleFilter(dcRumble);
 assert.ok(Math.abs(hpOut[hpOut.length - 1]) < 0.02); // High-pass cancels steady DC/hum
