@@ -12,7 +12,8 @@
     "build": "vite build --mode public",
     "build:react": "vite build --mode public",
     "build:desktop": "vite build --mode public && electron-builder --win nsis --publish never",
-    "test:phase5": "node scripts/phase5-reliability.mjs"
+    "test:phase5": "node scripts/phase5-reliability.mjs",
+    "test:security": "node scripts/security-reliability.mjs"
   },
   "engines": {
     "node": ">=18.0.0"
