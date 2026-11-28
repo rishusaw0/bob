@@ -1,5 +1,5 @@
 // Smart Multi-Voice Read-Aloud Engine (Indian English, Hindi, Hinglish + Realistic Human Studio Voices)
-import { textToSpeech, resetRegionalVoiceCache, isGeminiReady } from './gemini.js';
+import { textToSpeech, isGeminiReady } from './gemini.js';
 import { canUseExternalCloud } from './offlineMode.js';
 
 export const VOICE_PROFILES = {
@@ -41,7 +41,6 @@ export function getVoiceAccent() {
 export function setVoiceAccent(accent) {
   const clean = accent === 'global' ? 'global' : 'indian';
   writeStorage(VOICE_ACCENT_KEY, clean);
-  resetRegionalVoiceCache();
   return clean;
 }
 
