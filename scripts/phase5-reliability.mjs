@@ -97,6 +97,9 @@ check(appSource.includes("localStorage.setItem('jeeva_custom_instructions', cust
 check(appSource.includes('setSpeechVoiceMode(voiceMode)'), 'selected voice profile is synchronized with speech engine');
 check(appSource.includes("localStorage.setItem('jeeva_tts', String(ttsEnabled))"), 'auto voice replies preference persists across restarts');
 check(appSource.includes('if (!attachment && !forceCloud)'), 'Ask Gemini escalation bypasses deterministic PC command routing');
+const voiceEngineSource = read('src/services/useVoiceEngine.js');
+check(voiceEngineSource.includes('const nativeWakeRestore = window.electronAPI?.wakeRestore'), 'native wake restoration is handled through one Electron call');
+check(voiceEngineSource.includes('else if (targetMode !== \'notch\')'), 'browser wake mode changes use the non-Electron callback only');
 check(!appSource.includes('runLocalSlmTurn') && !appSource.includes('runLocalDocumentTurn'), 'chat has no local LLM/document answer path');
 check(quickBrain.includes('tryFastVoiceAction') && quickBrain.includes('tryLocalSlotAction'), 'basic deterministic Windows actions remain');
 check(voiceCapture.includes("return await transcribeAudio(wavBase64, 'audio/wav', opts)"), 'voice transcription goes to Gemini');
