@@ -347,15 +347,23 @@ export async function transcribeAudio(base64Data, mimeType = 'audio/wav', opts =
     ? `Listen for the wake phrase "${wakeName}" in Hindi, English, or Hinglish. Output only the exact spoken words, or an empty string if there is no speech.`
     : 'Transcribe this Hindi, English, or Hinglish PC voice command accurately. Output only the spoken words, with no commentary.';
 
-  const interaction = await client.interactions.create({
+  const response = await client.models.generateContent({
     model: GEMINI_MODEL_ID,
-    input: [
-      { type: 'text', text: prompt },
-      { type: 'audio', data: base64Data, mime_type: mimeType },
-    ],
-    store: false,
+    contents: [{
+      role: 'user',
+      parts: [
+        { text: prompt },
+        { inlineData: { mimeType, data: base64Data } },
+      ],
+    }],
+    config: { responseModalities: ['TEXT'], temperature: 0 },
   });
-  return (interaction.output_text || '').trim();
+  if (typeof response.text === 'string') return response.text.trim();
+  return (response.candidates?.[0]?.content?.parts || [])
+    .filter((part) => typeof part.text === 'string')
+    .map((part) => part.text)
+    .join('')
+    .trim();
 }
 
 export async function generateImage() {
@@ -377,114 +385,53 @@ export async function generateTitle(userMessage) {
   }
 }
 
-let regionalVoiceCache = new Map();
+const PERSONA_VOICES = {
+  natural_warm: { indian: { english: 'Kore', hindi: 'Kore', hinglish: 'Kore' }, global: { english: 'Aoede', hindi: 'Kore', hinglish: 'Aoede' } },
+  calm_pro: { indian: { english: 'Charon', hindi: 'Charon', hinglish: 'Charon' }, global: { english: 'Charon', hindi: 'Charon', hinglish: 'Charon' } },
+  crisp_studio: { indian: { english: 'Aoede', hindi: 'Aoede', hinglish: 'Aoede' }, global: { english: 'Aoede', hindi: 'Aoede', hinglish: 'Aoede' } },
+  conversational: { indian: { english: 'Puck', hindi: 'Puck', hinglish: 'Puck' }, global: { english: 'Puck', hindi: 'Puck', hinglish: 'Puck' } },
+};
 
 export function isGeminiReady() {
   return Boolean(client);
 }
 
-export function resetRegionalVoiceCache() {
-  regionalVoiceCache.clear();
-}
-
-const PERSONA_VOICES = {
-  natural_warm: {
-    indian: { english: 'Achird', hindi: 'Sulafat', hinglish: 'Achird' },
-    global: { english: 'Aoede', hindi: 'Sulafat', hinglish: 'Achird' },
-  },
-  calm_pro: {
-    indian: { english: 'Charon', hindi: 'Orus', hinglish: 'Charon' },
-    global: { english: 'Charon', hindi: 'Orus', hinglish: 'Charon' },
-  },
-  crisp_studio: {
-    indian: { english: 'Sulafat', hindi: 'Sulafat', hinglish: 'Aoede' },
-    global: { english: 'Aoede', hindi: 'Sulafat', hinglish: 'Aoede' },
-  },
-  conversational: {
-    indian: { english: 'Puck', hindi: 'Achird', hinglish: 'Puck' },
-    global: { english: 'Puck', hindi: 'Achird', hinglish: 'Puck' },
-  },
-};
-
-async function getRegionalVoices(accent = 'indian', persona = 'natural_warm') {
-  const key = accent === 'global' ? 'global' : 'indian';
-  const personaKey = PERSONA_VOICES[persona] ? persona : 'natural_warm';
-  const personaFallback = PERSONA_VOICES[personaKey][key];
-  if (personaKey !== 'natural_warm') return personaFallback;
-
-  if (regionalVoiceCache.has(key)) return regionalVoiceCache.get(key);
-  const fallback = personaFallback;
-  if (!client?.voices?.list) return fallback;
-
-  // Background refresh without blocking first spoken word latency (0ms stall)
-  if (!regionalVoiceCache.has(`${key}_warming`)) {
-    regionalVoiceCache.set(`${key}_warming`, fallback);
-    Promise.all([
-      client.voices.list({ language_code: ['hi-IN'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
-      client.voices.list({ language_code: ['en-IN'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
-      client.voices.list({ language_code: ['en-US'], contexts: ['Conversational'], type: ['prebuilt'], page_size: 6 }).catch(() => null),
-    ])
-      .then(([hiRes, inRes, enRes]) => {
-        regionalVoiceCache.set(key, {
-          hindi: hiRes?.voices?.[0]?.id || fallback.hindi,
-          hinglish: inRes?.voices?.[0]?.id || hiRes?.voices?.[1]?.id || fallback.hinglish,
-          english: key === 'indian' ? inRes?.voices?.[0]?.id || fallback.english : enRes?.voices?.[0]?.id || fallback.english,
-        });
-      })
-      .catch(() => {});
-  }
-  return fallback;
-}
-
 const VOICE_STYLE_HINTS = {
-  english:
-    'realistic human Indian English speaker (en-IN), warm conversational studio presence, natural micro-pauses at punctuation, subtle expressive emphasis, never robotic or monotonous',
-  english_global:
-    'realistic human studio narrator, warm articulate conversational tone, natural breathing pauses and genuine human inflection without sounding synthetic',
-  hindi:
-    'realistic native Indian Hindi human speaker, warm expressive voice with natural conversational cadence, soft breathing pauses, and crisp authentic pronunciation',
-  hinglish:
-    'realistic bilingual Indian human assistant (en-IN / hi-IN), friendly conversational warmth, effortless code-switching between English and Hindi with natural human rhythm',
+  english: 'Speak in clear, natural Indian English with a warm conversational tone and short pauses.',
+  english_global: 'Speak in clear, natural English with a warm conversational tone and short pauses.',
+  hindi: 'Speak in natural Hindi with clear, warm Indian pronunciation and short conversational pauses.',
+  hinglish: 'Speak naturally in Hindi and English as a bilingual Indian assistant; preserve the code-switching in the text.',
 };
 
 export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
   assertCloudAllowed('Gemini voice output');
   if (!client) throw new Error('Gemini not initialized');
-
-  const accent =
-    opts?.accent ||
-    (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_accent') : null) ||
-    'indian';
-  const persona =
-    opts?.persona ||
-    (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_persona') : null) ||
-    'natural_warm';
-  const voices = await getRegionalVoices(accent, persona);
-  const voice = voices[profile] || voices.hinglish;
-  const styleKey = profile === 'english' && accent === 'global' ? 'english_global' : profile;
+  const accent = opts?.accent || (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_accent') : null) || 'indian';
+  const persona = opts?.persona || (typeof localStorage !== 'undefined' ? localStorage.getItem('jeeva_voice_persona') : null) || 'natural_warm';
+  const personaKey = PERSONA_VOICES[persona] ? persona : 'natural_warm';
+  const accentKey = accent === 'global' ? 'global' : 'indian';
+  const voice = PERSONA_VOICES[personaKey][accentKey][profile] || PERSONA_VOICES[personaKey][accentKey].hinglish;
+  const styleKey = profile === 'english' && accentKey === 'global' ? 'english_global' : profile;
   const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;
-  const interaction = await client.interactions.create({
+
+  const response = await client.models.generateContent({
     model: GEMINI_TTS_MODEL_ID,
-    input: [
-      {
-        type: 'user_input',
-        content: [
-          {
-            type: 'text',
-            text,
-            annotations: [{ type: 'speech_metadata', style }],
-          },
-        ],
+    contents: `Speak the following text aloud. ${style}\n\n${String(text || '')}`,
+    config: {
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: { voiceName: voice },
+        },
       },
-    ],
-    response_format: { type: 'audio' },
-    generation_config: { speech_config: [{ voice }] },
-    store: false,
+    },
   });
 
-  if (interaction.output_audio?.data) {
-    const mime = interaction.output_audio.mime_type || 'audio/wav';
-    return `data:${mime};base64,${interaction.output_audio.data}`;
+  const audioPart = response.candidates?.[0]?.content?.parts?.find((part) => part.inlineData?.data);
+  if (!audioPart?.inlineData?.data) {
+    throw new Error('Gemini TTS did not return audio data');
   }
-  throw new Error('Gemini TTS did not return audio');
+  const mime = audioPart.inlineData.mimeType || 'audio/wav';
+  return `data:${mime};base64,${audioPart.inlineData.data}`;
 }
+
