@@ -1035,4 +1035,4 @@ const astScript = psFiles
   .join('');
 execFileSync('powershell.exe', ['-NoProfile', '-Command', astScript], { stdio: 'pipe' });
 
-console.log(`ALL_TESTS_PASSED (${psFiles.length} PS scripts, ${declaredTools.length} AI tools, server share-tokens, DPI mapper, voice router)`);
+console.log(`ALL_TESTS_PASSED (${psFiles.length} PS scripts, ${declaredTools.length} AI tools, static download site, DPI mapper, voice router)`);
