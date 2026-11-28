@@ -368,6 +368,26 @@ export function classifyIntentDetailed(query, options = {}) {
     return { match: null, reason: 'unsafe', confidence: 0, runnerUp: null };
   }
 
+  // Exact catalog phrases are deterministic commands; do not reject them because
+  // a semantically similar intent creates an artificial near-tie.
+  const normalizedRaw = normalizeHinglishQuery(raw);
+  const exactIntent = INTENT_DEFINITIONS.find((intent) =>
+    intent.phrases.some((phrase) => normalizeHinglishQuery(phrase) === normalizedRaw)
+  );
+  if (exactIntent) {
+    return {
+      match: {
+        id: exactIntent.id,
+        tool: exactIntent.tool,
+        confidence: 1,
+        args: exactIntent.args(raw),
+      },
+      reason: 'matched',
+      confidence: 1,
+      runnerUp: null,
+    };
+  }
+
   const queryTokens = semanticContentTokens(raw);
   if (!queryTokens.length) return { match: null, reason: 'unknown', confidence: 0, runnerUp: null };
 
