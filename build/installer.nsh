@@ -32,6 +32,9 @@
 
 !macro customInit
   !insertmacro jeevaStopRunningApp
+  ; Remove any leftover side-by-side install from previous productName ("JEEVA AI Desktop")
+  IfFileExists "$LOCALAPPDATA\Programs\jeeva-ai-desktop\JEEVA AI Desktop.exe" 0 +2
+    RMDir /r "$LOCALAPPDATA\Programs\jeeva-ai-desktop"
 !macroend
 
 !macro customInstall
@@ -68,7 +71,10 @@
         RMDir /r "$APPDATA\${APP_PACKAGE_NAME}"
       !endif
       RMDir /r "$APPDATA\jeeva-ai"
+      RMDir /r "$APPDATA\JEEVA AI"
+      RMDir /r "$APPDATA\JEEVA AI Desktop"
       RMDir /r "$LOCALAPPDATA\jeeva-ai-updater"
+      RMDir /r "$LOCALAPPDATA\jeeva-ai-desktop-updater"
       Goto jeeva_app_data_cleanup_done
 
     jeeva_keep_app_data:
