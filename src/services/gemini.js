@@ -8,17 +8,13 @@ import { assertCloudAllowed, isStrictOfflineMode } from './offlineMode.js';
 
 let client = null;
 let previousInteractionId = null;
-let preferredModel = 'gemini-3.5-flash-lite';
+const GEMINI_MODEL_ID = 'gemini-3.5-flash-lite';
+const GEMINI_TTS_MODEL_ID = 'gemini-3.8-flash-lite-tts';
+let preferredModel = GEMINI_MODEL_ID;
 let customInstructions = '';
 let assistantName = 'Jeeva';
 
-export const SMOKE_CANDIDATE_MODELS = [
-  'gemini-3.5-flash-lite',
-  'gemini-3.8-flash',
-  'gemini-3.6-flash',
-  'gemini-4-hydrogen',
-  'gemini-2.5-flash',
-];
+export const SMOKE_CANDIDATE_MODELS = [GEMINI_MODEL_ID];
 
 export function setAiNamePrompt(name) {
   const cleaned = String(name || 'Jeeva').trim();
@@ -66,44 +62,31 @@ export function getGeminiConnectionInfo() {
   return { apiKey: Boolean(client), useServerProxy: false };
 }
 
-export async function testGeminiConnection({ apiKey = '', model = preferredModel } = {}) {
+export async function testGeminiConnection({ apiKey = '' } = {}) {
   assertCloudAllowed('Gemini Connection Test');
   const startedAt = Date.now();
-  let testClient;
   try {
-    testClient = createTempClient(String(apiKey || '').trim());
+    const testClient = createTempClient(String(apiKey || '').trim());
+    const res = await testClient.interactions.create({
+      model: GEMINI_MODEL_ID,
+      input: 'Reply with OK',
+      store: false,
+    });
+    return {
+      ok: true,
+      activeModel: GEMINI_MODEL_ID,
+      fallbackUsed: false,
+      latencyMs: Date.now() - startedAt,
+      sample: (res?.output_text || 'OK').trim().slice(0, 40),
+    };
   } catch (err) {
-    return { ok: false, error: err?.message || 'Configuration incomplete' };
+    return { ok: false, error: err?.message || String(err), latencyMs: Date.now() - startedAt };
   }
-
-  const candidates = Array.from(new Set([model, ...SMOKE_CANDIDATE_MODELS].filter(Boolean)));
-  let lastError = 'No responsive Gemini model found';
-  for (const candidate of candidates) {
-    try {
-      const res = await testClient.interactions.create({
-        model: candidate,
-        input: 'Reply with OK',
-        store: false,
-      });
-      return {
-        ok: true,
-        activeModel: candidate,
-        fallbackUsed: candidate !== model,
-        latencyMs: Date.now() - startedAt,
-        sample: (res?.output_text || 'OK').trim().slice(0, 40),
-      };
-    } catch (err) {
-      lastError = err?.message || String(err);
-      if (/401|403|API_KEY_INVALID|API key not valid/i.test(lastError)) {
-        return { ok: false, error: lastError, latencyMs: Date.now() - startedAt };
-      }
-    }
-  }
-  return { ok: false, error: lastError, latencyMs: Date.now() - startedAt };
 }
 
-export function setModel(model) {
-  preferredModel = model || 'gemini-3.5-flash-lite';
+export function setModel() {
+  // Ignore legacy saved model choices; JEEVA has one fixed text/reasoning model.
+  preferredModel = GEMINI_MODEL_ID;
 }
 
 export function setCustomInstructions(text) {
@@ -194,44 +177,34 @@ export async function sendMessage(
     requestConfig.previous_interaction_id = previousInteractionId;
   }
 
-  const modelOrder = Array.from(
-    new Set([preferredModel, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-4-hydrogen'])
-  );
-
-  function cfgHasPrevId(cfg) {
-    return Boolean(cfg.previous_interaction_id);
-  }
-
   async function callWithRetry(config, isStream = false, allowResetPrevId = false) {
     let lastError;
-    for (const model of modelOrder) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const cfg = { ...config, model: GEMINI_MODEL_ID };
       try {
-        const cfg = { ...config, model };
-        if (isStream) {
-          return await client.interactions.create({ ...cfg, stream: true });
-        }
-        return await client.interactions.create(cfg);
+        return isStream
+          ? await client.interactions.create({ ...cfg, stream: true })
+          : await client.interactions.create(cfg);
       } catch (err) {
         lastError = err;
         const msg = String(err?.message || err);
         if (
           allowResetPrevId &&
-          cfgHasPrevId(config) &&
+          cfg.previous_interaction_id &&
           (msg.includes('404') || msg.includes('not found') || msg.includes('previous_interaction_id'))
         ) {
           previousInteractionId = null;
-          delete config.previous_interaction_id;
+          delete cfg.previous_interaction_id;
           return isStream
-            ? await client.interactions.create({ ...config, model, stream: true })
-            : await client.interactions.create({ ...config, model });
+            ? await client.interactions.create({ ...cfg, stream: true })
+            : await client.interactions.create(cfg);
         }
-        const isTransient =
-          msg.includes('503') || msg.includes('429') || msg.includes('UNAVAILABLE') || msg.includes('overloaded');
-        if (!isTransient) throw err;
-        await new Promise((r) => setTimeout(r, 120));
+        const transient = /429|503|UNAVAILABLE|overloaded|timeout|network/i.test(msg);
+        if (!transient || attempt === 2) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 350 * (attempt + 1)));
       }
     }
-    throw lastError;
+    throw lastError || new Error('Gemini request failed');
   }
 
   let fullResponse = '';
@@ -369,46 +342,19 @@ export async function transcribeAudio(base64Data, mimeType = 'audio/wav', opts =
   assertCloudAllowed('Gemini Audio Transcription');
   if (!client) throw new Error('Gemini not initialized');
   const wakeName = (opts?.aiName || assistantName || 'Jeeva').trim();
-  const isWake = opts?.mode === 'wake';
-  const prompt = isWake
-    ? `Listen carefully for the wake word "${wakeName}" (e.g. "Hey ${wakeName}") in Hindi, English, or Hinglish. Output ONLY the exact spoken words, or an empty string if only background noise or breathing.`
-    : `Transcribe this Hindi, English, or Hinglish PC voice command accurately into clean text (Romanized Hinglish or English). Keep system words like volume, brightness, chrome, install, winget, screenshot, tab, pause, kholo, badhao, kam karo, band karo clear. Output ONLY the spoken command text with zero commentary, or empty string if silent.`;
+  const prompt = opts?.mode === 'wake'
+    ? `Listen for the wake phrase "${wakeName}" in Hindi, English, or Hinglish. Output only the exact spoken words, or an empty string if there is no speech.`
+    : 'Transcribe this Hindi, English, or Hinglish PC voice command accurately. Output only the spoken words, with no commentary.';
 
-  const basePreferred = /tts|image|nano-banana/i.test(preferredModel) ? '' : preferredModel;
-  const models = Array.from(
-    new Set([basePreferred, 'gemini-3.5-flash-lite', 'gemini-2.5-flash'].filter(Boolean))
-  ).slice(0, 3);
-
-  let lastErr;
-  for (const model of models) {
-    try {
-      const payload =
-        model === 'gemini-3.5-transcribe'
-          ? {
-              model,
-              input: [{ type: 'audio', data: base64Data, mime_type: mimeType }],
-              generation_config: { transcription_config: { mode: 'smart' } },
-              store: false,
-            }
-          : {
-              model,
-              input: [
-                { type: 'text', text: prompt },
-                { type: 'audio', data: base64Data, mime_type: mimeType },
-              ],
-              store: false,
-            };
-      const interaction = await client.interactions.create(payload);
-      return (interaction.output_text || '').trim();
-    } catch (err) {
-      lastErr = err;
-      const msg = String(err?.message || err);
-      if (/401|403|API_KEY_INVALID|API key not valid|Owner Server Key locked/i.test(msg)) {
-        throw err;
-      }
-    }
-  }
-  throw lastErr || new Error('Audio transcription failed');
+  const interaction = await client.interactions.create({
+    model: GEMINI_MODEL_ID,
+    input: [
+      { type: 'text', text: prompt },
+      { type: 'audio', data: base64Data, mime_type: mimeType },
+    ],
+    store: false,
+  });
+  return (interaction.output_text || '').trim();
 }
 
 export async function generateImage(prompt) {
@@ -575,37 +521,28 @@ export async function textToSpeech(text, profile = 'hinglish', opts = {}) {
   const voice = customVoiceId || voices[profile] || voices.hinglish;
   const styleKey = profile === 'english' && accent === 'global' ? 'english_global' : profile;
   const style = VOICE_STYLE_HINTS[styleKey] || VOICE_STYLE_HINTS.hinglish;
-  const ttsModels = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
-
-  let lastErr;
-  for (const model of ttsModels) {
-    try {
-      const interaction = await client.interactions.create({
-        model,
-        input: [
+  const interaction = await client.interactions.create({
+    model: GEMINI_TTS_MODEL_ID,
+    input: [
+      {
+        type: 'user_input',
+        content: [
           {
-            type: 'user_input',
-            content: [
-              {
-                type: 'text',
-                text,
-                annotations: [{ type: 'speech_metadata', style }],
-              },
-            ],
+            type: 'text',
+            text,
+            annotations: [{ type: 'speech_metadata', style }],
           },
         ],
-        response_format: { type: 'audio' },
-        generation_config: { speech_config: [{ voice }] },
-        store: false,
-      });
+      },
+    ],
+    response_format: { type: 'audio' },
+    generation_config: { speech_config: [{ voice }] },
+    store: false,
+  });
 
-      if (interaction.output_audio?.data) {
-        const mime = interaction.output_audio.mime_type || 'audio/wav';
-        return `data:${mime};base64,${interaction.output_audio.data}`;
-      }
-    } catch (err) {
-      lastErr = err;
-    }
+  if (interaction.output_audio?.data) {
+    const mime = interaction.output_audio.mime_type || 'audio/wav';
+    return `data:${mime};base64,${interaction.output_audio.data}`;
   }
-  throw lastErr || new Error('No audio generated');
+  throw new Error('Gemini TTS did not return audio');
 }
