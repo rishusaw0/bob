@@ -228,7 +228,7 @@ export default function LandingPage({
               </a>
             </div>
             <p className="text-[11px] font-mono text-zinc-500">
-              v1.0.2 · Windows 10 / 11 (64-bit) · Offline-First Desktop Software · Free
+              v1.0.1 · Windows 10 / 11 (64-bit) · Offline-First Desktop Software · Free
             </p>
           </div>
         </div>
