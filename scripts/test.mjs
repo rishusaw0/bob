@@ -279,7 +279,7 @@ for (const [query, expectedId] of semanticCases) {
   assert.ok(result.match.confidence >= 0.43, `Confidence below threshold for "${query}"`);
 }
 assert.equal(classifyIntent('random sentence about my weekend'), null);
-assert.equal(classifyIntentDetailed(''), null);
+assert.equal(classifyIntentDetailed('').reason, 'empty');
 for (const unsafe of [
   'delete my files',
   'chrome uninstall kar do',
