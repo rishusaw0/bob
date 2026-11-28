@@ -126,7 +126,7 @@ check(pkg.build?.nsis?.deleteAppDataOnUninstall === false, 'uninstall preserves 
 const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/ci-release.yml'), 'utf8');
 check(workflow.includes('runs-on: windows-latest'), 'Windows CI runner');
 check(workflow.includes('npm run build'), 'production bundle CI step');
-check(workflow.includes('electron-builder --win nsis'), 'Windows installer CI step');
+check(workflow.includes('npm run build:desktop'), 'Windows installer CI step uses the dedicated Electron build');
 check(workflow.includes('if-no-files-found: error'), 'installer artifact required');
 
 console.log('PHASE5_RELIABILITY_PASSED', checks, 'checks');

@@ -6,12 +6,12 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node scripts/test.mjs",
-    "dev": "concurrently \"npm run dev:react\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
+    "dev": "concurrently \"npm run dev:react -- --mode desktop\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
     "dev:react": "vite",
     "dev:electron": "electron .",
     "build": "vite build --mode public",
     "build:react": "vite build --mode public",
-    "build:desktop": "vite build --mode public && electron-builder --win nsis --publish never",
+    "build:desktop": "vite build --mode desktop && electron-builder --win nsis --publish never",
     "test:phase5": "node scripts/phase5-reliability.mjs",
     "test:security": "node scripts/security-reliability.mjs"
   },

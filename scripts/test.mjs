@@ -16,15 +16,15 @@ function readRel(rel) {
 
 
 // Installer/release contract: the generated NSIS asset name must exactly match
-// both the landing-page direct-download URL and the Render server fallback.
+// the static website download route and the Windows NSIS artifact.
 const appPackage = JSON.parse(readRel('package.json'));
 const appLock = JSON.parse(readRel('package-lock.json'));
 const expectedInstaller = `JEEVA.AI.Setup.${appPackage.version}.exe`;
 assert.equal(appLock.version, appPackage.version, 'package-lock root version must match package.json');
 assert.equal(appLock.packages?.['']?.version, appPackage.version, 'lockfile root package version must match package.json');
 assert.equal(appPackage.build?.nsis?.artifactName, 'JEEVA.AI.Setup.${version}.${ext}', 'NSIS artifact filename must match the published installer URL');
-assert.ok(readRel('src/components/LandingPage.jsx').includes(`releases/download/v${appPackage.version}/${expectedInstaller}`), 'Landing page pinned release URL must match NSIS artifact filename and app version');
-assert.ok(readRel('server/index.js').includes(`releases/latest/download/${expectedInstaller}`), 'Render fallback installer URL must match NSIS artifact filename');
+assert.ok(readRel('src/components/LandingPage.jsx').includes("window.location.assign('/download')"), 'Landing page download uses the static server download route');
+assert.ok(readRel('server/index.js').includes('releases/latest/download/JEEVA.AI.Setup.1.0.2.exe'), 'Download route points directly to the Windows installer');
 
 // 1. Node syntax check on server & all Electron CJS modules
 console.log('[1/6] Checking JS/CJS syntax...');
@@ -76,7 +76,7 @@ const guardSrc = readRel('electron/permission-guard.cjs');
 const actionsSrc = readRel('electron/pc-actions.cjs');
 const mainSrc = readRel('electron/main.cjs');
 const preloadSrc = readRel('electron/preload.cjs');
-const bridgeSrc = readRel('src/services/bridge.js');
+const bridgeSrc = readRel('src/services/systemApi.js');
 
 const toolsArrayBlock = toolsSrc.slice(toolsSrc.indexOf('export const TOOLS'), toolsSrc.indexOf('function guessDocumentMime'));
 const declaredTools = [...toolsArrayBlock.matchAll(/name:\s*'([a-z_]+)'/g)].map((m) => m[1]);
@@ -105,17 +105,15 @@ const actionKeys = [...actionsBlock.matchAll(/^\s{4}(?:async\s+)?([a-zA-Z0-9_]+)
 const guardCases = new Set(
   [...guardSrc.slice(guardSrc.indexOf('getActionCategory'), guardSrc.indexOf('isActionHighRisk')).matchAll(/case\s*'([a-zA-Z0-9_]+)'/g)].map((m) => m[1])
 );
-const remoteActions = new Set([...bridgeSrc.matchAll(/callRemoteAction\(['"]([a-zA-Z0-9_]+)['"]/g)].map((m) => m[1]));
+assert.ok(bridgeSrc.includes('return isDesktopElectron() ? window.electronAPI : null'), 'system bridge exposes only local Electron IPC');
+assert.ok(!bridgeSrc.includes('callRemoteAction'), 'browser/LAN/cloud remote PC execution is removed');
 
 for (const act of actionKeys) {
   assert.ok(guardCases.has(act), `Action "${act}" missing in permission-guard.cjs`);
-  if (!['liveStats', 'saveImage'].includes(act)) {
-    assert.ok(remoteActions.has(act), `Action "${act}" missing in bridge.js remote actions`);
-  }
 }
 console.log(`   Verified ${declaredTools.length} tools, ${preloadInvokes.length} IPC handlers, ${actionKeys.length} actions.`);
 
-// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard, security guardrails, memory RAG, server store & WS codec
+// 3. Unit tests: coord-mapper DPI math, updater semver, pc-scheduler, permission-guard, security guardrails, memory RAG
 console.log('[3/6] Testing coord-mapper, updater, scheduler, guardrails, memory RAG & auto-launch...');
 const { mapCoordsToPhysical } = require(path.join(ROOT, 'electron/coord-mapper.cjs'));
 const { compareSemver } = require(path.join(ROOT, 'electron/updater.cjs'));
@@ -628,64 +626,17 @@ assert.equal(tabAct.tools[0].args.action, 'new_tab');
 const openEnded = await tryFastVoiceAction('python ke baare mein batao');
 assert.equal(openEnded.handled, false);
 
-// 5. Render Server timed & scoped share tokens verification
-console.log('[5/6] Testing Render server expiring/scoped share links...');
-const serverUrl = pathToFileURL(path.join(ROOT, 'server/index.js')).href;
-const {
-  createTimedShareToken,
-  getRelayAuthContext,
-  isActionAllowedForReadOnly,
-  hashPairToken,
-  UPDATE_LATEST_VERSION,
-} = await import(serverUrl);
-
-assert.ok(UPDATE_LATEST_VERSION);
-const ownerPair = 'JVA-TEST-OWNR-1234';
-const ownerKey = `pair:${hashPairToken(ownerPair)}`;
-
-const tmpFull = createTimedShareToken({ ownerKey, ttlMinutes: 60, scope: 'full' });
-assert.ok(tmpFull.shareToken.startsWith('JVA-TMP-'));
-assert.equal(tmpFull.scope, 'full');
-
-const fullCtx = getRelayAuthContext({ headers: { 'x-pair-token': tmpFull.shareToken } });
-assert.equal(fullCtx.ownerKey, ownerKey);
-assert.equal(fullCtx.scope, 'full');
-assert.equal(fullCtx.expired, false);
-
-const tmpRo = createTimedShareToken({ ownerKey, ttlMinutes: 30, scope: 'read_only' });
-const roCtx = getRelayAuthContext({ headers: { 'x-pair-token': tmpRo.shareToken } });
-assert.equal(roCtx.ownerKey, ownerKey);
-assert.equal(roCtx.scope, 'read_only');
-assert.equal(isActionAllowedForReadOnly('runCommand', ['echo hack']), false);
-assert.equal(isActionAllowedForReadOnly('liveStats', []), true);
-assert.equal(isActionAllowedForReadOnly('diagnostics', ['kill_process', '123']), false);
-assert.equal(isActionAllowedForReadOnly('diagnostics', ['overview']), true);
-
-const fakeTmpCtx = getRelayAuthContext({ headers: { 'x-pair-token': 'JVA-TMP-DOESNOTEXIST' } });
-assert.equal(fakeTmpCtx.ownerKey, null);
-assert.equal(fakeTmpCtx.expired, true);
-
-// WebSocket codec & Server Store persistence tests
-const wsUrl = pathToFileURL(path.join(ROOT, 'server/ws-codec.js')).href;
-const storeUrl = pathToFileURL(path.join(ROOT, 'server/store.js')).href;
-const { computeWebSocketAccept, encodeServerFrame, createFrameReader } = await import(wsUrl);
-const { createServerStore } = await import(storeUrl);
-assert.equal(computeWebSocketAccept('dGhlIHNhbXBsZSBub25jZQ=='), 's3pPLMBiTxaQ9kYGzzhZRbK+xOo=');
-let decodedWs = '';
-const reader = createFrameReader((op, pay) => {
-  if (op === 1) decodedWs = pay.toString('utf8');
-});
-reader(encodeServerFrame(1, Buffer.from('hello-ws', 'utf8')));
-assert.equal(decodedWs, 'hello-ws');
-
-const tmpStoreDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeeva-test-store-'));
-const st1 = await createServerStore(tmpStoreDir);
-st1.setShareToken('hash123', { ownerKey: 'owner:test', scope: 'read_only', expiresAt: Date.now() + 60000, createdAt: Date.now() });
-st1.close();
-const st2 = await createServerStore(tmpStoreDir);
-assert.equal(st2.getShareToken('hash123')?.scope, 'read_only');
-st2.close();
-fs.rmSync(tmpStoreDir, { recursive: true, force: true });
+// 5. Static download server contract: no browser workspace, proxy, or relay API.
+console.log('[5/6] Testing static download website contract...');
+const serverSource = readRel('server/index.js');
+assert.ok(serverSource.includes("url.pathname === '/download'"), 'download route is available');
+assert.ok(serverSource.includes("url.pathname === '/healthz'"), 'health check route is available');
+assert.ok(serverSource.includes('path.resolve(DIST, relative)'), 'static files are resolved safely');
+assert.ok(!serverSource.includes('/api/relay/'), 'hosted PC relay endpoints are removed');
+assert.ok(!serverSource.includes('/api/gemini'), 'hosted Gemini proxy endpoints are removed');
+assert.ok(!serverSource.includes('WebSocket'), 'hosted WebSocket relay is removed');
+assert.ok(!readRel('render.yaml').includes('GEMINI_API_KEY'), 'landing deployment has no server-managed Gemini key');
+assert.ok(!readRel('render.yaml').includes('APP_PIN'), 'landing deployment has no owner PIN or workspace lock');
 
 // Hybrid Local AI Brain tests (Semantic Intent, Top-4 Tool Pruning, Escalation Gatekeeper & Hardware Profile)
 const { pickTopToolsForQuery } = await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
@@ -1084,4 +1035,4 @@ const astScript = psFiles
   .join('');
 execFileSync('powershell.exe', ['-NoProfile', '-Command', astScript], { stdio: 'pipe' });
 
-console.log(`ALL_TESTS_PASSED (${psFiles.length} PS scripts, ${declaredTools.length} AI tools, server share-tokens, DPI mapper, voice router)`);
+console.log(`ALL_TESTS_PASSED (${psFiles.length} PS scripts, ${declaredTools.length} AI tools, static download site, DPI mapper, voice router)`);

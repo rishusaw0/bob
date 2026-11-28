@@ -3,7 +3,6 @@ import {
   LuDownload,
   LuArrowRight,
   LuShieldCheck,
-  LuGlobe,
   LuAudioLines,
   LuAppWindow,
   LuFileText,
@@ -14,7 +13,6 @@ import {
   LuClock,
   LuSparkles,
   LuZap,
-  LuMonitor,
 } from 'react-icons/lu';
 
 const DEMO_SCENARIOS = [
@@ -44,11 +42,7 @@ const DEMO_SCENARIOS = [
   },
 ];
 
-export default function LandingPage({
-  canInstallPWA,
-  onInstallPWA,
-  onEnterWorkspace,
-}) {
+export default function LandingPage() {
   const [showDownloadGuide, setShowDownloadGuide] = useState(false);
   const [demoIdx, setDemoIdx] = useState(0);
 
@@ -61,13 +55,8 @@ export default function LandingPage({
 
   const activeDemo = DEMO_SCENARIOS[demoIdx];
 
-  // Keep the public landing-page download pinned to the verified v1.0.2 asset.
-  // Do not trust a stale INSTALLER_DOWNLOAD_URL returned by an older relay deployment.
-  const resolvedInstallerUrl =
-    'https://github.com/rishusaw0/bob/releases/download/v1.0.2/JEEVA.AI.Setup.1.0.2.exe';
-
   const handleDownloadExe = () => {
-    window.open(resolvedInstallerUrl, '_blank', 'noopener,noreferrer');
+    window.location.assign('/download');
   };
 
   const features = [
@@ -128,8 +117,8 @@ export default function LandingPage({
     },
     {
       num: '03',
-      title: 'Control From Anywhere',
-      desc: 'Use the Camera Notch on your desktop or pair your phone over Render HTTPS Relay with isolated per-device Pair Keys.',
+      title: 'Built for Your Windows Desktop',
+      desc: 'Use the Camera Notch, voice controls, and the full PC Control Center directly on your Windows computer.',
     },
   ];
 
@@ -376,7 +365,7 @@ export default function LandingPage({
               <li className="flex items-start gap-2">
                 <LuCheck className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                 <span>
-                  API keys stay inside Windows OS SafeStorage Vault or your own browser — never shared with other users.
+                  API keys stay inside the Windows OS SafeStorage Vault and are never stored by this download website.
                 </span>
               </li>
               <li className="flex items-start gap-2">
@@ -427,7 +416,7 @@ export default function LandingPage({
               </button>
             </div>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Download the latest Windows installer (<code className="text-emerald-300">JEEVA AI Setup 1.0.2.exe</code>) from GitHub Releases, or set <code className="text-sky-300">INSTALLER_DOWNLOAD_URL</code> on Render for instant 1-click download.
+              You will be redirected to the official GitHub Releases page, where you can download the latest Windows installer.
             </p>
             <div className="flex items-center justify-end gap-2">
               <a

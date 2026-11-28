@@ -19,7 +19,7 @@ import {
   LuDatabase,
   LuWorkflow,
 } from 'react-icons/lu';
-import { getSystemAPI } from '../services/bridge';
+import { getSystemAPI } from '../services/systemApi';
 import { getAuditLog } from '../services/permissions';
 import { rememberUserMemory, listAllMemories, forgetMemoryItem } from '../services/memoryRag';
 import { queryEpisodicTimeline, forgetEpisodicDay } from '../services/episodicMemory';

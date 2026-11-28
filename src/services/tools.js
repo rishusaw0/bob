@@ -1,4 +1,4 @@
-import { getSystemAPI } from './bridge.js';
+import { getSystemAPI } from './systemApi.js';
 import { queryEpisodicTimeline } from './episodicMemory.js';
 import { summarizeTextLocally } from './docExtractor.js';
 import {
