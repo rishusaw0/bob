@@ -83,6 +83,23 @@ export default function App() {
   const activeVoiceTurnRef = useRef(false);
   const voiceprintMismatchRef = useRef(false);
   const lastUserPromptRef = useRef('');
+  useEffect(() => {
+    // Remove legacy local-model/brain and native voice preferences from earlier releases.
+    try {
+      [
+        'jeeva_brain_mode',
+        'jeeva_brain_stats',
+        'jeeva_strict_local_commands',
+        'jeeva_strict_offline_mode',
+        'jeeva_model',
+        'jeeva_speech_speed',
+        'jeeva_native_voice',
+        'jeeva_custom_voice_id',
+        'jeeva_custom_voices_list',
+      ].forEach((key) => localStorage.removeItem(key));
+    } catch {}
+  }, []);
+
   // Resolve permission prompts through the modal before any protected PC action runs.
   const requestPermission = useCallback((request = {}) => new Promise((resolve) => {
     // Never leave an earlier action waiting if another permission prompt replaces it.
