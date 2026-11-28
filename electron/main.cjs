@@ -15,14 +15,12 @@ const {
   powerMonitor,
 } = require('electron');
 const path = require('path');
-const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 
 const { createPermissionGuard } = require('./permission-guard.cjs');
 const { createScheduler } = require('./pc-scheduler.cjs');
 const { createPcActions } = require('./pc-actions.cjs');
-const { getLanIPs, startBridgeServer } = require('./bridge-server.cjs');
 const { createOfflineVoice } = require('./offline-voice.cjs');
 const { createUpdater } = require('./updater.cjs');
 const { createAutoLaunchManager, APP_MODEL_ID } = require('./auto-launch.cjs');
@@ -33,7 +31,6 @@ const { createLocalBrainManager } = require('./local-brain.cjs');
 const { createEpisodicMemory } = require('./episodic-memory.cjs');
 const { evaluateElectronPermission } = require('./permission-policy.cjs');
 
-let bridgeServer = null;
 let permissionGuard = null;
 let pcScheduler = null;
 let offlineVoice = null;
@@ -122,21 +119,6 @@ function getEpisodicMemory() {
     episodicMemory = createEpisodicMemory({ userDataDir: app.getPath('userData'), retentionDays: 90 });
   }
   return episodicMemory;
-}
-
-function getOrCreateBridgePin() {
-  const pinPath = path.join(app.getPath('userData'), 'bridge-pin.txt');
-  try {
-    if (fs.existsSync(pinPath)) {
-      const saved = fs.readFileSync(pinPath, 'utf-8').trim();
-      if (/^\d{4}$/.test(saved)) return saved;
-    }
-  } catch {}
-  const pin = String(crypto.randomInt(1000, 9999));
-  try {
-    fs.writeFileSync(pinPath, pin, 'utf-8');
-  } catch {}
-  return pin;
 }
 
 let pcActionKit;
@@ -239,7 +221,6 @@ app.whenReady().then(() => {
     callback(allowed);
   });
 
-  const pin = getOrCreateBridgePin();
   permissionGuard = createPermissionGuard({
     userDataPath: app.getPath('userData'),
     BrowserWindow,
@@ -254,13 +235,6 @@ app.whenReady().then(() => {
     currentVersion: app.getVersion(),
     shell,
     onStatus: (st) => emitRendererEvent('updater:status', st),
-  });
-
-  bridgeServer = startBridgeServer({
-    pin,
-    actions,
-    getPermissionGuard: () => permissionGuard,
-    distDir: path.join(__dirname, '..', 'dist'),
   });
 
   const mainWin = windowManager.createWindow();
@@ -309,8 +283,6 @@ app.whenReady().then(() => {
     } catch {}
     return '';
   });
-
-  ipcMain.handle('bridge:info', () => ({ port: 51823, pin, ips: getLanIPs() }));
 
   ipcMain.handle('permissions:sync', (_, rules) => permissionGuard.saveRules(rules));
   ipcMain.handle('permissions:get', () => permissionGuard.getRules());
@@ -369,12 +341,10 @@ app.on('will-quit', () => {
   pcScheduler?.dispose?.();
   offlineVoice?.stop?.();
   globalShortcut.unregisterAll();
-  bridgeServer?.close();
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    bridgeServer?.close();
     app.quit();
   }
 });
