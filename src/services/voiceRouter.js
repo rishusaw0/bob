@@ -1,5 +1,5 @@
 // Master Voice Engine: Custom AI Wake Name + Fuzzy Matcher + Instant Deterministic PC Router
-import { getSystemAPI } from './bridge.js';
+import { getSystemAPI } from './systemApi.js';
 import {
   PERMISSION_CATEGORIES,
   getToolCategory,
