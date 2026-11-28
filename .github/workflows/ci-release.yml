@@ -100,7 +100,7 @@ jobs:
           git add package-lock.json
           if git diff --cached --quiet; then echo "Lockfile already up to date."; exit 0; fi
           git commit -m "chore(deps): refresh patched package lockfile"
-          git push origin "HEAD:$env:BRANCH_NAME"
+          git push origin "HEAD:$BRANCH_NAME"
 
   release-windows-installer:
     needs: test-and-verify
