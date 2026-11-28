@@ -538,8 +538,8 @@ assert.ok(spChunks.length >= 1 && spChunks[0].length <= 100);
 const decChunks = splitIntoChunks('Your laptop has 3.8 GB free RAM and 85.5% battery. Everything looks healthy!', 220, 100);
 assert.ok(decChunks[0].includes('3.8 GB') && decChunks[0].includes('85.5 percent'));
 
-// Layer-1 slot action verification (0 Gemini API calls)
-const { runPcCommand } = await import(pathToFileURL(path.join(ROOT, 'src/services/localQuickBrain.js')).href);
+// Deterministic Windows PC command verification (no local AI model)
+const { runPcCommand } = await import(pathToFileURL(path.join(ROOT, 'src/services/pcCommandRouter.js')).href);
 
 const remHit = await runPcCommand('10 minute baad meeting reminder lagao');
 assert.equal(remHit.handled, true);
