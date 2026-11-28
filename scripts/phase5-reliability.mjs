@@ -89,6 +89,9 @@ check(!mainSource.includes('createOfflineVoice'), 'Electron main does not start 
 check(!preloadSource.includes('localBrainChat') && !preloadSource.includes('offlineVoiceDictate'), 'preload exposes no local-model IPC');
 check(mainSource.includes("for (const legacyDir of ['local-brain', 'voice-models'])"), 'old JEEVA model cache is cleaned');
 check(appSource.includes('runPcCommand') && appSource.includes('pcCommandRouter'), 'deterministic PC command adapter remains enabled');
+check(appSource.includes('const switchWindowMode = useCallback'), 'App defines the window mode switch handler');
+check(appSource.includes('window.electronAPI?.setWindowMode'), 'window mode handler updates the native Electron window');
+check(appSource.includes('onWindowModeChange'), 'App listens for native window mode changes');
 check(!appSource.includes('runLocalSlmTurn') && !appSource.includes('runLocalDocumentTurn'), 'chat has no local LLM/document answer path');
 check(quickBrain.includes('tryFastVoiceAction') && quickBrain.includes('tryLocalSlotAction'), 'basic deterministic Windows actions remain');
 check(voiceCapture.includes("return await transcribeAudio(wavBase64, 'audio/wav', opts)"), 'voice transcription goes to Gemini');
