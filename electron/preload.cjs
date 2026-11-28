@@ -117,7 +117,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Bridge, Vault & Permissions
-  getBridgeInfo: () => ipcRenderer.invoke('bridge:info'),
   vaultSaveKey: (key) => ipcRenderer.invoke('vault:saveKey', key),
   vaultGetKey: () => ipcRenderer.invoke('vault:getKey'),
   syncPermissionRules: (rules) => ipcRenderer.invoke('permissions:sync', rules),
