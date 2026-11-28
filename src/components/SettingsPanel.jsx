@@ -21,14 +21,8 @@ import {
   setVoiceAccent,
   getVoicePersona,
   setVoicePersona,
-  getActiveCustomVoiceId,
-  setActiveCustomVoiceId,
-  getCustomClonedVoices,
-  saveCustomClonedVoice,
-  removeCustomClonedVoice,
 } from '../services/speech';
 import { startVoiceCapture, getVadSensitivity, setVadSensitivity } from '../services/voiceCapture';
-import { startWavRecording } from '../services/wavRecorder';
 import {
   VOICEPRINT_LEVELS,
   getVoiceprintStatus,
