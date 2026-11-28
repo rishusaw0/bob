@@ -65,7 +65,7 @@ export default function LandingPage({
   const LATEST_INSTALLER_URL =
     'https://github.com/rishusaw0/bob/releases/latest/download/JEEVA.AI.Setup.1.0.2.exe';
   const resolvedInstallerUrl =
-    installerUrl && /JEEVA\\.AI\\.Setup\\.1\\.0\\.2\\.exe(?:$|[?#])/i.test(installerUrl) ? installerUrl : LATEST_INSTALLER_URL;
+    installerUrl && /JEEVA\.AI\.Setup\.1\.0\.2\.exe(?:$|[?#])/i.test(installerUrl) ? installerUrl : LATEST_INSTALLER_URL;
 
   const handleDownloadExe = () => {
     window.open(resolvedInstallerUrl, '_blank', 'noopener,noreferrer');
