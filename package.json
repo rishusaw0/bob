@@ -11,7 +11,8 @@
     "dev:electron": "electron .",
     "build": "vite build --mode public",
     "build:react": "vite build --mode public",
-    "build:desktop": "vite build --mode public && electron-builder --win nsis --publish never"
+    "build:desktop": "vite build --mode public && electron-builder --win nsis --publish never",
+    "test:phase5": "node scripts/phase5-reliability.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

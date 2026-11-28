@@ -29,6 +29,9 @@ jobs:
       - name: Run full verification suite
         run: npm test
 
+      - name: Run Phase 5 reliability matrix
+        run: npm run test:phase5
+
       - name: Build production bundle
         run: npm run build
 
