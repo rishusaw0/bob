@@ -31,7 +31,7 @@ import {
 } from './services/voicePermissionPrompt';
 import { getAiName, getStrictVoiceMode, getWakeOpenMode } from './services/voiceRouter';
 import { getDocSummaryPref, setDocSummaryPref, getReplyStyle, setReplyStyle } from './services/userPrefs';
-import { runLocalQuickBrain, buildLocalTitle } from './services/localQuickBrain';
+import { runLocalQuickBrain } from './services/localQuickBrain';
 import {
   assessQueryRouting,
   recordBrainUsage,
@@ -293,12 +293,6 @@ export default function App() {
     }) => {
       if (tier && tier !== 'offline-guard') {
         recordBrainUsage(tier, promptText.length);
-      }
-      if (messages.length === 0 && tier !== 'cloud') {
-        const localTitle = buildLocalTitle(promptText);
-        if (localTitle) {
-          setMessages(prev => prev.map(m => (m.id === userMsg.id ? { ...m, aiTitle: localTitle } : m)));
-        }
       }
       setMessages(prev =>
         prev.map(m =>
