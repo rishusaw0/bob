@@ -23,8 +23,18 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      - name: Refresh lockfile for patched dependency versions
+        run: npm install --package-lock-only --ignore-scripts
+
       - name: Install dependencies
         run: npm ci
+
+      - name: Upload regenerated dependency lockfile
+        uses: actions/upload-artifact@v4
+        with:
+          name: jeeva-patched-package-lock
+          path: package-lock.json
+          if-no-files-found: error
 
       - name: Print dependency audit details
         if: always()
