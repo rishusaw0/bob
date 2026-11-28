@@ -642,7 +642,7 @@ assert.ok(!readRel('render.yaml').includes('APP_PIN'), 'landing deployment has n
 const { pickTopToolsForQuery } = await import(pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href);
 const { assessQueryRouting, compactHistoryForCloud } = await import(pathToFileURL(path.join(ROOT, 'src/services/brainRouter.js')).href);
 
-const lagIntent = classifyIntent('yaar laptop bohot lag kr raha hai check kro');
+const lagIntent = classifyIntent('laptop hang lag slow ho raha hai check karo');
 assert.equal(lagIntent?.tool, 'system_diagnostics');
 assert.ok(lagIntent?.confidence >= 0.4);
 assert.equal(classifyIntent('chrome delete kr do'), null);
