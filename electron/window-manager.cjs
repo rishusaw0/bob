@@ -31,6 +31,7 @@ function createWindowManager({
       const raw = JSON.parse(fs.readFileSync(prefsPath, 'utf8'));
       return {
         notchUserHidden: Boolean(raw.notchUserHidden),
+        onboardingComplete: Boolean(raw.onboardingComplete),
         notchDisplayId: raw.notchDisplayId ?? null,
         notchPosition: ['top-center', 'top-left', 'top-right'].includes(raw.notchPosition)
           ? raw.notchPosition
@@ -42,6 +43,7 @@ function createWindowManager({
     } catch {
       return {
         notchUserHidden: false,
+        onboardingComplete: false,
         notchDisplayId: null,
         notchPosition: 'top-center',
         startupBehavior: 'notch_standby',
@@ -241,10 +243,9 @@ function createWindowManager({
   }
 
   function createWindow() {
-    // Separate manual launch from Windows startup launch:
-    // Manual launch ALWAYS opens the main window; startup launch respects user's startupBehavior preference.
+    // First launch shows setup. Once onboarding is complete, JEEVA starts Notch-first.
     const launchedAtStartup = isStartupLaunch();
-    const startHidden = launchedAtStartup && prefs.startupBehavior !== 'open_window';
+    const startHidden = Boolean(prefs.onboardingComplete) || (launchedAtStartup && prefs.startupBehavior !== 'open_window');
 
     mainWindow = new BrowserWindow({
       width: 1200,
