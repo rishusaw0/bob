@@ -82,7 +82,6 @@ const toolsArrayBlock = toolsSrc.slice(toolsSrc.indexOf('export const TOOLS'), t
 const declaredTools = [...toolsArrayBlock.matchAll(/name:\s*'([a-z_]+)'/g)].map((m) => m[1]);
 const execBlock = toolsSrc.slice(toolsSrc.indexOf('export async function executeFunctionCall'));
 const handledCases = new Set([...execBlock.matchAll(/case\s*'([a-z_]+)'/g)].map((m) => m[1]));
-if (execBlock.includes("name === 'generate_image_tool'")) handledCases.add('generate_image_tool');
 if (execBlock.includes("name === 'mobile_browser_action'")) handledCases.add('mobile_browser_action');
 
 const permCases = new Set(
@@ -759,11 +758,12 @@ assert.ok(docHits.length >= 1 && docHits[0].source === 'sales_2026.xlsx' && docH
 
 // Gemini API, audio and no-fallback contracts.
 const {
-  generateImage: cloudImageGen,
   SMOKE_CANDIDATE_MODELS,
 } = await import(pathToFileURL(path.join(ROOT, 'src/services/gemini.js')).href);
 assert.deepEqual(SMOKE_CANDIDATE_MODELS, ['gemini-3.5-flash-lite']);
-await assert.rejects(() => cloudImageGen('cat'), /not included in the lightweight Gemini Flash-Lite-only edition/);
+assert.ok(!readRel('src/services/tools.js').includes('generate_image_tool'), 'image generation is not exposed in Flash-Lite-only mode');
+assert.ok(readRel('src/services/gemini.js').includes("model: GEMINI_TTS_MODEL_ID"), 'Gemini TTS uses its dedicated cloud speech model');
+assert.ok(readRel('src/services/gemini.js').includes("responseModalities: ['AUDIO']"), 'Gemini TTS requests audio modality');
 const useVoiceEngineSource = fs.readFileSync(path.join(ROOT, 'src/services/useVoiceEngine.js'), 'utf8');
 assert.ok(!useVoiceEngineSource.includes('startLiveVoiceCall') && !useVoiceEngineSource.includes('toggleLiveCall'));
 const speechRuntimeSource = fs.readFileSync(path.join(ROOT, 'src/services/speech.js'), 'utf8');
