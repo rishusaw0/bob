@@ -31,7 +31,7 @@ import {
 } from './services/voicePermissionPrompt';
 import { getAiName, getStrictVoiceMode, getWakeOpenMode } from './services/voiceRouter';
 import { getDocSummaryPref, setDocSummaryPref, getReplyStyle, setReplyStyle } from './services/userPrefs';
-import { runLocalQuickBrain } from './services/pcCommandRouter';
+import { runPcCommand } from './services/pcCommandRouter';
 import {
   assessQueryRouting,
   compactHistoryForCloud,
@@ -332,7 +332,7 @@ export default function App() {
 
       // Keep deterministic PC actions local; all natural-language answers use Gemini.
       if (!attachment) {
-        const quick = await runLocalQuickBrain(promptText, { requestPermission, historyMessages: messages });
+        const quick = await runPcCommand(promptText, { requestPermission, historyMessages: messages });
         if (quick?.handled) {
           finalizeReply({
             replyText: quick.replyText || 'Done.',
