@@ -14,6 +14,9 @@ import {
   isRemoteEnvironment,
 } from './permissions.js';
 import { detectCommandLanguage } from './voicePermissionPrompt.js';
+import { resolveContextualFollowUp, isAmbiguousCommand } from './commandUnderstanding.js';
+
+let lastVoiceAppTarget = null;
 
 const AI_NAME_KEY = 'jeeva_ai_name';
 const STRICT_VOICE_KEY = 'jeeva_strict_voice';
@@ -352,7 +355,16 @@ export async function tryFastVoiceAction(rawText, requestPermission = null) {
   const api = getSystemAPI();
   if (!api) return { handled: false };
 
-  const normalizedRaw = normalizePhoneticVoiceText(rawText);
+  let normalizedRaw = normalizePhoneticVoiceText(rawText);
+  const followUp = resolveContextualFollowUp(normalizedRaw, { lastApp: lastVoiceAppTarget });
+  if (followUp.kind === 'clarify') {
+    return { handled: true, needsClarification: true, replyText: followUp.question, tools: [] };
+  }
+  if (followUp.kind === 'close_app') normalizedRaw = `close ${followUp.appName}`;
+  else if (followUp.kind === 'open_app') normalizedRaw = `open ${followUp.appName}`;
+  if (isAmbiguousCommand(normalizedRaw)) {
+    return { handled: true, needsClarification: true, replyText: 'Kaunsa app, file ya folder? Naam ya path bataiye.', tools: [] };
+  }
   const clauses = splitChainedVoiceClauses(normalizedRaw);
   if (clauses.length >= 2 && clauses.length <= 5) {
     // Only run multi-action Tier-1 chaining when EVERY clause resolves deterministically!
@@ -732,6 +744,7 @@ async function executePlannedClause(plan, api, runFast, userLang) {
 
   if (plan.kind === 'open_app') {
     const out = await runFast('open_application', { app_name: plan.appTarget }, () => api.openApp(plan.appTarget, ''));
+    if (out.ok) lastVoiceAppTarget = plan.appTarget;
     return {
       replyText: out.ok ? reply(`opened ${plan.appTarget}`, `${plan.appTarget} khol diya`, `${plan.appTarget} खोल दिया`) : out.error,
       tools: [{ name: 'open_application', status: out.ok ? 'done' : 'error', args: { app_name: plan.appTarget } }],
@@ -970,6 +983,7 @@ async function trySingleFastVoiceAction(rawText, requestPermission = null) {
     const appTarget = closeMatch[1].trim();
     if (!/\b(tab|window|pc|computer|laptop|system|awaz|sound|volume|screen)\b/i.test(appTarget)) {
       const out = await runFast('close_application', { app_name: appTarget }, () => api.closeApp(appTarget));
+      if (out.ok && lastVoiceAppTarget?.toLowerCase() === appTarget.toLowerCase()) lastVoiceAppTarget = null;
       return {
         handled: true,
         replyText: out.ok

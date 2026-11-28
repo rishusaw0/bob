@@ -251,6 +251,18 @@ fs.rmSync(tmpAutoDir, { recursive: true, force: true });
 
 // 3b. Offline semantic intent confidence, multilingual normalization & safe rejection
 console.log('[3b/6] Testing offline semantic intent classifier...');
+const commandUnderstandingUrl = pathToFileURL(path.join(ROOT, 'src/services/commandUnderstanding.js')).href;
+const { extractCommandEntities, resolveContextualFollowUp, isAmbiguousCommand } = await import(commandUnderstandingUrl);
+const entities = extractCommandEntities('Chrome kholo, volume 65 percent, 10 minutes, date 2026-12-04', new Date(2026, 10, 28));
+assert.equal(entities.appName, 'Chrome');
+assert.equal(entities.percentage, 65);
+assert.equal(entities.timerSeconds, 600);
+assert.equal(entities.date, '2026-12-04');
+assert.deepEqual(resolveContextualFollowUp('ab ise band kar do', { lastApp: 'Chrome' }), { kind: 'close_app', appName: 'Chrome' });
+assert.equal(resolveContextualFollowUp('ab ise band kar do', {}).kind, 'clarify');
+assert.equal(isAmbiguousCommand('open the app'), true);
+assert.equal(isAmbiguousCommand('open chrome'), false);
+
 const semanticUrl = pathToFileURL(path.join(ROOT, 'src/services/semanticIntent.js')).href;
 const {
   classifyIntent,
