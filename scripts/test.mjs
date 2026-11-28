@@ -541,7 +541,15 @@ const decChunks = splitIntoChunks('Your laptop has 3.8 GB free RAM and 85.5% bat
 assert.ok(decChunks[0].includes('3.8 GB') && decChunks[0].includes('85.5 percent'));
 
 // Deterministic Windows PC command verification (no local AI model)
-const { runPcCommand } = await import(pathToFileURL(path.join(ROOT, 'src/services/pcCommandRouter.js')).href);
+const { runPcCommand, extractExplicitMemoryFact } = await import(pathToFileURL(path.join(ROOT, 'src/services/pcCommandRouter.js')).href);
+
+// Only explicit memory statements are saved; ordinary Hinglish commands/questions must keep their meaning.
+assert.equal(extractExplicitMemoryFact('main Chrome kholo'), null);
+assert.equal(extractExplicitMemoryFact('main abhi kya karu?'), null);
+assert.equal(extractExplicitMemoryFact('Mera naam kya hai?'), null);
+assert.deepEqual(extractExplicitMemoryFact('Mera naam Roushan hai'), { kind: 'name', fact: "User's name is Roushan" });
+assert.deepEqual(extractExplicitMemoryFact('main Patna me rehta hu'), { kind: 'city', fact: 'User lives in Patna' });
+assert.deepEqual(extractExplicitMemoryFact('I live in Patna'), { kind: 'city', fact: 'User lives in Patna' });
 
 const remHit = await runPcCommand('10 minute baad meeting reminder lagao');
 assert.equal(remHit.handled, true);
@@ -733,7 +741,7 @@ assert.ok(installerNsh.includes('${ifNot} ${isUpdated}'), 'Uninstall cleanup mus
 assert.ok(installerNsh.includes('taskkill /IM "JEEVA AI.exe"') && installerNsh.includes('taskkill /F /IM "JEEVA AI.exe" /T'), 'Installer must try graceful shutdown before force-kill fallback');
 assert.ok(installerNsh.includes('IfSilent jeeva_keep_app_data') && installerNsh.includes('/SD IDNO'), 'Silent/default uninstall must preserve user data');
 const pkgJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
-assert.equal(pkgJson.version, '1.0.5');
+assert.equal(pkgJson.version, '1.0.6');
 assert.equal(pkgJson.build?.nsis?.include, 'build/installer.nsh');
 
 const voiceCaptureSource = fs.readFileSync(path.join(ROOT, 'src/services/voiceCapture.js'), 'utf8');
