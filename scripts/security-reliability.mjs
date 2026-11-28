@@ -52,5 +52,5 @@ assert.ok(read('render.yaml').includes('healthCheckPath: /healthz'), 'Render hea
 assert.ok(!read('render.yaml').includes('APP_PIN'), 'Render has no app PIN requirement');
 assert.ok(read('vite.config.js').includes("mode === 'public' ? 'landing.html' : 'index.html'"), 'public and desktop builds use separate entry points');
 assert.ok(read('package.json').includes('vite build --mode desktop'), 'Windows packaging uses the desktop-only entry point');
-assert.ok(!read('src/services/bridge.js').includes('/api/relay/'), 'renderer bridge has no hosted relay transport');
+assert.ok(!read('src/services/systemApi.js').includes('/api/relay/'), 'renderer bridge has no hosted relay transport');
 console.log('Security/reliability contracts passed: 29 checks.');
