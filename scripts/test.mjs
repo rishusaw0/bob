@@ -539,30 +539,30 @@ const decChunks = splitIntoChunks('Your laptop has 3.8 GB free RAM and 85.5% bat
 assert.ok(decChunks[0].includes('3.8 GB') && decChunks[0].includes('85.5 percent'));
 
 // Layer-1 slot action verification (0 Gemini API calls)
-const { runLocalQuickBrain } = await import(pathToFileURL(path.join(ROOT, 'src/services/localQuickBrain.js')).href);
+const { runPcCommand } = await import(pathToFileURL(path.join(ROOT, 'src/services/localQuickBrain.js')).href);
 
-const remHit = await runLocalQuickBrain('10 minute baad meeting reminder lagao');
+const remHit = await runPcCommand('10 minute baad meeting reminder lagao');
 assert.equal(remHit.handled, true);
 assert.equal(remHit.tools[0].name, 'schedule_pc_task');
 
-const orgHit = await runLocalQuickBrain('downloads organize karo');
+const orgHit = await runPcCommand('downloads organize karo');
 assert.equal(orgHit.handled, true);
 assert.equal(orgHit.tools[0].name, 'file_manager_pro');
 
-const btHit = await runLocalQuickBrain('bluetooth settings kholo');
+const btHit = await runPcCommand('bluetooth settings kholo');
 assert.equal(btHit.handled, true);
 assert.equal(btHit.tools[0].name, 'open_windows_setting');
 assert.equal(btHit.tools[0].args.setting, 'bluetooth');
 
 // Intelligence upgrades: natural memory intro/recall + pronoun follow-up resolution
-const nameSave = await runLocalQuickBrain('Mera naam Roushan hai');
+const nameSave = await runPcCommand('Mera naam Roushan hai');
 assert.equal(nameSave.handled, true);
 assert.equal(nameSave.tools[0].name, 'memory_rag');
-const nameRecall = await runLocalQuickBrain('Mera naam kya hai?');
+const nameRecall = await runPcCommand('Mera naam kya hai?');
 assert.equal(nameRecall.handled, true);
 assert.ok(nameRecall.replyText.includes('Roushan'));
 
-const followUpClose = await runLocalQuickBrain('isko band karo', {
+const followUpClose = await runPcCommand('isko band karo', {
   historyMessages: [
     { role: 'user', text: 'Notepad kholo' },
     { role: 'assistant', text: 'Maine notepad khol diya hai.', tools: [{ name: 'open_application', args: { app_name: 'notepad' } }] },
@@ -573,33 +573,33 @@ assert.equal(followUpClose.tools[0].name, 'close_application');
 assert.equal(followUpClose.tools[0].args.app_name, 'notepad');
 
 // Voice file-location PDF reading & summarizing test (0 Gemini API calls)
-const docLocRead = await runLocalQuickBrain('Desktop par notes.pdf hai isko summarize karo aur sunao');
+const docLocRead = await runPcCommand('Desktop par notes.pdf hai isko summarize karo aur sunao');
 assert.equal(docLocRead.handled, true);
 assert.equal(docLocRead.tools[0].name, 'read_document_file');
 assert.equal(docLocRead.autoSpeak, true);
 assert.ok(docLocRead.replyText.toLowerCase().includes('solar'));
 
 // Date/Time Reminder + VS Code / GitHub / Chrome / YouTube local control tests
-const decRem = await runLocalQuickBrain('5 December ko shaam 6 baje yaad dilana meeting hai');
+const decRem = await runPcCommand('5 December ko shaam 6 baje yaad dilana meeting hai');
 assert.equal(decRem.handled, true);
 assert.equal(decRem.tools[0].name, 'schedule_pc_task');
 assert.equal(decRem.tools[0].args.action, 'remind_date');
 assert.equal(decRem.tools[0].args.early_warn_minutes, 30);
 
-const ytFs = await runLocalQuickBrain('youtube fullscreen karo');
+const ytFs = await runPcCommand('youtube fullscreen karo');
 assert.equal(ytFs.handled, true);
 assert.equal(ytFs.tools[0].name, 'browser_control');
 assert.equal(ytFs.tools[0].args.action, 'youtube_fullscreen');
 
-const incog = await runLocalQuickBrain('incognito kholo');
+const incog = await runPcCommand('incognito kholo');
 assert.equal(incog.handled, true);
 assert.equal(incog.tools[0].args.action, 'new_incognito');
 
-const vscTerm = await runLocalQuickBrain('vs code terminal kholo');
+const vscTerm = await runPcCommand('vs code terminal kholo');
 assert.equal(vscTerm.handled, true);
 assert.equal(vscTerm.tools[0].name, 'press_shortcut');
 
-const ghPulls = await runLocalQuickBrain('github pulls kholo');
+const ghPulls = await runPcCommand('github pulls kholo');
 assert.equal(ghPulls.handled, true);
 assert.equal(ghPulls.tools[0].args.url, 'https://github.com/pulls');
 
@@ -687,7 +687,7 @@ const pkgRuntime = JSON.parse(readRel('package.json'));
 assert.ok(geminiSource.includes("const GEMINI_MODEL_ID = 'gemini-3.5-flash-lite'"));
 assert.ok(geminiSource.includes("const cfg = { ...config, model: GEMINI_MODEL_ID }"));
 assert.ok(!/gemini-(?:4-|2\\.5|nano-banana|3\\.8-live)/.test(geminiSource));
-assert.ok(appRuntimeSource.includes('runLocalQuickBrain') && appRuntimeSource.includes('pcCommandRouter'));
+assert.ok(appRuntimeSource.includes('runPcCommand') && appRuntimeSource.includes('pcCommandRouter'));
 assert.ok(!appRuntimeSource.includes('runLocalSlmTurn') && !appRuntimeSource.includes('runLocalDocumentTurn'));
 assert.ok(!electronRuntimeSource.includes('localBrain') && !electronRuntimeSource.includes('offlineVoice'));
 assert.ok(!preloadRuntimeSource.includes('localBrain') && !preloadRuntimeSource.includes('offlineVoice'));
