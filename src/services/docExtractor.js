@@ -1,5 +1,4 @@
-// Zero-Gemini Local PDF / Text / Office Document Reader & Extractive Summarizer
-import { runLocalSlmTurn } from './localLlm.js';
+// Lightweight PDF / Text / Office document reader with deterministic extractive summaries.
 import { detectCommandLanguage } from './voicePermissionPrompt.js';
 import { getDocSummaryPref } from './userPrefs.js';
 
@@ -94,13 +93,11 @@ export async function extractAttachmentTextLocally(attachment) {
 }
 
 /**
- * Handles PDF, DOCX, PPTX, XLSX, and TXT/Code reading or summarizing locally (0 Gemini API calls!).
+ * Handles PDF, DOCX, PPTX, XLSX, and TXT/Code reading and deterministic extractive summaries.
  */
 async function processExtractedDocument({
   extracted,
   userPrompt = '',
-  historyMessages = [],
-  requestPermission = null,
   fromVoice = false,
 } = {}) {
   if (!extracted || !extracted.ok) {
@@ -155,30 +152,7 @@ async function processExtractedDocument({
     };
   }
 
-  // Mode B: Summarize or Answer Question -> First try Local SLM Brain (Qwen/Gemma), else Extractive Local Summary!
-  const snippetForSlm = docText.slice(0, 2600);
-  const slmPrompt = `${userPrompt || 'Summarize key points concisely in user language.'}\n\nDOCUMENT (${fileLabel}):\n"""\n${snippetForSlm}\n"""`;
-
-  const slm = await runLocalSlmTurn({
-    text: slmPrompt,
-    historyMessages,
-    requestPermission,
-    fromVoice,
-  });
-
-  if (slm?.handled && slm.replyText) {
-    return {
-      handled: true,
-      tier: 'local-slm',
-      modelLabel: `${slm.modelLabel || 'Local SLM'} (Doc)`,
-      routeReason: 'PDF/Text summarized by Local AI Brain (0 Gemini API calls)',
-      replyText: slm.replyText,
-      autoSpeak: /sunao|listen|read|speak|audio/i.test(lower),
-      tools: [{ name: 'read_document_file', status: 'done', args: { name: fileLabel, engine: 'local_slm' } }],
-    };
-  }
-
-  // Zero-SLM Pure-JS Extractive Summary fallback (works even without Ollama & without Gemini!)
+  // Mode B: use a deterministic extractive summary; this is not a local language model.
   const summaryBullets = summarizeTextLocally(docText, 6);
   const sumHeader =
     lang === 'english'
@@ -196,7 +170,7 @@ async function processExtractedDocument({
 }
 
 /**
- * Handles uploaded PDF, DOCX, PPTX, XLSX, and TXT/Code attachments locally (0 Gemini API calls!).
+ * Extracts uploaded PDF, DOCX, PPTX, XLSX, and TXT/Code attachments for basic local file reading.
  */
 export async function runLocalDocumentTurn({
   attachment,
@@ -210,7 +184,7 @@ export async function runLocalDocumentTurn({
 }
 
 /**
- * Reads, explains, or summarizes a PDF/document directly from a PC file path or Desktop/Downloads/Documents shortcut.
+ * Reads or extracts a PDF/document from a PC file path or Desktop/Downloads/Documents shortcut.
  */
 export async function runLocalDocumentPathTurn({
   filePath,
