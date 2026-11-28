@@ -70,7 +70,7 @@ export function classifyQueryKind(cleanText, attachment = null) {
  */
 export function assessQueryRouting(text, attachment = null, _mode = 'cloud', env = {}) {
   let cleanText = String(text || '').trim();
-  cleanText = cleanText.replace(/^(?:@cloud|@gemini|\\/cloud|\\/gemini|@local|\\/local)\\b[:\\s]*/i, '').trim();
+  cleanText = cleanText.replace(/^(?:@cloud|@gemini|\/cloud|\/gemini|@local|\/local)\b[:\s]*/i, '').trim();
   const online =
     typeof env.online === 'boolean'
       ? env.online
