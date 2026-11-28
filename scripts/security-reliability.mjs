@@ -17,9 +17,10 @@ const lowerBrightness = classifyIntentDetailed('screen brightness kam karo');
 assert.deepEqual(lowerBrightness.match?.args, { action: 'down' }, 'brightness decrease maps to down');
 
 const server = read('server/index.js');
-assert.ok(server.includes('if (!APP_PIN) return false;'), 'server authorization fails closed without APP_PIN');
-assert.ok(!server.includes('if (!APP_PIN) return true;'), 'server has no open-by-default auth bypass');
-assert.ok(server.includes('Server-managed access is locked'), 'unlock endpoint refuses an unset PIN');
+assert.ok(server.includes("url.pathname === '/download'"), 'public server only exposes a download route');
+assert.ok(!server.includes('/api/relay/'), 'hosted PC relay is not part of the public server');
+assert.ok(!server.includes('/api/gemini'), 'hosted Gemini proxy is not part of the public server');
+assert.ok(!server.includes('WebSocket'), 'hosted WebSocket relay is removed');
 
 const main = read('electron/main.cjs');
 assert.ok(main.includes('event.sender !== mainWindow.webContents'), 'IPC rejects untrusted senders');
@@ -47,4 +48,6 @@ const tailwindConfig = read('tailwind.config.js');
 assert.ok(tailwindConfig.includes("'./src/**/*.jsx'"), 'Tailwind scans actual JSX UI components');
 assert.ok(!tailwindConfig.includes("'./src/**/*.{js,jsx}'"), 'Tailwind does not parse service regex source as class candidates');
 
-console.log('Security/reliability contracts passed: 23 checks.');
+assert.ok(read('render.yaml').includes('healthCheckPath: /healthz'), 'Render health check targets static server');
+assert.ok(!read('render.yaml').includes('APP_PIN'), 'Render has no app PIN requirement');
+console.log('Security/reliability contracts passed: 26 checks.');
