@@ -81,7 +81,7 @@
       "shortcutName": "JEEVA AI",
       "deleteAppDataOnUninstall": false,
       "uninstallDisplayName": "JEEVA AI ${version}",
-      "artifactName": "${productName} Setup ${version}.${ext}",
+      "artifactName": "JEEVA.AI.Setup.${version}.${ext}",
       "include": "build/installer.nsh"
     }
   },
