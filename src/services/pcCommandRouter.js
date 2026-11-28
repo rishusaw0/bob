@@ -60,7 +60,7 @@ async function tryLocalScreenReader(text, requestPermission) {
   };
 }
 
-export async function runLocalQuickBrain(text, { requestPermission = null, historyMessages = [] } = {}) {
+export async function runPcCommand(text, { requestPermission = null, historyMessages = [] } = {}) {
   const repaired = repairVoiceTranscript(text);
   const clean = resolvePronounFollowUp(repaired, historyMessages);
   if (!clean) return { handled: false };
