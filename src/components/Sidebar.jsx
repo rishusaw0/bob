@@ -37,10 +37,8 @@ export default function Sidebar({
       {/* Brand + New Thread */}
       <div className="p-3 border-b border-obsidian-border space-y-2.5">
         <div className="flex items-center justify-between px-1">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-zinc-100 text-zinc-950 flex items-center justify-center font-mono text-xs font-bold tracking-tighter">
-              JV
-            </div>
+          <div className="flex items-center gap-2.5">
+            <img src="./icon.svg" alt="JEEVA AI" className="w-7 h-7 rounded-lg shadow-sm" />
             <div className="leading-none">
               <span className="text-sm font-semibold tracking-tight text-obsidian-text block">
                 JEEVA

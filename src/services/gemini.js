@@ -2,6 +2,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { TOOLS, executeFunctionCall, clearToolSessionPermissions } from './tools.js';
 import { recallRelevantMemories } from './memoryRag.js';
+import { pickTopToolsForQuery } from './semanticIntent.js';
 import { getReplyStyle } from './userPrefs.js';
 import { assertCloudAllowed, isStrictOfflineMode } from './offlineMode.js';
 
@@ -211,10 +212,25 @@ export async function sendMessage(
   const digestBlock = options?.historyDigest ? `\n\n${options.historyDigest}` : '';
   const fullSystemPrompt = buildSystemPrompt(Boolean(options?.fromVoice), options?.strictVoice !== false) + memoryContext + digestBlock;
 
+  // Fast API optimization: prune 39 tool schemas down to only relevant tools (cuts ~2000 tokens & speeds up TTFT)
+  let selectedTools = TOOLS;
+  if (typeof text === 'string' && text.trim() && !attachment) {
+    const needsPcTools =
+      /\b(open|close|launch|start|run|volume|mute|brightness|screenshot|screen|read|file|folder|pdf|docx|xlsx|install|uninstall|battery|wifi|cpu|ram|disk|port|process|kill|mouse|click|type|key|hotkey|remind|schedule|timer|chrome|tab|youtube|vscode|git|clipboard|window|snap|minimize|clean|organize|power|shutdown|restart|lock|app|memory|remember)\b/i.test(
+        text
+      );
+    if (!needsPcTools) {
+      selectedTools = [];
+    } else {
+      const topNames = new Set(pickTopToolsForQuery(text, 10));
+      selectedTools = TOOLS.filter((t) => topNames.has(t.name));
+    }
+  }
+
   const requestConfig = {
     model: preferredModel,
     input,
-    tools: TOOLS,
+    ...(selectedTools.length > 0 ? { tools: selectedTools } : {}),
     system_instruction: fullSystemPrompt,
     store: true,
   };
@@ -257,7 +273,7 @@ export async function sendMessage(
         const isTransient =
           msg.includes('503') || msg.includes('429') || msg.includes('UNAVAILABLE') || msg.includes('overloaded');
         if (!isTransient) throw err;
-        await new Promise((r) => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, 120));
       }
     }
     throw lastError;

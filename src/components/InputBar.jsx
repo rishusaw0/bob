@@ -438,15 +438,6 @@ export default function InputBar({
                 className="hidden"
               />
 
-              <button
-                type="button"
-                onClick={handleCamera}
-                className="p-1.5 rounded-lg text-obsidian-secondary hover:text-obsidian-text hover:bg-obsidian-elevated transition-colors"
-                title="Capture Camera Frame"
-              >
-                <LuCamera className="w-4 h-4" />
-              </button>
-
               {window.electronAPI && (
                 <button
                   type="button"
@@ -493,43 +484,6 @@ export default function InputBar({
                 </select>
               )}
 
-              {onDocSummaryPrefChange && (
-                <select
-                  value={docSummaryPref}
-                  onChange={(e) => onDocSummaryPrefChange(e.target.value)}
-                  className="bg-obsidian-bg hover:bg-obsidian-elevated border border-obsidian-border rounded-lg px-2 py-1 text-[11px] text-obsidian-secondary hover:text-obsidian-text focus:outline-none cursor-pointer transition-colors"
-                  title="Choose whether uploaded PDFs/files are summarized or read in full"
-                >
-                  <option value="ask" className="bg-obsidian-surface">PDF: Auto</option>
-                  <option value="summarize" className="bg-obsidian-surface">PDF: Summarize</option>
-                  <option value="read_full" className="bg-obsidian-surface">PDF: Read Full</option>
-                </select>
-              )}
-
-              {onReplyStyleChange && (
-                <select
-                  value={replyStyle}
-                  onChange={(e) => onReplyStyleChange(e.target.value)}
-                  className="bg-obsidian-bg hover:bg-obsidian-elevated border border-obsidian-border rounded-lg px-2 py-1 text-[11px] text-obsidian-secondary hover:text-obsidian-text focus:outline-none cursor-pointer transition-colors hidden md:inline-block"
-                  title="Answer detail level"
-                >
-                  <option value="concise" className="bg-obsidian-surface">Reply: Short</option>
-                  <option value="detailed" className="bg-obsidian-surface">Reply: Detailed</option>
-                </select>
-              )}
-
-              <select
-                value={voiceMode}
-                onChange={(e) => onVoiceModeChange(e.target.value)}
-                className="bg-obsidian-bg hover:bg-obsidian-elevated border border-obsidian-border rounded-lg px-2 py-1 text-[11px] font-mono text-obsidian-secondary hover:text-obsidian-text focus:outline-none cursor-pointer transition-colors"
-                title="Speaker Voice Profile (Auto / English / Hindi / Hinglish)"
-              >
-                <option value="auto" className="bg-obsidian-surface">Voice: Auto</option>
-                <option value="english" className="bg-obsidian-surface">Voice: English</option>
-                <option value="hindi" className="bg-obsidian-surface">Voice: Hindi</option>
-                <option value="hinglish" className="bg-obsidian-surface">Voice: Hinglish</option>
-              </select>
-
               <button
                 type="button"
                 onClick={() => setVoiceLang(l => (l === 'hi-IN' ? 'en-IN' : 'hi-IN'))}
@@ -537,19 +491,6 @@ export default function InputBar({
                 title="Mic Dictation Language"
               >
                 {voiceLang === 'hi-IN' ? 'Mic: HI/EN' : 'Mic: EN'}
-              </button>
-
-              <button
-                type="button"
-                onClick={toggleAutoSendVoice}
-                className={`px-2 py-1 rounded-lg text-[11px] font-mono transition-colors ${
-                  autoSendVoice
-                    ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/25'
-                    : 'text-obsidian-muted hover:text-obsidian-text hover:bg-obsidian-elevated'
-                }`}
-                title="Hands-Free Voice: automatically sends command when you pause speaking"
-              >
-                {autoSendVoice ? 'Hands-Free' : 'Draft Mic'}
               </button>
             </div>
 
