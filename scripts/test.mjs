@@ -24,7 +24,10 @@ assert.equal(appLock.version, appPackage.version, 'package-lock root version mus
 assert.equal(appLock.packages?.['']?.version, appPackage.version, 'lockfile root package version must match package.json');
 assert.equal(appPackage.build?.nsis?.artifactName, 'JEEVA.AI.Setup.${version}.${ext}', 'NSIS artifact filename must match the published installer URL');
 assert.ok(readRel('src/components/LandingPage.jsx').includes("window.location.assign('/download')"), 'Landing page download uses the static server download route');
-assert.ok(readRel('server/index.js').includes(`releases/latest/download/${expectedInstaller}`), 'Download route points to the installer matching the package version');
+const downloadServerSource = readRel('server/index.js');
+assert.ok(downloadServerSource.includes("const APP_VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;"), 'Download route reads the current package version');
+assert.ok(downloadServerSource.includes("const expectedInstaller = `JEEVA.AI.Setup.${APP_VERSION}.exe`;"), 'Download route constructs the installer filename dynamically');
+assert.ok(downloadServerSource.includes('releases/latest/download/${expectedInstaller}'), 'Download route points to the dynamically named current installer');
 
 // 1. Node syntax check on server & all Electron CJS modules
 console.log('[1/6] Checking JS/CJS syntax...');
