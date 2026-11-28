@@ -15,7 +15,6 @@ const OnboardingWizard = lazy(() => import('./components/OnboardingWizard'));
 const PcControlCenterModal = lazy(() => import('./components/PcControlCenterModal'));
 import {
   initGemini,
-  setModel as setGeminiModel,
   setCustomInstructions as setGeminiInstructions,
   setAiNamePrompt,
   sendMessage,
@@ -57,7 +56,7 @@ export default function App() {
   const [apiKey, setApiKey] = useState(
     () => (window.electronAPI ? '' : (localStorage.getItem('jeeva_api_key') || import.meta.env.VITE_GEMINI_API_KEY || ''))
   );
-  const [model, setModel] = useState('gemini-3.5-flash-lite');
+  const model = 'gemini-3.5-flash-lite';
   const [customInstructions, setCustomInstructions] = useState(
     () => localStorage.getItem('jeeva_custom_instructions') || ''
   );
@@ -602,8 +601,6 @@ export default function App() {
               onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
               voiceMode={voiceMode}
               onVoiceModeChange={setVoiceMode}
-              model={model}
-              onModelChange={setModel}
               customInstructions={customInstructions}
               onCustomInstructionsChange={setCustomInstructions}
               onExportChat={handleExportChat}
@@ -642,8 +639,6 @@ export default function App() {
         wakeEnabled={voiceEngine.wakeEnabled}
         orbState={voiceEngine.orbState}
         onToggleWake={voiceEngine.toggleWake}
-        model={model}
-        onModelChange={setModel}
         liveStats={liveStats}
       />
 
@@ -734,8 +729,6 @@ export default function App() {
             onToggleTTS={() => setTtsEnabled(!ttsEnabled)}
             voiceMode={voiceMode}
             onVoiceModeChange={setVoiceMode}
-            model={model}
-            onModelChange={setModel}
             customInstructions={customInstructions}
             onCustomInstructionsChange={setCustomInstructions}
             onExportChat={handleExportChat}
