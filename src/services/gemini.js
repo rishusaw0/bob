@@ -303,8 +303,7 @@ export async function sendMessage(
       const result = await executeFunctionCall(step.name, step.arguments || {}, requestPermission, {
         client,
         preferredModel,
-        generateImage,
-        fromVoice: Boolean(options?.fromVoice),
+              fromVoice: Boolean(options?.fromVoice),
         userPrompt: typeof text === 'string' ? text : '',
       });
       toolEntry.status = result.error ? 'error' : 'done';
@@ -364,10 +363,6 @@ export async function transcribeAudio(base64Data, mimeType = 'audio/wav', opts =
     .map((part) => part.text)
     .join('')
     .trim();
-}
-
-export async function generateImage() {
-  throw new Error('Image generation is not included in the lightweight Gemini Flash-Lite-only edition.');
 }
 
 export async function generateTitle(userMessage) {
